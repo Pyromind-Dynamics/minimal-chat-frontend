@@ -14,6 +14,8 @@ interface ChatState {
 // Actions
 type ChatAction =
   | { type: 'SET_CONVERSATION_ID'; id: string }
+  | { type: 'RESET_CONVERSATION' }
+  | { type: 'SET_EVENTS'; events: ChatEvent[] }
   | { type: 'ADD_EVENT'; event: ChatEvent }
   | { type: 'CLEAR_EVENTS' }
   | { type: 'SET_STATUS'; status: ExecutionStatus }
@@ -28,11 +30,25 @@ const initialState: ChatState = {
   error: null,
 };
 
+function getEventId(event: ChatEvent): string | undefined {
+  return 'id' in event ? event.id : undefined;
+}
+
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case 'SET_CONVERSATION_ID':
       return { ...state, conversationId: action.id, events: [], error: null };
+    case 'RESET_CONVERSATION':
+      return { ...state, conversationId: null, events: [], status: 'idle', error: null };
+    case 'SET_EVENTS':
+      return { ...state, events: action.events, error: null };
     case 'ADD_EVENT':
+      if (
+        getEventId(action.event) &&
+        state.events.some((event) => getEventId(event) === getEventId(action.event))
+      ) {
+        return state;
+      }
       return { ...state, events: [...state.events, action.event] };
     case 'CLEAR_EVENTS':
       return { ...state, events: [] };

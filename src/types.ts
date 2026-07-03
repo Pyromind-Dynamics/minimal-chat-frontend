@@ -103,10 +103,30 @@ export interface ConversationInfo {
   created_at: string;
   updated_at: string;
   execution_status: string;
+  title?: string | null;
+  user_id?: string | null;
+}
+
+export interface ConversationPage {
+  items: ConversationInfo[];
+  next_page_id: string | null;
+}
+
+export interface EventPage {
+  items: ChatEvent[];
+  next_page_id: string | null;
 }
 
 // Agent execution status
-export type ExecutionStatus = 'idle' | 'running' | 'paused' | 'finished' | 'error';
+export type ExecutionStatus =
+  | 'idle'
+  | 'running'
+  | 'paused'
+  | 'waiting_for_confirmation'
+  | 'finished'
+  | 'error'
+  | 'stuck'
+  | 'deleting';
 
 export function isPublishedWorkflowObservation(
   event: ChatEvent | undefined,

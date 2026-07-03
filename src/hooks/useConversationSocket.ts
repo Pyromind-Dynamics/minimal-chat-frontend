@@ -1,11 +1,13 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { WS_BASE_URL, SESSION_API_KEY } from '../config';
+import { setTestAuthCookie } from '../authToken';
 import type { ChatEvent } from '../types';
 
 export type WsState = 'connecting' | 'open' | 'closed';
 
 interface UseConversationSocketOptions {
   conversationId: string | null;
+  userId?: string;
   onEvent: (event: ChatEvent) => void;
 }
 
@@ -13,15 +15,18 @@ interface UseConversationSocketOptions {
  * WebSocket hook that connects to the agent-server event stream.
  * Handles authentication, reconnection, and event parsing.
  */
-export function useConversationSocket({ conversationId, onEvent }: UseConversationSocketOptions) {
+export function useConversationSocket({ conversationId, userId, onEvent }: UseConversationSocketOptions) {
   const [wsState, setWsState] = useState<WsState>('closed');
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (!conversationId) return;
+    if (userId) {
+      await setTestAuthCookie(userId);
+    }
 
     // Build WebSocket URL with resend_mode=all to get history on connect
     const wsUrl = `${WS_BASE_URL}/sockets/events/${conversationId}?resend_mode=all`;
@@ -32,7 +37,7 @@ export function useConversationSocket({ conversationId, onEvent }: UseConversati
 
     ws.onopen = () => {
       // Send first-message auth frame
-      if (SESSION_API_KEY) {
+      if (SESSION_API_KEY && !userId) {
         ws.send(JSON.stringify({ type: 'auth', session_api_key: SESSION_API_KEY }));
       }
       setWsState('open');
@@ -52,7 +57,7 @@ export function useConversationSocket({ conversationId, onEvent }: UseConversati
       wsRef.current = null;
       // Auto-reconnect after 3 seconds
       reconnectTimerRef.current = setTimeout(() => {
-        connect();
+        void connect();
       }, 3000);
     };
 
@@ -60,13 +65,13 @@ export function useConversationSocket({ conversationId, onEvent }: UseConversati
       console.error('WebSocket error:', err);
       ws.close();
     };
-  }, [conversationId]);
+  }, [conversationId, userId]);
 
   // Connect when conversationId changes
   useEffect(() => {
     if (!conversationId) return;
 
-    connect();
+    void connect();
 
     return () => {
       // Cleanup on unmount or conversationId change
@@ -85,7 +90,7 @@ export function useConversationSocket({ conversationId, onEvent }: UseConversati
     if (wsRef.current) {
       wsRef.current.close();
     }
-    connect();
+    void connect();
   }, [connect]);
 
   return { wsState, reconnect };
