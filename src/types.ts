@@ -30,10 +30,34 @@ export interface ActionEvent {
   id: string;
   timestamp: string;
   source: 'agent';
+  tool_name?: string;
   tool_call: {
     name: string;
-    arguments: Record<string, unknown>;
+    arguments: Record<string, unknown> | string;
   };
+}
+
+export interface BaseObservation {
+  kind?: string;
+  content?: ContentItem[];
+  is_error?: boolean;
+  name?: string | null;
+  result?: Record<string, unknown>;
+  to_llm_content?: ContentItem[];
+  path?: string | null;
+  command?: string;
+  old_content?: string | null;
+  new_content?: string | null;
+  published_workflow?: PublishedWorkflowObservation | null;
+}
+
+export interface PublishedWorkflowObservation extends BaseObservation {
+  kind: 'PublishedWorkflowObservation';
+  workflow: string;
+  path: string;
+  name: string | null;
+  summary: string | null;
+  exists: boolean;
 }
 
 // Tool execution result
@@ -42,11 +66,10 @@ export interface ObservationEvent {
   id: string;
   timestamp: string;
   source: 'environment';
-  observation: {
-    name: string;
-    result: Record<string, unknown>;
-    to_llm_content?: ContentItem[];
-  };
+  tool_name?: string;
+  tool_call_id?: string;
+  action_id?: string;
+  observation: BaseObservation | PublishedWorkflowObservation;
 }
 
 // Conversation state changes
@@ -84,3 +107,38 @@ export interface ConversationInfo {
 
 // Agent execution status
 export type ExecutionStatus = 'idle' | 'running' | 'paused' | 'finished' | 'error';
+
+export function isPublishedWorkflowObservation(
+  event: ChatEvent | undefined,
+): event is ObservationEvent & { observation: PublishedWorkflowObservation } {
+  return (
+    event?.kind === 'ObservationEvent'
+    && event.observation.kind === 'PublishedWorkflowObservation'
+  );
+}
+
+export function getPublishedWorkflowObservation(
+  event: ChatEvent | undefined,
+): PublishedWorkflowObservation | null {
+  if (isPublishedWorkflowObservation(event)) {
+    return event.observation;
+  }
+
+  if (event?.kind !== 'ObservationEvent') {
+    return null;
+  }
+
+  const nested = event.observation.published_workflow;
+  if (nested?.kind === 'PublishedWorkflowObservation') {
+    return nested;
+  }
+
+  return null;
+}
+
+export function isPublishWorkflowAction(event: ChatEvent | undefined): boolean {
+  return (
+    event?.kind === 'ActionEvent'
+    && (event.tool_name === 'publish_workflow' || event.tool_call.name === 'publish_workflow')
+  );
+}

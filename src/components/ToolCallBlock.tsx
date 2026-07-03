@@ -10,7 +10,7 @@ export function ToolCallBlock({ action, observation }: ToolCallBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const toolName = action.tool_call.name;
-  const args = action.tool_call.arguments;
+  const args = parseToolArgs(action.tool_call.arguments);
 
   // Extract human-readable summary
   const summary = getSummary(toolName, args);
@@ -66,6 +66,21 @@ function getSummary(toolName: string, args: Record<string, unknown>): string {
   return '';
 }
 
+function parseToolArgs(args: Record<string, unknown> | string): Record<string, unknown> {
+  if (typeof args !== 'string') {
+    return args;
+  }
+  try {
+    const parsed = JSON.parse(args) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return { arguments: args };
+  }
+  return { arguments: args };
+}
+
 function getObservationText(obs: ObservationEvent): string {
   if (obs.observation.to_llm_content) {
     return obs.observation.to_llm_content
@@ -73,5 +88,11 @@ function getObservationText(obs: ObservationEvent): string {
       .map((c) => (c as { type: 'text'; text: string }).text)
       .join('\n');
   }
-  return JSON.stringify(obs.observation.result, null, 2);
+  if (obs.observation.content) {
+    return obs.observation.content
+      .filter((c) => c.type === 'text')
+      .map((c) => (c as { type: 'text'; text: string }).text)
+      .join('\n');
+  }
+  return JSON.stringify(obs.observation.result ?? obs.observation, null, 2);
 }
