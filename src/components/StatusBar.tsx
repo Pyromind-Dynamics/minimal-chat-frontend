@@ -18,8 +18,11 @@ export function StatusBar({ wsState, status, conversationId }: StatusBarProps) {
     idle: 'Idle',
     running: 'Running...',
     paused: 'Paused',
+    waiting_for_confirmation: 'Waiting for confirmation',
     finished: 'Finished',
     error: 'Error',
+    stuck: 'Stuck',
+    deleting: 'Deleting',
   }[status];
 
   return (
