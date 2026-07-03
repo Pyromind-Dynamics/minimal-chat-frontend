@@ -48,11 +48,10 @@ export interface BaseObservation {
   command?: string;
   old_content?: string | null;
   new_content?: string | null;
-  published_workflow?: PublishedWorkflowObservation | null;
 }
 
-export interface PublishedWorkflowObservation extends BaseObservation {
-  kind: 'PublishedWorkflowObservation';
+export interface WorkflowFileObservation extends BaseObservation {
+  kind: 'WorkflowFileObservation';
   workflow: string;
   path: string;
   name: string | null;
@@ -69,7 +68,7 @@ export interface ObservationEvent {
   tool_name?: string;
   tool_call_id?: string;
   action_id?: string;
-  observation: BaseObservation | PublishedWorkflowObservation;
+  observation: BaseObservation | WorkflowFileObservation;
 }
 
 // Conversation state changes
@@ -78,7 +77,8 @@ export interface ConversationStateUpdateEvent {
   id: string;
   timestamp: string;
   source: 'environment';
-  field: string;
+  key?: string;
+  field?: string;
   value: unknown;
 }
 
@@ -108,37 +108,40 @@ export interface ConversationInfo {
 // Agent execution status
 export type ExecutionStatus = 'idle' | 'running' | 'paused' | 'finished' | 'error';
 
-export function isPublishedWorkflowObservation(
-  event: ChatEvent | undefined,
-): event is ObservationEvent & { observation: PublishedWorkflowObservation } {
+const WORKFLOW_EVENT_KEY = 'pyromind_workflow';
+
+function isWorkflowFileObservationValue(
+  value: unknown,
+): value is WorkflowFileObservation {
   return (
-    event?.kind === 'ObservationEvent'
-    && event.observation.kind === 'PublishedWorkflowObservation'
+    typeof value === 'object'
+    && value !== null
+    && (value as { kind?: string }).kind === 'WorkflowFileObservation'
   );
 }
 
-export function getPublishedWorkflowObservation(
+export function isWorkflowFileObservationEvent(
   event: ChatEvent | undefined,
-): PublishedWorkflowObservation | null {
-  if (isPublishedWorkflowObservation(event)) {
+): event is ObservationEvent & { observation: WorkflowFileObservation } {
+  return (
+    event?.kind === 'ObservationEvent'
+    && event.observation.kind === 'WorkflowFileObservation'
+  );
+}
+
+export function getWorkflowFileObservation(
+  event: ChatEvent | undefined,
+): WorkflowFileObservation | null {
+  if (isWorkflowFileObservationEvent(event)) {
     return event.observation;
   }
 
-  if (event?.kind !== 'ObservationEvent') {
-    return null;
-  }
-
-  const nested = event.observation.published_workflow;
-  if (nested?.kind === 'PublishedWorkflowObservation') {
-    return nested;
+  if (event?.kind === 'ConversationStateUpdateEvent') {
+    const key = event.key ?? event.field;
+    if (key === WORKFLOW_EVENT_KEY && isWorkflowFileObservationValue(event.value)) {
+      return event.value;
+    }
   }
 
   return null;
-}
-
-export function isPublishWorkflowAction(event: ChatEvent | undefined): boolean {
-  return (
-    event?.kind === 'ActionEvent'
-    && (event.tool_name === 'publish_workflow' || event.tool_call.name === 'publish_workflow')
-  );
 }

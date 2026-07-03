@@ -62,7 +62,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const handleEvent = useCallback((event: ChatEvent) => {
     // Handle state updates from ConversationStateUpdateEvent
     if (event.kind === 'ConversationStateUpdateEvent') {
-      if (event.field === 'execution_status') {
+      if ((event.key ?? event.field) === 'execution_status') {
         dispatch({ type: 'SET_STATUS', status: event.value as ExecutionStatus });
         return; // Don't add pure state updates to the event list
       }

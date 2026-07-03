@@ -1,8 +1,7 @@
 import { useEffect, useRef } from 'react';
 import {
-  getPublishedWorkflowObservation,
-  isPublishedWorkflowObservation,
-  isPublishWorkflowAction,
+  getWorkflowFileObservation,
+  isWorkflowFileObservationEvent,
   type ChatEvent,
   type ActionEvent,
   type ObservationEvent,
@@ -39,48 +38,28 @@ export function ChatPanel({ events }: ChatPanelProps) {
     if (event.kind === 'MessageEvent') {
       rendered.push(<MessageBubble key={event.id} event={event} />);
     } else if (event.kind === 'ActionEvent') {
-      if (isPublishWorkflowAction(event)) {
-        const nextEvent = events[i + 1];
-        if (isPublishedWorkflowObservation(nextEvent)) {
-          rendered.push(
-            <WorkflowBlock
-              key={nextEvent.id}
-              observation={nextEvent.observation}
-            />,
-          );
-          i++;
-        }
-        continue;
-      }
-
       // Look ahead for the matching observation
       const nextEvent = events[i + 1];
       const observation =
         nextEvent?.kind === 'ObservationEvent' ? nextEvent as ObservationEvent : undefined;
-      const publishedWorkflow = getPublishedWorkflowObservation(nextEvent);
       rendered.push(
         <div key={event.id}>
           <ToolCallBlock
             action={event as ActionEvent}
             observation={observation}
           />
-          {publishedWorkflow && (
-            <WorkflowBlock
-              observation={publishedWorkflow}
-            />
-          )}
         </div>,
       );
       if (observation) {
         i++; // Skip the observation since we rendered it with the action
       }
     } else if (event.kind === 'ObservationEvent') {
-      const publishedWorkflow = getPublishedWorkflowObservation(event);
-      if (isPublishedWorkflowObservation(event) && publishedWorkflow) {
+      const workflowFile = getWorkflowFileObservation(event);
+      if (isWorkflowFileObservationEvent(event) && workflowFile) {
         rendered.push(
           <WorkflowBlock
             key={event.id}
-            observation={publishedWorkflow}
+            observation={workflowFile}
           />,
         );
         continue;
@@ -94,13 +73,23 @@ export function ChatPanel({ events }: ChatPanelProps) {
               {getObsText(event as ObservationEvent)}
             </pre>
           </div>
-          {publishedWorkflow && (
+          {workflowFile && (
             <WorkflowBlock
-              observation={publishedWorkflow}
+              observation={workflowFile}
             />
           )}
         </div>,
       );
+    } else if (event.kind === 'ConversationStateUpdateEvent') {
+      const workflowFile = getWorkflowFileObservation(event);
+      if (workflowFile) {
+        rendered.push(
+          <WorkflowBlock
+            key={event.id}
+            observation={workflowFile}
+          />,
+        );
+      }
     } else if (event.kind === 'ServerErrorEvent') {
       rendered.push(
         <div key={`error-${i}`} className="mb-3 mx-2 p-3 bg-red-50 border border-red-200 rounded-lg">
@@ -109,7 +98,7 @@ export function ChatPanel({ events }: ChatPanelProps) {
         </div>,
       );
     }
-    // Skip ConversationStateUpdateEvent - handled by context
+    // Other ConversationStateUpdateEvent entries are handled by context.
   }
 
   return (
