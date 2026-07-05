@@ -165,3 +165,19 @@ export function getWorkflowFileObservation(
 
   return null;
 }
+
+/**
+ * Scan the event log for the most recent workflow.py snapshot the server
+ * pushed back (i.e. what would be loaded onto the canvas after a run).
+ * Returns '' for "workflow.py does not exist", or null if no such event
+ * has ever been seen in this conversation.
+ */
+export function getLatestWorkflowDsl(events: ChatEvent[]): string | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const observation = getWorkflowFileObservation(events[i]);
+    if (observation) {
+      return observation.exists ? observation.workflow : '';
+    }
+  }
+  return null;
+}

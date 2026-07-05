@@ -25,10 +25,16 @@ function getHeaders(options?: RequestOptions): Record<string, string> {
 /**
  * Create a new conversation with the Pyromind knowledge-base agent.
  * The server assembles system_prompt, tools, and workspace internally.
+ *
+ * `workflowDsl` seeds workflow.py from a workflow the user already had on
+ * the canvas before starting this conversation (`undefined`/omitted means
+ * no canvas state to seed from -- this is turn 1, so there is nothing to
+ * reconcile against yet).
  */
 export async function createConversation(
   initialMessage?: string,
   options?: RequestOptions,
+  workflowDsl?: string,
 ): Promise<ConversationInfo> {
   await prepareAuth(options);
   const body: Record<string, unknown> = {
@@ -38,6 +44,7 @@ export async function createConversation(
       base_url: LLM_BASE_URL || undefined,
     },
     message: initialMessage || undefined,
+    workflow_dsl: workflowDsl || undefined,
     extra: {},  // Extensible: e.g. { knowledge_base_path, language, custom_instructions }
   };
 
@@ -59,6 +66,10 @@ export async function createConversation(
 /**
  * Send a message to an existing conversation.
  * Setting run=true automatically triggers the agent to process the message.
+ *
+ * This is the generic events endpoint; it cannot carry canvas DSL. Prefer
+ * `sendPyromindMessage` for Pyromind conversations so workflow.py stays in
+ * sync with what the user sees on the canvas.
  */
 export async function sendMessage(
   conversationId: string,
@@ -76,6 +87,41 @@ export async function sendMessage(
       run: true,
     }),
   });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to send message: ${res.status} ${errorText}`);
+  }
+}
+
+/**
+ * Send a message to a Pyromind conversation, attaching the DSL currently
+ * shown on the canvas so the server can re-sync workflow.py before the
+ * agent acts on this message.
+ *
+ * `workflowDsl === null` means "no canvas state attached" (server performs
+ * no sync); `workflowDsl === ''` means the canvas is genuinely empty.
+ */
+export async function sendPyromindMessage(
+  conversationId: string,
+  text: string,
+  workflowDsl: string | null,
+  options?: RequestOptions,
+): Promise<void> {
+  await prepareAuth(options);
+  const res = await fetch(
+    `${BACKEND_URL}/api/pyromind/conversations/${conversationId}/messages`,
+    {
+      method: 'POST',
+      headers: getHeaders(options),
+      credentials: 'include',
+      body: JSON.stringify({
+        text,
+        workflow_dsl: workflowDsl,
+        run: true,
+      }),
+    },
+  );
 
   if (!res.ok) {
     const errorText = await res.text();
