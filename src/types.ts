@@ -48,11 +48,10 @@ export interface BaseObservation {
   command?: string;
   old_content?: string | null;
   new_content?: string | null;
-  published_workflow?: PublishedWorkflowObservation | null;
 }
 
-export interface PublishedWorkflowObservation extends BaseObservation {
-  kind: 'PublishedWorkflowObservation';
+export interface WorkflowFileObservation extends BaseObservation {
+  kind: 'WorkflowFileObservation';
   workflow: string;
   path: string;
   name: string | null;
@@ -69,16 +68,20 @@ export interface ObservationEvent {
   tool_name?: string;
   tool_call_id?: string;
   action_id?: string;
-  observation: BaseObservation | PublishedWorkflowObservation;
+  observation: BaseObservation | WorkflowFileObservation;
 }
 
 // Conversation state changes
+// The agent-server only ever serializes this as `key` (see
+// ConversationStateUpdateEvent in openhands-sdk). `field` is kept optional
+// for backward compatibility with any older payloads.
 export interface ConversationStateUpdateEvent {
   kind: 'ConversationStateUpdateEvent';
   id: string;
   timestamp: string;
   source: 'environment';
-  field: string;
+  key?: string;
+  field?: string;
   value: unknown;
 }
 
@@ -128,63 +131,54 @@ export type ExecutionStatus =
   | 'stuck'
   | 'deleting';
 
-export function isPublishedWorkflowObservation(
-  event: ChatEvent | undefined,
-): event is ObservationEvent & { observation: PublishedWorkflowObservation } {
+// Key used by the agent-server when pushing workflow.py updates via
+// ConversationStateUpdateEvent (see PYROMIND_WORKFLOW_EVENT_KEY in
+// openhands-agent-server/openhands/agent_server/pyromind_constants.py).
+// This push is independent of any specific tool call - the server emits it
+// whenever workflow.py changes during a run.
+const WORKFLOW_EVENT_KEY = 'pyromind_workflow';
+
+function isWorkflowFileObservationValue(
+  value: unknown,
+): value is WorkflowFileObservation {
   return (
-    event?.kind === 'ObservationEvent'
-    && event.observation.kind === 'PublishedWorkflowObservation'
+    typeof value === 'object'
+    && value !== null
+    && (value as { kind?: string }).kind === 'WorkflowFileObservation'
   );
 }
 
-export function getPublishedWorkflowObservation(
+export function isWorkflowFileObservationEvent(
   event: ChatEvent | undefined,
-): PublishedWorkflowObservation | null {
-  if (isPublishedWorkflowObservation(event)) {
+): event is ObservationEvent & { observation: WorkflowFileObservation } {
+  return (
+    event?.kind === 'ObservationEvent'
+    && event.observation.kind === 'WorkflowFileObservation'
+  );
+}
+
+export function getWorkflowFileObservation(
+  event: ChatEvent | undefined,
+): WorkflowFileObservation | null {
+  if (isWorkflowFileObservationEvent(event)) {
     return event.observation;
   }
 
-  if (event?.kind !== 'ObservationEvent') {
-    return null;
-  }
-
-  const nested = event.observation.published_workflow;
-  if (nested?.kind === 'PublishedWorkflowObservation') {
-    return nested;
+  if (event?.kind === 'ConversationStateUpdateEvent') {
+    const key = event.key ?? event.field;
+    if (key === WORKFLOW_EVENT_KEY && isWorkflowFileObservationValue(event.value)) {
+      return event.value;
+    }
   }
 
   return null;
 }
 
-function isPublishedWorkflowObservationValue(
-  value: unknown,
-): value is PublishedWorkflowObservation {
-  return (
-    typeof value === 'object'
-    && value !== null
-    && (value as { kind?: string }).kind === 'PublishedWorkflowObservation'
-  );
-}
-
-export function isPublishWorkflowAction(event: ChatEvent | undefined): boolean {
-  return (
-    event?.kind === 'ActionEvent'
-    && (event.tool_name === 'publish_workflow' || event.tool_call.name === 'publish_workflow')
-  );
-}
-
 export function getLatestWorkflowDsl(events: ChatEvent[]): string | null {
   for (let index = events.length - 1; index >= 0; index--) {
-    const event = events[index];
-    const observation = getPublishedWorkflowObservation(event);
+    const observation = getWorkflowFileObservation(events[index]);
     if (observation) {
       return observation.exists ? observation.workflow : '';
-    }
-
-    if (event?.kind === 'ConversationStateUpdateEvent'
-      && isPublishedWorkflowObservationValue(event.value)
-    ) {
-      return event.value.exists ? event.value.workflow : '';
     }
   }
   return null;
