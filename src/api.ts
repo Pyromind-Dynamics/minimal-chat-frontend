@@ -1,23 +1,37 @@
-import { setTestAuthCookie } from './authToken';
+import { getDebugAuthHeaders } from './authToken';
 import { BACKEND_URL, SESSION_API_KEY, LLM_MODEL, LLM_API_KEY, LLM_BASE_URL } from './config';
+import { applyRequestCookies, normalizeRequestValue, type RequestOverrides } from './requestOverrides';
 import type { ChatEvent, ConversationInfo, ConversationPage, EventPage } from './types';
 
-interface RequestOptions {
+interface RequestOptions extends RequestOverrides {
   userId?: string;
 }
 
+export interface DebugUrlResult {
+  url: string;
+  context_source: string;
+  conversation_id?: string | null;
+  status_code: number;
+  forwarded_headers: Record<string, string>;
+  response_headers: Record<string, string>;
+  body: string;
+}
+
 async function prepareAuth(options?: RequestOptions): Promise<void> {
-  if (options?.userId) {
-    await setTestAuthCookie(options.userId);
-  }
+  await applyRequestCookies(options?.cookie);
 }
 
 function getHeaders(options?: RequestOptions): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    ...getDebugAuthHeaders(options?.userId),
   };
   if (SESSION_API_KEY && !options?.userId) {
     headers['X-Session-API-Key'] = SESSION_API_KEY;
+  }
+  const xCluster = normalizeRequestValue(options?.xCluster);
+  if (xCluster) {
+    headers['x-cluster'] = xCluster;
   }
   return headers;
 }
@@ -25,16 +39,10 @@ function getHeaders(options?: RequestOptions): Record<string, string> {
 /**
  * Create a new conversation with the Pyromind knowledge-base agent.
  * The server assembles system_prompt, tools, and workspace internally.
- *
- * `workflowDsl` seeds workflow.py from a workflow the user already had on
- * the canvas before starting this conversation (`undefined`/omitted means
- * no canvas state to seed from -- this is turn 1, so there is nothing to
- * reconcile against yet).
  */
 export async function createConversation(
   initialMessage?: string,
   options?: RequestOptions,
-  workflowDsl?: string,
 ): Promise<ConversationInfo> {
   await prepareAuth(options);
   const body: Record<string, unknown> = {
@@ -44,7 +52,6 @@ export async function createConversation(
       base_url: LLM_BASE_URL || undefined,
     },
     message: initialMessage || undefined,
-    workflow_dsl: workflowDsl || undefined,
     extra: {},  // Extensible: e.g. { knowledge_base_path, language, custom_instructions }
   };
 
@@ -66,10 +73,6 @@ export async function createConversation(
 /**
  * Send a message to an existing conversation.
  * Setting run=true automatically triggers the agent to process the message.
- *
- * This is the generic events endpoint; it cannot carry canvas DSL. Prefer
- * `sendPyromindMessage` for Pyromind conversations so workflow.py stays in
- * sync with what the user sees on the canvas.
  */
 export async function sendMessage(
   conversationId: string,
@@ -87,41 +90,6 @@ export async function sendMessage(
       run: true,
     }),
   });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Failed to send message: ${res.status} ${errorText}`);
-  }
-}
-
-/**
- * Send a message to a Pyromind conversation, attaching the DSL currently
- * shown on the canvas so the server can re-sync workflow.py before the
- * agent acts on this message.
- *
- * `workflowDsl === null` means "no canvas state attached" (server performs
- * no sync); `workflowDsl === ''` means the canvas is genuinely empty.
- */
-export async function sendPyromindMessage(
-  conversationId: string,
-  text: string,
-  workflowDsl: string | null,
-  options?: RequestOptions,
-): Promise<void> {
-  await prepareAuth(options);
-  const res = await fetch(
-    `${BACKEND_URL}/api/pyromind/conversations/${conversationId}/messages`,
-    {
-      method: 'POST',
-      headers: getHeaders(options),
-      credentials: 'include',
-      body: JSON.stringify({
-        text,
-        workflow_dsl: workflowDsl,
-        run: true,
-      }),
-    },
-  );
 
   if (!res.ok) {
     const errorText = await res.text();
@@ -184,4 +152,26 @@ export async function listConversationEvents(
   } while (pageId);
 
   return events;
+}
+
+export async function requestDebugUrl(
+  url: string,
+  conversationId: string,
+  options?: RequestOptions,
+): Promise<DebugUrlResult> {
+  await prepareAuth(options);
+  const body: Record<string, string> = { url, conversation_id: conversationId };
+  const res = await fetch(`${BACKEND_URL}/api/pyromind/debug/request-url`, {
+    method: 'POST',
+    headers: getHeaders(options),
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to request debug URL: ${res.status} ${errorText}`);
+  }
+
+  return res.json();
 }

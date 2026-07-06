@@ -1,20 +1,27 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ChatProvider, useChatContext } from './ChatContext';
 import { useConversationSocket } from './hooks/useConversationSocket';
 import {
   createConversation,
+  requestDebugUrl,
   listConversationEvents,
   listConversations,
-  sendPyromindMessage,
+  sendMessage,
+  type DebugUrlResult,
 } from './api';
 import { ChatPanel } from './components/ChatPanel';
 import { MessageInput } from './components/MessageInput';
 import { StatusBar } from './components/StatusBar';
-import { WorkflowDslEditor } from './components/WorkflowDslEditor';
-import { getLatestWorkflowDsl, type ConversationInfo, type ExecutionStatus } from './types';
+import type { ConversationInfo, ExecutionStatus } from './types';
 
 const DEFAULT_USER_IDS = ['42', '7', '1001'];
 const USER_IDS_STORAGE_KEY = 'minimal-chat.debugUserIds';
+const REQUEST_OVERRIDES_STORAGE_KEY = 'minimal-chat.requestOverrides';
+
+interface RequestOverrideFields {
+  cookie: string;
+  xCluster: string;
+}
 
 function loadUserIds(): string[] {
   const saved = localStorage.getItem(USER_IDS_STORAGE_KEY);
@@ -30,6 +37,23 @@ function loadUserIds(): string[] {
     return DEFAULT_USER_IDS;
   }
   return DEFAULT_USER_IDS;
+}
+
+function loadRequestOverrides(): RequestOverrideFields {
+  const empty = { cookie: '', xCluster: '' };
+  const saved = localStorage.getItem(REQUEST_OVERRIDES_STORAGE_KEY);
+  if (!saved) {
+    return empty;
+  }
+  try {
+    const parsed = JSON.parse(saved) as Partial<RequestOverrideFields>;
+    return {
+      cookie: typeof parsed.cookie === 'string' ? parsed.cookie : '',
+      xCluster: typeof parsed.xCluster === 'string' ? parsed.xCluster : '',
+    };
+  } catch {
+    return empty;
+  }
 }
 
 function formatTime(value: string): string {
@@ -54,33 +78,40 @@ function ChatApp() {
   const [userIds, setUserIds] = useState(loadUserIds);
   const [activeUserId, setActiveUserId] = useState(userIds[0] ?? DEFAULT_USER_IDS[0]);
   const [draftUserId, setDraftUserId] = useState('');
+  const [requestOverrides, setRequestOverrides] = useState(loadRequestOverrides);
+  const [draftRequestOverrides, setDraftRequestOverrides] = useState(loadRequestOverrides);
   const [conversations, setConversations] = useState<ConversationInfo[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [isLoadingList, setIsLoadingList] = useState(false);
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
-
-  // Stand-in for the xyflow canvas: the DSL text currently "on the canvas",
-  // and the last DSL value the server pushed back (to detect hand-edits).
-  const [workflowDsl, setWorkflowDsl] = useState('');
-  const serverDslRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    const latest = getLatestWorkflowDsl(state.events);
-    if (latest !== null && latest !== serverDslRef.current) {
-      serverDslRef.current = latest;
-      setWorkflowDsl(latest);
-    }
-  }, [state.events]);
+  const [debugUrl, setDebugUrl] = useState('');
+  const [debugUrlResult, setDebugUrlResult] = useState<DebugUrlResult | null>(null);
+  const [isRequestingDebugUrl, setIsRequestingDebugUrl] = useState(false);
 
   const { wsState } = useConversationSocket({
     conversationId: state.conversationId,
     userId: activeUserId,
+    cookie: requestOverrides.cookie,
+    xCluster: requestOverrides.xCluster,
     onEvent: handleEvent,
   });
 
   useEffect(() => {
     localStorage.setItem(USER_IDS_STORAGE_KEY, JSON.stringify(userIds));
   }, [userIds]);
+
+  useEffect(() => {
+    localStorage.setItem(REQUEST_OVERRIDES_STORAGE_KEY, JSON.stringify(requestOverrides));
+  }, [requestOverrides]);
+
+  const getRequestOptions = useCallback(
+    (userId = activeUserId) => ({
+      userId,
+      cookie: requestOverrides.cookie,
+      xCluster: requestOverrides.xCluster,
+    }),
+    [activeUserId, requestOverrides.cookie, requestOverrides.xCluster],
+  );
 
   const openConversation = useCallback(
     async (conversation: ConversationInfo, userId = activeUserId) => {
@@ -89,11 +120,9 @@ function ChatApp() {
         type: 'SET_STATUS',
         status: conversation.execution_status as ExecutionStatus,
       });
-      serverDslRef.current = null;
-      setWorkflowDsl('');
       setIsLoadingEvents(true);
       try {
-        const events = await listConversationEvents(conversation.id, { userId });
+        const events = await listConversationEvents(conversation.id, getRequestOptions(userId));
         dispatch({ type: 'SET_EVENTS', events });
       } catch (err) {
         dispatch({
@@ -104,14 +133,14 @@ function ChatApp() {
         setIsLoadingEvents(false);
       }
     },
-    [activeUserId, dispatch],
+    [activeUserId, dispatch, getRequestOptions],
   );
 
   const refreshConversations = useCallback(
     async (preferredConversationId?: string, userId = activeUserId) => {
       setIsLoadingList(true);
       try {
-        const items = await listConversations({ userId });
+        const items = await listConversations(getRequestOptions(userId));
         setConversations(items);
 
         const selected =
@@ -134,7 +163,7 @@ function ChatApp() {
         setIsLoadingList(false);
       }
     },
-    [activeUserId, dispatch, openConversation],
+    [activeUserId, dispatch, getRequestOptions, openConversation],
   );
 
   useEffect(() => {
@@ -145,23 +174,12 @@ function ChatApp() {
     async (text: string) => {
       setIsSending(true);
       try {
+        const requestOptions = getRequestOptions(activeUserId);
         if (!state.conversationId) {
-          // Turn 1: seed workflow.py from the canvas DSL if any was pasted
-          // in before the first message (no system_reminder needed here --
-          // there is no prior-turn file content to contrast against).
-          const info = await createConversation(
-            text,
-            { userId: activeUserId },
-            workflowDsl || undefined,
-          );
-          serverDslRef.current = workflowDsl || null;
+          const info = await createConversation(text, requestOptions);
           await refreshConversations(info.id, activeUserId);
         } else {
-          // Always attach the current canvas DSL so the server can re-sync
-          // workflow.py before the agent acts on this message.
-          await sendPyromindMessage(state.conversationId, text, workflowDsl, {
-            userId: activeUserId,
-          });
+          await sendMessage(state.conversationId, text, requestOptions);
           void refreshConversations(state.conversationId, activeUserId);
         }
       } catch (err) {
@@ -173,19 +191,13 @@ function ChatApp() {
         setIsSending(false);
       }
     },
-    [activeUserId, dispatch, refreshConversations, state.conversationId, workflowDsl],
+    [activeUserId, dispatch, getRequestOptions, refreshConversations, state.conversationId],
   );
-
-  const handleTestWorkflow = useCallback(() => {
-    void handleSend(
-      '请测试当前工作流：触发试跑，如有报错请定位并修复后重试，直到通过。',
-    );
-  }, [handleSend]);
 
   const handleAddUser = useCallback(() => {
     const nextUserId = draftUserId.trim();
     if (!/^\d+$/.test(nextUserId)) {
-      dispatch({ type: 'SET_ERROR', error: 'User ID must be numeric for the JWT test token.' });
+      dispatch({ type: 'SET_ERROR', error: 'User ID must be numeric for dev auth.' });
       return;
     }
     setUserIds((current) =>
@@ -194,6 +206,60 @@ function ChatApp() {
     setActiveUserId(nextUserId);
     setDraftUserId('');
   }, [dispatch, draftUserId]);
+
+  const handleApplyRequestOverrides = useCallback(() => {
+    setRequestOverrides({
+      cookie: draftRequestOverrides.cookie.trim(),
+      xCluster: draftRequestOverrides.xCluster.trim(),
+    });
+  }, [draftRequestOverrides.cookie, draftRequestOverrides.xCluster]);
+
+  const handleRequestDebugUrl = useCallback(async () => {
+    const url = debugUrl.trim();
+    if (!url) {
+      dispatch({ type: 'SET_ERROR', error: 'Test URL is required.' });
+      return;
+    }
+    if (!state.conversationId) {
+      dispatch({ type: 'SET_ERROR', error: 'Select or create a conversation first.' });
+      return;
+    }
+
+    const nextOverrides = {
+      cookie: draftRequestOverrides.cookie.trim(),
+      xCluster: draftRequestOverrides.xCluster.trim(),
+    };
+    setRequestOverrides(nextOverrides);
+    setIsRequestingDebugUrl(true);
+    setDebugUrlResult(null);
+    try {
+      setDebugUrlResult(
+        await requestDebugUrl(
+          url,
+          state.conversationId,
+          {
+            userId: activeUserId,
+            cookie: nextOverrides.cookie,
+            xCluster: nextOverrides.xCluster,
+          },
+        ),
+      );
+    } catch (err) {
+      dispatch({
+        type: 'SET_ERROR',
+        error: err instanceof Error ? err.message : 'Unknown error',
+      });
+    } finally {
+      setIsRequestingDebugUrl(false);
+    }
+  }, [
+    activeUserId,
+    debugUrl,
+    dispatch,
+    draftRequestOverrides.cookie,
+    draftRequestOverrides.xCluster,
+    state.conversationId,
+  ]);
 
   const selectedConversation = conversations.find(
     (conversation) => conversation.id === state.conversationId,
@@ -238,6 +304,99 @@ function ChatApp() {
             </button>
           </form>
         </div>
+        <form
+          className="grid gap-2 pt-2 sm:grid-cols-[minmax(220px,1fr)_minmax(160px,220px)_auto]"
+          onSubmit={(event) => {
+            event.preventDefault();
+            handleApplyRequestOverrides();
+          }}
+        >
+          <label className="min-w-0">
+            <span className="mb-1 block text-xs font-medium text-gray-500">Cookie</span>
+            <input
+              value={draftRequestOverrides.cookie}
+              onChange={(event) =>
+                setDraftRequestOverrides((current) => ({
+                  ...current,
+                  cookie: event.target.value,
+                }))
+              }
+              placeholder="name=value; other=value"
+              spellCheck={false}
+              autoCapitalize="off"
+              className="w-full rounded-md border border-gray-200 px-3 py-1.5 font-mono text-xs outline-none focus:border-blue-500"
+            />
+          </label>
+          <label className="min-w-0">
+            <span className="mb-1 block text-xs font-medium text-gray-500">x-cluster</span>
+            <input
+              value={draftRequestOverrides.xCluster}
+              onChange={(event) =>
+                setDraftRequestOverrides((current) => ({
+                  ...current,
+                  xCluster: event.target.value,
+                }))
+              }
+              placeholder="cluster"
+              spellCheck={false}
+              autoCapitalize="off"
+              className="w-full rounded-md border border-gray-200 px-3 py-1.5 font-mono text-xs outline-none focus:border-blue-500"
+            />
+          </label>
+          <button
+            type="submit"
+            className="self-end rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700"
+          >
+            Apply
+          </button>
+        </form>
+        <form
+          className="grid gap-2 pt-2 sm:grid-cols-[minmax(260px,1fr)_auto]"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void handleRequestDebugUrl();
+          }}
+        >
+          <label className="min-w-0">
+            <span className="mb-1 block text-xs font-medium text-gray-500">Test URL</span>
+            <input
+              value={debugUrl}
+              onChange={(event) => setDebugUrl(event.target.value)}
+              placeholder="https://example.test/debug"
+              spellCheck={false}
+              autoCapitalize="off"
+              className="w-full rounded-md border border-gray-200 px-3 py-1.5 font-mono text-xs outline-none focus:border-blue-500"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={isRequestingDebugUrl}
+            className="self-end rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+          >
+            {isRequestingDebugUrl ? 'Requesting...' : 'Request'}
+          </button>
+        </form>
+        {debugUrlResult && (
+          <div className="mt-2 grid gap-2 rounded-md border border-gray-200 bg-gray-50 p-2 text-xs text-gray-700 sm:grid-cols-[220px_1fr]">
+            <div className="min-w-0">
+              <div className="font-medium text-gray-900">
+                Status {debugUrlResult.status_code}
+              </div>
+              <div className="mt-1 text-[11px] text-gray-500">
+                {debugUrlResult.context_source}
+                {debugUrlResult.conversation_id
+                  ? ` ${debugUrlResult.conversation_id.slice(0, 8)}`
+                  : ''}
+              </div>
+              <pre className="mt-1 max-h-24 overflow-auto rounded border border-gray-200 bg-white p-2 font-mono text-[11px]">
+                {JSON.stringify(debugUrlResult.forwarded_headers, null, 2)}
+              </pre>
+            </div>
+            <pre className="max-h-28 min-w-0 overflow-auto rounded border border-gray-200 bg-white p-2 font-mono text-[11px]">
+              {debugUrlResult.body || '(empty body)'}
+            </pre>
+          </div>
+        )}
       </div>
 
       <StatusBar
@@ -268,11 +427,7 @@ function ChatApp() {
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  dispatch({ type: 'RESET_CONVERSATION' });
-                  serverDslRef.current = null;
-                  setWorkflowDsl('');
-                }}
+                onClick={() => dispatch({ type: 'RESET_CONVERSATION' })}
                 className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
               >
                 New
@@ -335,14 +490,6 @@ function ChatApp() {
           </div>
 
           <ChatPanel events={state.events} />
-
-          <WorkflowDslEditor
-            value={workflowDsl}
-            onChange={setWorkflowDsl}
-            isSynced={workflowDsl === (serverDslRef.current ?? '')}
-            onTest={handleTestWorkflow}
-            testDisabled={isSending || state.status === 'running' || !workflowDsl.trim()}
-          />
 
           <MessageInput
             onSend={handleSend}
