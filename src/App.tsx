@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChatProvider, useChatContext } from './ChatContext';
 import { useConversationSocket } from './hooks/useConversationSocket';
 import {
@@ -6,13 +6,14 @@ import {
   requestDebugUrl,
   listConversationEvents,
   listConversations,
-  sendMessage,
+  sendPyromindMessage,
   type DebugUrlResult,
 } from './api';
 import { ChatPanel } from './components/ChatPanel';
 import { MessageInput } from './components/MessageInput';
 import { StatusBar } from './components/StatusBar';
-import type { ConversationInfo, ExecutionStatus } from './types';
+import { WorkflowDslEditor } from './components/WorkflowDslEditor';
+import { getLatestWorkflowDsl, type ConversationInfo, type ExecutionStatus } from './types';
 
 const DEFAULT_USER_IDS = ['42', '7', '1001'];
 const USER_IDS_STORAGE_KEY = 'minimal-chat.debugUserIds';
@@ -87,6 +88,8 @@ function ChatApp() {
   const [debugUrl, setDebugUrl] = useState('');
   const [debugUrlResult, setDebugUrlResult] = useState<DebugUrlResult | null>(null);
   const [isRequestingDebugUrl, setIsRequestingDebugUrl] = useState(false);
+  const [workflowDsl, setWorkflowDsl] = useState('');
+  const serverWorkflowDslRef = useRef<string | null>(null);
 
   const { wsState } = useConversationSocket({
     conversationId: state.conversationId,
@@ -104,6 +107,17 @@ function ChatApp() {
     localStorage.setItem(REQUEST_OVERRIDES_STORAGE_KEY, JSON.stringify(requestOverrides));
   }, [requestOverrides]);
 
+  useEffect(() => {
+    const latestWorkflowDsl = getLatestWorkflowDsl(state.events);
+    if (
+      latestWorkflowDsl !== null
+      && latestWorkflowDsl !== serverWorkflowDslRef.current
+    ) {
+      serverWorkflowDslRef.current = latestWorkflowDsl;
+      setWorkflowDsl(latestWorkflowDsl);
+    }
+  }, [state.events]);
+
   const getRequestOptions = useCallback(
     (userId = activeUserId) => ({
       userId,
@@ -120,6 +134,8 @@ function ChatApp() {
         type: 'SET_STATUS',
         status: conversation.execution_status as ExecutionStatus,
       });
+      serverWorkflowDslRef.current = null;
+      setWorkflowDsl('');
       setIsLoadingEvents(true);
       try {
         const events = await listConversationEvents(conversation.id, getRequestOptions(userId));
@@ -176,10 +192,20 @@ function ChatApp() {
       try {
         const requestOptions = getRequestOptions(activeUserId);
         if (!state.conversationId) {
-          const info = await createConversation(text, requestOptions);
+          const info = await createConversation(
+            text,
+            requestOptions,
+            workflowDsl || undefined,
+          );
+          serverWorkflowDslRef.current = workflowDsl || null;
           await refreshConversations(info.id, activeUserId);
         } else {
-          await sendMessage(state.conversationId, text, requestOptions);
+          await sendPyromindMessage(
+            state.conversationId,
+            text,
+            workflowDsl,
+            requestOptions,
+          );
           void refreshConversations(state.conversationId, activeUserId);
         }
       } catch (err) {
@@ -191,8 +217,19 @@ function ChatApp() {
         setIsSending(false);
       }
     },
-    [activeUserId, dispatch, getRequestOptions, refreshConversations, state.conversationId],
+    [
+      activeUserId,
+      dispatch,
+      getRequestOptions,
+      refreshConversations,
+      state.conversationId,
+      workflowDsl,
+    ],
   );
+
+  const handleTestWorkflow = useCallback(() => {
+    void handleSend('请测试当前工作流：触发试跑，如有报错请定位并修复后重试，直到通过。');
+  }, [handleSend]);
 
   const handleAddUser = useCallback(() => {
     const nextUserId = draftUserId.trim();
@@ -427,7 +464,11 @@ function ChatApp() {
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => dispatch({ type: 'RESET_CONVERSATION' })}
+                onClick={() => {
+                  dispatch({ type: 'RESET_CONVERSATION' });
+                  serverWorkflowDslRef.current = null;
+                  setWorkflowDsl('');
+                }}
                 className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
               >
                 New
@@ -490,6 +531,14 @@ function ChatApp() {
           </div>
 
           <ChatPanel events={state.events} />
+
+          <WorkflowDslEditor
+            value={workflowDsl}
+            onChange={setWorkflowDsl}
+            isSynced={workflowDsl === (serverWorkflowDslRef.current ?? '')}
+            onTest={handleTestWorkflow}
+            testDisabled={isSending || state.status === 'running' || !workflowDsl.trim()}
+          />
 
           <MessageInput
             onSend={handleSend}

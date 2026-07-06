@@ -43,6 +43,7 @@ function getHeaders(options?: RequestOptions): Record<string, string> {
 export async function createConversation(
   initialMessage?: string,
   options?: RequestOptions,
+  workflowDsl?: string,
 ): Promise<ConversationInfo> {
   await prepareAuth(options);
   const body: Record<string, unknown> = {
@@ -52,6 +53,7 @@ export async function createConversation(
       base_url: LLM_BASE_URL || undefined,
     },
     message: initialMessage || undefined,
+    workflow_dsl: workflowDsl || undefined,
     extra: {},  // Extensible: e.g. { knowledge_base_path, language, custom_instructions }
   };
 
@@ -90,6 +92,33 @@ export async function sendMessage(
       run: true,
     }),
   });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to send message: ${res.status} ${errorText}`);
+  }
+}
+
+export async function sendPyromindMessage(
+  conversationId: string,
+  text: string,
+  workflowDsl: string | null,
+  options?: RequestOptions,
+): Promise<void> {
+  await prepareAuth(options);
+  const res = await fetch(
+    `${BACKEND_URL}/api/pyromind/conversations/${conversationId}/messages`,
+    {
+      method: 'POST',
+      headers: getHeaders(options),
+      credentials: 'include',
+      body: JSON.stringify({
+        text,
+        workflow_dsl: workflowDsl,
+        run: true,
+      }),
+    },
+  );
 
   if (!res.ok) {
     const errorText = await res.text();

@@ -156,9 +156,36 @@ export function getPublishedWorkflowObservation(
   return null;
 }
 
+function isPublishedWorkflowObservationValue(
+  value: unknown,
+): value is PublishedWorkflowObservation {
+  return (
+    typeof value === 'object'
+    && value !== null
+    && (value as { kind?: string }).kind === 'PublishedWorkflowObservation'
+  );
+}
+
 export function isPublishWorkflowAction(event: ChatEvent | undefined): boolean {
   return (
     event?.kind === 'ActionEvent'
     && (event.tool_name === 'publish_workflow' || event.tool_call.name === 'publish_workflow')
   );
+}
+
+export function getLatestWorkflowDsl(events: ChatEvent[]): string | null {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    const observation = getPublishedWorkflowObservation(event);
+    if (observation) {
+      return observation.exists ? observation.workflow : '';
+    }
+
+    if (event?.kind === 'ConversationStateUpdateEvent'
+      && isPublishedWorkflowObservationValue(event.value)
+    ) {
+      return event.value.exists ? event.value.workflow : '';
+    }
+  }
+  return null;
 }
