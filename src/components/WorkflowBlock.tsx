@@ -1,7 +1,7 @@
-import type { WorkflowFileObservation } from '../types';
+import type { PublishedWorkflowObservation } from '../types';
 
 interface WorkflowBlockProps {
-  observation: WorkflowFileObservation;
+  observation: PublishedWorkflowObservation;
 }
 
 export function WorkflowBlock({ observation }: WorkflowBlockProps) {
