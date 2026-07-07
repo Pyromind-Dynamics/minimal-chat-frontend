@@ -3,6 +3,7 @@ import { ChatProvider, useChatContext } from './ChatContext';
 import { useConversationSocket } from './hooks/useConversationSocket';
 import {
   createConversation,
+  forkPyromindConversationAtEvent,
   requestDebugUrl,
   listConversationEvents,
   listConversations,
@@ -85,6 +86,9 @@ function ChatApp() {
   const [isSending, setIsSending] = useState(false);
   const [isLoadingList, setIsLoadingList] = useState(false);
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
+  const [rollingBackWorkflowEventId, setRollingBackWorkflowEventId] = useState<
+    string | null
+  >(null);
   const [debugUrl, setDebugUrl] = useState('');
   const [debugUrlResult, setDebugUrlResult] = useState<DebugUrlResult | null>(null);
   const [isRequestingDebugUrl, setIsRequestingDebugUrl] = useState(false);
@@ -230,6 +234,38 @@ function ChatApp() {
   const handleTestWorkflow = useCallback(() => {
     void handleSend('请测试当前工作流：触发试跑，如有报错请定位并修复后重试，直到通过。');
   }, [handleSend]);
+
+  const handleRollbackWorkflow = useCallback(
+    async (eventId: string) => {
+      if (!state.conversationId) {
+        dispatch({ type: 'SET_ERROR', error: 'Select a conversation first.' });
+        return;
+      }
+      setRollingBackWorkflowEventId(eventId);
+      try {
+        const result = await forkPyromindConversationAtEvent(
+          state.conversationId,
+          eventId,
+          getRequestOptions(activeUserId),
+        );
+        await refreshConversations(result.conversationId, activeUserId);
+      } catch (err) {
+        dispatch({
+          type: 'SET_ERROR',
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+      } finally {
+        setRollingBackWorkflowEventId(null);
+      }
+    },
+    [
+      activeUserId,
+      dispatch,
+      getRequestOptions,
+      refreshConversations,
+      state.conversationId,
+    ],
+  );
 
   const handleAddUser = useCallback(() => {
     const nextUserId = draftUserId.trim();
@@ -530,7 +566,17 @@ function ChatApp() {
             {isLoadingEvents && <span>Loading history...</span>}
           </div>
 
-          <ChatPanel events={state.events} />
+          <ChatPanel
+            events={state.events}
+            onRollbackWorkflow={handleRollbackWorkflow}
+            rollbackWorkflowDisabled={
+              isSending
+              || isLoadingEvents
+              || state.status === 'running'
+              || rollingBackWorkflowEventId !== null
+            }
+            rollingBackWorkflowEventId={rollingBackWorkflowEventId}
+          />
 
           <WorkflowDslEditor
             value={workflowDsl}

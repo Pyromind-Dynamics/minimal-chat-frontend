@@ -120,6 +120,14 @@ export interface EventPage {
   next_page_id: string | null;
 }
 
+export interface PyromindForkAtEventResult {
+  conversationId: string;
+  sourceConversationId: string;
+  forkedAtEventId: string;
+  workflowVersionId: string;
+  conversation: ConversationInfo;
+}
+
 // Agent execution status
 export type ExecutionStatus =
   | 'idle'

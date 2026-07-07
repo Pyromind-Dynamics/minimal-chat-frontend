@@ -12,9 +12,17 @@ import { WorkflowBlock } from './WorkflowBlock';
 
 interface ChatPanelProps {
   events: ChatEvent[];
+  onRollbackWorkflow?: (eventId: string) => void;
+  rollbackWorkflowDisabled?: boolean;
+  rollingBackWorkflowEventId?: string | null;
 }
 
-export function ChatPanel({ events }: ChatPanelProps) {
+export function ChatPanel({
+  events,
+  onRollbackWorkflow,
+  rollbackWorkflowDisabled,
+  rollingBackWorkflowEventId,
+}: ChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom on new events
@@ -59,7 +67,11 @@ export function ChatPanel({ events }: ChatPanelProps) {
         rendered.push(
           <WorkflowBlock
             key={event.id}
+            eventId={event.id}
             observation={workflowFile}
+            onRollback={onRollbackWorkflow}
+            rollbackDisabled={rollbackWorkflowDisabled}
+            isRollingBack={rollingBackWorkflowEventId === event.id}
           />,
         );
         continue;
@@ -83,7 +95,11 @@ export function ChatPanel({ events }: ChatPanelProps) {
         rendered.push(
           <WorkflowBlock
             key={event.id}
+            eventId={event.id}
             observation={workflowFile}
+            onRollback={onRollbackWorkflow}
+            rollbackDisabled={rollbackWorkflowDisabled}
+            isRollingBack={rollingBackWorkflowEventId === event.id}
           />,
         );
       }

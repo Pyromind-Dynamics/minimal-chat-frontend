@@ -1,7 +1,13 @@
 import { getDebugAuthHeaders } from './authToken';
 import { BACKEND_URL, SESSION_API_KEY, LLM_MODEL, LLM_API_KEY, LLM_BASE_URL } from './config';
 import { applyRequestCookies, normalizeRequestValue, type RequestOverrides } from './requestOverrides';
-import type { ChatEvent, ConversationInfo, ConversationPage, EventPage } from './types';
+import type {
+  ChatEvent,
+  ConversationInfo,
+  ConversationPage,
+  EventPage,
+  PyromindForkAtEventResult,
+} from './types';
 
 interface RequestOptions extends RequestOverrides {
   userId?: string;
@@ -124,6 +130,30 @@ export async function sendPyromindMessage(
     const errorText = await res.text();
     throw new Error(`Failed to send message: ${res.status} ${errorText}`);
   }
+}
+
+export async function forkPyromindConversationAtEvent(
+  conversationId: string,
+  eventId: string,
+  options?: RequestOptions,
+): Promise<PyromindForkAtEventResult> {
+  await prepareAuth(options);
+  const res = await fetch(
+    `${BACKEND_URL}/api/pyromind/conversations/${conversationId}/fork-at-event`,
+    {
+      method: 'POST',
+      headers: getHeaders(options),
+      credentials: 'include',
+      body: JSON.stringify({ eventId }),
+    },
+  );
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to roll back conversation: ${res.status} ${errorText}`);
+  }
+
+  return res.json();
 }
 
 export async function listConversations(options?: RequestOptions): Promise<ConversationInfo[]> {
