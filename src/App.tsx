@@ -14,7 +14,11 @@ import { ChatPanel } from './components/ChatPanel';
 import { MessageInput } from './components/MessageInput';
 import { StatusBar } from './components/StatusBar';
 import { WorkflowDslEditor } from './components/WorkflowDslEditor';
-import { getLatestWorkflowDsl, type ConversationInfo, type ExecutionStatus } from './types';
+import {
+  getLatestWorkflowXyflowJson,
+  type ConversationInfo,
+  type ExecutionStatus,
+} from './types';
 
 const DEFAULT_USER_IDS = ['42', '7', '1001'];
 const USER_IDS_STORAGE_KEY = 'minimal-chat.debugUserIds';
@@ -75,6 +79,26 @@ function conversationTitle(conversation: ConversationInfo): string {
   return conversation.title?.trim() || conversation.id.slice(0, 8);
 }
 
+function emptyWorkflowXyflow(): Record<string, unknown> {
+  return { name: 'workflow', nodes: [], edges: [] };
+}
+
+function parseWorkflowXyflowJson(
+  value: string,
+  options: { emptyAsUndefined: boolean },
+): Record<string, unknown> | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return options.emptyAsUndefined ? undefined : emptyWorkflowXyflow();
+  }
+
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('Workflow JSON must be a JSON object.');
+  }
+  return parsed as Record<string, unknown>;
+}
+
 function ChatApp() {
   const { state, dispatch, handleEvent } = useChatContext();
   const [userIds, setUserIds] = useState(loadUserIds);
@@ -92,8 +116,8 @@ function ChatApp() {
   const [debugUrl, setDebugUrl] = useState('');
   const [debugUrlResult, setDebugUrlResult] = useState<DebugUrlResult | null>(null);
   const [isRequestingDebugUrl, setIsRequestingDebugUrl] = useState(false);
-  const [workflowDsl, setWorkflowDsl] = useState('');
-  const serverWorkflowDslRef = useRef<string | null>(null);
+  const [workflowXyflowJson, setWorkflowXyflowJson] = useState('');
+  const serverWorkflowXyflowJsonRef = useRef<string | null>(null);
 
   const { wsState } = useConversationSocket({
     conversationId: state.conversationId,
@@ -112,13 +136,13 @@ function ChatApp() {
   }, [requestOverrides]);
 
   useEffect(() => {
-    const latestWorkflowDsl = getLatestWorkflowDsl(state.events);
+    const latestWorkflowXyflowJson = getLatestWorkflowXyflowJson(state.events);
     if (
-      latestWorkflowDsl !== null
-      && latestWorkflowDsl !== serverWorkflowDslRef.current
+      latestWorkflowXyflowJson !== null
+      && latestWorkflowXyflowJson !== serverWorkflowXyflowJsonRef.current
     ) {
-      serverWorkflowDslRef.current = latestWorkflowDsl;
-      setWorkflowDsl(latestWorkflowDsl);
+      serverWorkflowXyflowJsonRef.current = latestWorkflowXyflowJson;
+      setWorkflowXyflowJson(latestWorkflowXyflowJson);
     }
   }, [state.events]);
 
@@ -138,8 +162,8 @@ function ChatApp() {
         type: 'SET_STATUS',
         status: conversation.execution_status as ExecutionStatus,
       });
-      serverWorkflowDslRef.current = null;
-      setWorkflowDsl('');
+      serverWorkflowXyflowJsonRef.current = null;
+      setWorkflowXyflowJson('');
       setIsLoadingEvents(true);
       try {
         const events = await listConversationEvents(conversation.id, getRequestOptions(userId));
@@ -195,19 +219,22 @@ function ChatApp() {
       setIsSending(true);
       try {
         const requestOptions = getRequestOptions(activeUserId);
+        const workflowXyflow = parseWorkflowXyflowJson(workflowXyflowJson, {
+          emptyAsUndefined: !state.conversationId,
+        });
         if (!state.conversationId) {
           const info = await createConversation(
             text,
             requestOptions,
-            workflowDsl || undefined,
+            workflowXyflow,
           );
-          serverWorkflowDslRef.current = workflowDsl || null;
+          serverWorkflowXyflowJsonRef.current = workflowXyflowJson || null;
           await refreshConversations(info.id, activeUserId);
         } else {
           await sendPyromindMessage(
             state.conversationId,
             text,
-            workflowDsl,
+            workflowXyflow ?? emptyWorkflowXyflow(),
             requestOptions,
           );
           void refreshConversations(state.conversationId, activeUserId);
@@ -227,7 +254,7 @@ function ChatApp() {
       getRequestOptions,
       refreshConversations,
       state.conversationId,
-      workflowDsl,
+      workflowXyflowJson,
     ],
   );
 
@@ -502,8 +529,8 @@ function ChatApp() {
                 type="button"
                 onClick={() => {
                   dispatch({ type: 'RESET_CONVERSATION' });
-                  serverWorkflowDslRef.current = null;
-                  setWorkflowDsl('');
+                  serverWorkflowXyflowJsonRef.current = null;
+                  setWorkflowXyflowJson('');
                 }}
                 className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
               >
@@ -579,11 +606,15 @@ function ChatApp() {
           />
 
           <WorkflowDslEditor
-            value={workflowDsl}
-            onChange={setWorkflowDsl}
-            isSynced={workflowDsl === (serverWorkflowDslRef.current ?? '')}
+            value={workflowXyflowJson}
+            onChange={setWorkflowXyflowJson}
+            isSynced={
+              workflowXyflowJson === (serverWorkflowXyflowJsonRef.current ?? '')
+            }
             onTest={handleTestWorkflow}
-            testDisabled={isSending || state.status === 'running' || !workflowDsl.trim()}
+            testDisabled={
+              isSending || state.status === 'running' || !workflowXyflowJson.trim()
+            }
           />
 
           <MessageInput

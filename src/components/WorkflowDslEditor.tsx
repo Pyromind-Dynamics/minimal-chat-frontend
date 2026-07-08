@@ -25,7 +25,7 @@ export function WorkflowDslEditor({
           onClick={() => setCollapsed((current) => !current)}
           className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs font-medium text-gray-700 hover:text-gray-950"
         >
-          <span className="truncate">Workflow DSL</span>
+          <span className="truncate">Workflow JSON</span>
           <span
             className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
               isSynced
@@ -53,7 +53,7 @@ export function WorkflowDslEditor({
           <textarea
             value={value}
             onChange={(event) => onChange(event.target.value)}
-            placeholder="workflow DSL"
+            placeholder='{"name":"workflow","nodes":[],"edges":[]}'
             spellCheck={false}
             className="h-40 w-full resize-y rounded-md border border-gray-200 bg-white p-2 font-mono text-xs leading-5 text-gray-900 outline-none focus:border-blue-500"
           />

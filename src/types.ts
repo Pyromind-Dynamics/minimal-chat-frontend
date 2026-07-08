@@ -53,6 +53,7 @@ export interface BaseObservation {
 export interface WorkflowFileObservation extends BaseObservation {
   kind: 'WorkflowFileObservation';
   workflow: string;
+  xyflow?: Record<string, unknown> | null;
   path: string;
   name: string | null;
   summary: string | null;
@@ -188,6 +189,23 @@ export function getLatestWorkflowDsl(events: ChatEvent[]): string | null {
     if (observation) {
       return observation.exists ? observation.workflow : '';
     }
+  }
+  return null;
+}
+
+export function getLatestWorkflowXyflowJson(events: ChatEvent[]): string | null {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const observation = getWorkflowFileObservation(events[index]);
+    if (!observation) {
+      continue;
+    }
+    if (!observation.exists) {
+      return '';
+    }
+    if (observation.xyflow) {
+      return JSON.stringify(observation.xyflow, null, 2);
+    }
+    return null;
   }
   return null;
 }

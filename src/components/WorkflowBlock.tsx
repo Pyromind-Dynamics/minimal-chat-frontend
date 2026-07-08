@@ -17,9 +17,13 @@ export function WorkflowBlock({
 }: WorkflowBlockProps) {
   const title = observation.name || 'workflow.py';
   const summary = observation.summary;
+  const hasXyflow = observation.exists && observation.xyflow;
   const code = observation.exists
-    ? observation.workflow
+    ? hasXyflow
+      ? JSON.stringify(observation.xyflow, null, 2)
+      : observation.workflow
     : `# workflow.py not found\n# ${observation.path}`;
+  const badge = hasXyflow ? 'xyflow.json' : 'workflow.py';
 
   return (
     <div className="mb-4 ml-2 border-l-4 border-cyan-500 pl-3">
@@ -37,7 +41,7 @@ export function WorkflowBlock({
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <span className="rounded bg-cyan-100 px-2 py-0.5 font-mono text-[11px] text-cyan-800">
-              workflow.py
+              {badge}
             </span>
             {onRollback && (
               <button
