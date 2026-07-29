@@ -11,6 +11,11 @@ export function ToolCallBlock({ action, observation }: ToolCallBlockProps) {
 
   const toolName = action.tool_call.name;
   const args = parseToolArgs(action.tool_call.arguments);
+  const thought = action.thought
+    ?.map((content) => content.text)
+    .filter(Boolean)
+    .join('\n')
+    .trim();
 
   // Extract human-readable summary
   const summary = getSummary(toolName, args);
@@ -22,6 +27,12 @@ export function ToolCallBlock({ action, observation }: ToolCallBlockProps) {
 
   return (
     <div className="mb-3 ml-2 border-l-2 border-amber-300 pl-3">
+      {thought && (
+        <p className="mb-2 whitespace-pre-wrap text-xs leading-5 text-purple-700">
+          {thought}
+        </p>
+      )}
+
       <button
         onClick={() => setIsExpanded(!isExpanded)}
         className="flex items-center gap-2 text-xs text-gray-600 hover:text-gray-900 cursor-pointer"

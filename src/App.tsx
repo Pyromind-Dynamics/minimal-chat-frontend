@@ -595,6 +595,7 @@ function ChatApp() {
 
           <ChatPanel
             events={state.events}
+            isCondensing={state.isCondensing}
             onRollbackWorkflow={handleRollbackWorkflow}
             rollbackWorkflowDisabled={
               isSending

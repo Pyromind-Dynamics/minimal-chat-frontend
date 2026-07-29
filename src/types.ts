@@ -31,6 +31,7 @@ export interface ActionEvent {
   timestamp: string;
   source: 'agent';
   tool_name?: string;
+  thought?: TextContent[];
   tool_call: {
     name: string;
     arguments: Record<string, unknown> | string;
@@ -48,6 +49,18 @@ export interface BaseObservation {
   command?: string;
   old_content?: string | null;
   new_content?: string | null;
+}
+
+export type PlanStatus = 'pending' | 'in_progress' | 'completed';
+
+export interface PlanStep {
+  step: string;
+  status: PlanStatus;
+}
+
+export interface UpdatePlanObservation extends BaseObservation {
+  explanation?: string | null;
+  plan: PlanStep[];
 }
 
 export interface WorkflowFileObservation extends BaseObservation {
@@ -69,7 +82,7 @@ export interface ObservationEvent {
   tool_name?: string;
   tool_call_id?: string;
   action_id?: string;
-  observation: BaseObservation | WorkflowFileObservation;
+  observation: BaseObservation | WorkflowFileObservation | UpdatePlanObservation;
 }
 
 // Conversation state changes
@@ -86,6 +99,29 @@ export interface ConversationStateUpdateEvent {
   value: unknown;
 }
 
+export type ContextCondensationStatus =
+  | 'started'
+  | 'completed'
+  | 'skipped'
+  | 'failed';
+
+export interface ContextCondensationState {
+  status: ContextCondensationStatus;
+  requirement?: 'soft' | 'hard';
+  condensation_id?: string;
+}
+
+export interface CondensationEvent {
+  kind: 'Condensation';
+  id: string;
+  timestamp: string;
+  source: 'environment';
+  forgotten_event_ids: string[];
+  summary?: string | null;
+  summary_offset?: number | null;
+  llm_response_id: string;
+}
+
 // Server error
 export interface ServerErrorEvent {
   kind: 'ServerErrorEvent';
@@ -98,6 +134,7 @@ export type ChatEvent =
   | MessageEvent
   | ActionEvent
   | ObservationEvent
+  | CondensationEvent
   | ConversationStateUpdateEvent
   | ServerErrorEvent;
 
@@ -139,6 +176,32 @@ export type ExecutionStatus =
   | 'error'
   | 'stuck'
   | 'deleting';
+
+export const CONTEXT_CONDENSATION_STATE_KEY = 'context_condensation';
+
+export function getContextCondensationState(
+  event: ChatEvent,
+): ContextCondensationState | null {
+  if (
+    event.kind !== 'ConversationStateUpdateEvent'
+    || (event.key ?? event.field) !== CONTEXT_CONDENSATION_STATE_KEY
+    || typeof event.value !== 'object'
+    || event.value === null
+  ) {
+    return null;
+  }
+
+  const status = (event.value as { status?: unknown }).status;
+  if (
+    status !== 'started'
+    && status !== 'completed'
+    && status !== 'skipped'
+    && status !== 'failed'
+  ) {
+    return null;
+  }
+  return event.value as ContextCondensationState;
+}
 
 // Key used by the agent-server when pushing workflow.py updates via
 // ConversationStateUpdateEvent (see PYROMIND_WORKFLOW_EVENT_KEY in
@@ -206,6 +269,21 @@ export function getLatestWorkflowXyflowJson(events: ChatEvent[]): string | null 
       return JSON.stringify(observation.xyflow, null, 2);
     }
     return null;
+  }
+  return null;
+}
+
+export function getLatestPlan(events: ChatEvent[]): UpdatePlanObservation | null {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    if (
+      event.kind === 'ObservationEvent'
+      && event.tool_name === 'update_plan'
+      && !event.observation.is_error
+      && Array.isArray((event.observation as UpdatePlanObservation).plan)
+    ) {
+      return event.observation as UpdatePlanObservation;
+    }
   }
   return null;
 }

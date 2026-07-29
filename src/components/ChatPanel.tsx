@@ -1,17 +1,21 @@
 import { useEffect, useRef } from 'react';
 import {
+  getLatestPlan,
   getWorkflowFileObservation,
   isWorkflowFileObservationEvent,
   type ChatEvent,
   type ActionEvent,
   type ObservationEvent,
 } from '../types';
+import { CondensationBlock } from './CondensationBlock';
 import { MessageBubble } from './MessageBubble';
+import { PlanBlock } from './PlanBlock';
 import { ToolCallBlock } from './ToolCallBlock';
 import { WorkflowBlock } from './WorkflowBlock';
 
 interface ChatPanelProps {
   events: ChatEvent[];
+  isCondensing?: boolean;
   onRollbackWorkflow?: (eventId: string) => void;
   rollbackWorkflowDisabled?: boolean;
   rollingBackWorkflowEventId?: string | null;
@@ -19,18 +23,20 @@ interface ChatPanelProps {
 
 export function ChatPanel({
   events,
+  isCondensing = false,
   onRollbackWorkflow,
   rollbackWorkflowDisabled,
   rollingBackWorkflowEventId,
 }: ChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const latestPlan = getLatestPlan(events);
 
   // Auto-scroll to bottom on new events
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [events.length]);
+  }, [events.length, isCondensing]);
 
-  if (events.length === 0) {
+  if (events.length === 0 && !isCondensing) {
     return (
       <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
         Start a conversation by sending a message below.
@@ -38,7 +44,17 @@ export function ChatPanel({
     );
   }
 
-  // Pair ActionEvents with their following ObservationEvent
+  const actionIds = new Set<string>();
+  const observationsByActionId = new Map<string, ObservationEvent>();
+  for (const event of events) {
+    if (event.kind === 'ActionEvent') {
+      actionIds.add(event.id);
+    } else if (event.kind === 'ObservationEvent' && event.action_id) {
+      observationsByActionId.set(event.action_id, event);
+    }
+  }
+
+  // Pair actions and observations by id; parallel tool calls are not adjacent.
   const rendered: React.ReactNode[] = [];
   for (let i = 0; i < events.length; i++) {
     const event = events[i];
@@ -46,10 +62,7 @@ export function ChatPanel({
     if (event.kind === 'MessageEvent') {
       rendered.push(<MessageBubble key={event.id} event={event} />);
     } else if (event.kind === 'ActionEvent') {
-      // Look ahead for the matching observation
-      const nextEvent = events[i + 1];
-      const observation =
-        nextEvent?.kind === 'ObservationEvent' ? nextEvent as ObservationEvent : undefined;
+      const observation = observationsByActionId.get(event.id);
       rendered.push(
         <div key={event.id}>
           <ToolCallBlock
@@ -58,10 +71,10 @@ export function ChatPanel({
           />
         </div>,
       );
-      if (observation) {
-        i++; // Skip the observation since we rendered it with the action
-      }
     } else if (event.kind === 'ObservationEvent') {
+      if (event.action_id && actionIds.has(event.action_id)) {
+        continue;
+      }
       const workflowFile = getWorkflowFileObservation(event);
       if (isWorkflowFileObservationEvent(event) && workflowFile) {
         rendered.push(
@@ -87,6 +100,8 @@ export function ChatPanel({
           </div>
         </div>,
       );
+    } else if (event.kind === 'Condensation') {
+      rendered.push(<CondensationBlock key={event.id} event={event} />);
     } else if (event.kind === 'ConversationStateUpdateEvent') {
       // The server pushes workflow.py updates out-of-band via this event
       // (key === 'pyromind_workflow'), independent of any specific tool call.
@@ -118,6 +133,20 @@ export function ChatPanel({
   return (
     <div className="flex-1 overflow-y-auto p-4">
       {rendered}
+      {latestPlan && <PlanBlock plan={latestPlan.plan} />}
+      {isCondensing && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="mb-3 ml-2 flex items-center gap-2 text-xs text-gray-500"
+        >
+          <span
+            aria-hidden="true"
+            className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600"
+          />
+          <span>正在压缩上下文，请稍候…</span>
+        </div>
+      )}
       <div ref={bottomRef} />
     </div>
   );
