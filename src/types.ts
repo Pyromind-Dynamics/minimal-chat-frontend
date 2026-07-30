@@ -6,11 +6,16 @@ export interface TextContent {
 }
 
 export interface ImageContent {
+  type: 'image';
+  image_urls: string[];
+}
+
+export interface OpenAIImageContent {
   type: 'image_url';
   image_url: { url: string };
 }
 
-export type ContentItem = TextContent | ImageContent;
+export type ContentItem = TextContent | ImageContent | OpenAIImageContent;
 
 // Message from user or agent
 export interface MessageEvent {

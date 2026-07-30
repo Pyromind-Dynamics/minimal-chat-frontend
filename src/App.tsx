@@ -7,6 +7,7 @@ import {
   requestDebugUrl,
   listConversationEvents,
   listConversations,
+  respondToConfirmation,
   sendPyromindMessage,
   type DebugUrlResult,
 } from './api';
@@ -110,6 +111,8 @@ function ChatApp() {
   const [isSending, setIsSending] = useState(false);
   const [isLoadingList, setIsLoadingList] = useState(false);
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
+  const [isRespondingToConfirmation, setIsRespondingToConfirmation] =
+    useState(false);
   const [rollingBackWorkflowEventId, setRollingBackWorkflowEventId] = useState<
     string | null
   >(null);
@@ -261,6 +264,44 @@ function ChatApp() {
   const handleTestWorkflow = useCallback(() => {
     void handleSend('请测试当前工作流：触发试跑，如有报错请定位并修复后重试，直到通过。');
   }, [handleSend]);
+
+  const handleRespondToConfirmation = useCallback(
+    async (accept: boolean) => {
+      if (!state.conversationId) {
+        dispatch({ type: 'SET_ERROR', error: 'Select a conversation first.' });
+        return;
+      }
+
+      setIsRespondingToConfirmation(true);
+      try {
+        await respondToConfirmation(
+          state.conversationId,
+          accept,
+          accept ? 'User approved the pending action.' : 'User rejected the pending action.',
+          getRequestOptions(activeUserId),
+        );
+        if (!accept) {
+          dispatch({ type: 'SET_STATUS', status: 'idle' });
+        }
+        await refreshConversations(state.conversationId, activeUserId);
+      } catch (err) {
+        dispatch({ type: 'SET_STATUS', status: 'waiting_for_confirmation' });
+        dispatch({
+          type: 'SET_ERROR',
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+      } finally {
+        setIsRespondingToConfirmation(false);
+      }
+    },
+    [
+      activeUserId,
+      dispatch,
+      getRequestOptions,
+      refreshConversations,
+      state.conversationId,
+    ],
+  );
 
   const handleRollbackWorkflow = useCallback(
     async (eventId: string) => {
@@ -595,6 +636,7 @@ function ChatApp() {
 
           <ChatPanel
             events={state.events}
+            status={state.status}
             isCondensing={state.isCondensing}
             onRollbackWorkflow={handleRollbackWorkflow}
             rollbackWorkflowDisabled={
@@ -604,6 +646,8 @@ function ChatApp() {
               || rollingBackWorkflowEventId !== null
             }
             rollingBackWorkflowEventId={rollingBackWorkflowEventId}
+            isRespondingToConfirmation={isRespondingToConfirmation}
+            onRespondToConfirmation={handleRespondToConfirmation}
           />
 
           <WorkflowDslEditor
@@ -614,13 +658,22 @@ function ChatApp() {
             }
             onTest={handleTestWorkflow}
             testDisabled={
-              isSending || state.status === 'running' || !workflowXyflowJson.trim()
+              isSending
+              || isRespondingToConfirmation
+              || state.status === 'running'
+              || state.status === 'waiting_for_confirmation'
+              || !workflowXyflowJson.trim()
             }
           />
 
           <MessageInput
             onSend={handleSend}
-            disabled={isSending || state.status === 'running'}
+            disabled={
+              isSending
+              || isRespondingToConfirmation
+              || state.status === 'running'
+              || state.status === 'waiting_for_confirmation'
+            }
           />
         </main>
       </div>

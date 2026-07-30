@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { ActionEvent, ObservationEvent } from '../types';
+import type { ActionEvent, ContentItem, ObservationEvent } from '../types';
+import { ContentList } from './ContentList';
 
 interface ToolCallBlockProps {
   action: ActionEvent;
@@ -24,6 +25,9 @@ export function ToolCallBlock({ action, observation }: ToolCallBlockProps) {
   const obsText = observation
     ? getObservationText(observation)
     : null;
+  const obsImages = observation
+    ? getObservationContent(observation).filter((item) => item.type !== 'text')
+    : [];
 
   return (
     <div className="mb-3 ml-2 border-l-2 border-amber-300 pl-3">
@@ -54,6 +58,7 @@ export function ToolCallBlock({ action, observation }: ToolCallBlockProps) {
               {obsText}
             </pre>
           )}
+          {obsImages.length > 0 && <ContentList content={obsImages} />}
         </div>
       )}
 
@@ -106,4 +111,8 @@ function getObservationText(obs: ObservationEvent): string {
       .join('\n');
   }
   return JSON.stringify(obs.observation.result ?? obs.observation, null, 2);
+}
+
+function getObservationContent(obs: ObservationEvent): ContentItem[] {
+  return obs.observation.content ?? obs.observation.to_llm_content ?? [];
 }
