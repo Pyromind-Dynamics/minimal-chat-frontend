@@ -6,9 +6,13 @@ import {
   isWorkflowFileObservationEvent,
   type ChatEvent,
   type ActionEvent,
+  type ContentItem,
+  type ExecutionStatus,
   type ObservationEvent,
 } from '../types';
+import { ConfirmationDialog } from './ConfirmationDialog';
 import { CondensationBlock } from './CondensationBlock';
+import { ContentList } from './ContentList';
 import { MessageBubble } from './MessageBubble';
 import { PlanBlock } from './PlanBlock';
 import { ToolCallBlock } from './ToolCallBlock';
@@ -21,6 +25,9 @@ interface ChatPanelProps {
   onRollbackWorkflow?: (eventId: string) => void;
   rollbackWorkflowDisabled?: boolean;
   rollingBackWorkflowEventId?: string | null;
+  status: ExecutionStatus;
+  isRespondingToConfirmation?: boolean;
+  onRespondToConfirmation?: (accept: boolean) => void;
 }
 
 export function ChatPanel({
@@ -30,6 +37,9 @@ export function ChatPanel({
   onRollbackWorkflow,
   rollbackWorkflowDisabled,
   rollingBackWorkflowEventId,
+  status,
+  isRespondingToConfirmation = false,
+  onRespondToConfirmation,
 }: ChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const latestPlan = getLatestPlan(events);
@@ -56,6 +66,10 @@ export function ChatPanel({
       observationsByActionId.set(event.action_id, event);
     }
   }
+  const pendingActions = events.filter(
+    (event): event is ActionEvent =>
+      event.kind === 'ActionEvent' && !observationsByActionId.has(event.id),
+  );
 
   // Pair actions and observations by id; parallel tool calls are not adjacent.
   const rendered: React.ReactNode[] = [];
@@ -101,6 +115,10 @@ export function ChatPanel({
             <pre className="text-xs bg-green-50 rounded p-2 overflow-x-auto text-green-800">
               {getObsText(event as ObservationEvent)}
             </pre>
+            <ContentList
+              content={getObsImages(event as ObservationEvent)}
+              imageClassName="mt-2 max-h-80 max-w-full rounded-lg object-contain"
+            />
           </div>
         </div>,
       );
@@ -151,6 +169,13 @@ export function ChatPanel({
           <span>正在压缩上下文，请稍候…</span>
         </div>
       )}
+      {status === 'waiting_for_confirmation' && onRespondToConfirmation && (
+        <ConfirmationDialog
+          actions={pendingActions}
+          isSubmitting={isRespondingToConfirmation}
+          onRespond={onRespondToConfirmation}
+        />
+      )}
       <div ref={bottomRef} />
     </div>
   );
@@ -170,4 +195,9 @@ function getObsText(obs: ObservationEvent): string {
       .join('\n');
   }
   return JSON.stringify(obs.observation.result ?? obs.observation, null, 2);
+}
+
+function getObsImages(obs: ObservationEvent): ContentItem[] {
+  const content = obs.observation.content ?? [];
+  return content.filter((item) => item.type !== 'text');
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { RequestOptions } from '../api';
-import type { ActionEvent, ObservationEvent } from '../types';
+import type { ActionEvent, ContentItem,ObservationEvent } from '../types';
 import { ProgressBlock } from './ProgressBlock';
 import { SampleRecordsBlock } from './SampleRecordsBlock';
 
@@ -28,6 +28,9 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
   const obsText = observation
     ? getObservationText(observation)
     : null;
+  const obsImages = observation
+    ? getObservationContent(observation).filter((item) => item.type !== 'text')
+    : [];
 
   // DataFlow pipeline submissions get a live progress panel
   const progressOutputDir = toolName === 'df_submit_pipeline'
@@ -68,6 +71,7 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
               {obsText}
             </pre>
           )}
+          {obsImages.length > 0 && <ContentList content={obsImages} />}
         </div>
       )}
 
@@ -174,4 +178,8 @@ function extractSampleRecords(obs: ObservationEvent | undefined): {
   const recordCount =
     typeof structured.record_count === 'number' ? structured.record_count : null;
   return { records, recordCount };
+}
+
+function getObservationContent(obs: ObservationEvent): ContentItem[] {
+  return obs.observation.content ?? obs.observation.to_llm_content ?? [];
 }

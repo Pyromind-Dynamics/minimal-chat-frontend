@@ -1,4 +1,5 @@
 import type { MessageEvent } from '../types';
+import { ContentList } from './ContentList';
 
 interface MessageBubbleProps {
   event: MessageEvent;
@@ -6,11 +7,6 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ event }: MessageBubbleProps) {
   const isUser = event.source === 'user';
-  const text = event.llm_message.content
-    .filter((c) => c.type === 'text')
-    .map((c) => (c as { type: 'text'; text: string }).text)
-    .join('\n');
-
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-3`}>
       <div
@@ -20,7 +16,7 @@ export function MessageBubble({ event }: MessageBubbleProps) {
             : 'bg-gray-100 text-gray-900 rounded-bl-sm'
         }`}
       >
-        {text}
+        <ContentList content={event.llm_message.content} />
       </div>
     </div>
   );

@@ -122,6 +122,31 @@ export async function sendMessage(
   }
 }
 
+export async function respondToConfirmation(
+  conversationId: string,
+  accept: boolean,
+  reason: string,
+  options?: RequestOptions,
+): Promise<void> {
+  await prepareAuth(options);
+  const res = await fetch(
+    `${BACKEND_URL}/api/conversations/${conversationId}/events/respond_to_confirmation`,
+    {
+      method: 'POST',
+      headers: getHeaders(options),
+      credentials: 'include',
+      body: JSON.stringify({ accept, reason }),
+    },
+  );
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(
+      `Failed to respond to confirmation: ${res.status} ${errorText}`,
+    );
+  }
+}
+
 export async function sendPyromindMessage(
   conversationId: string,
   text: string,
