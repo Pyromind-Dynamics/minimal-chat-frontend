@@ -1,12 +1,16 @@
 import { useState } from 'react';
+import type { RequestOptions } from '../api';
 import type { ActionEvent, ObservationEvent } from '../types';
+import { ProgressBlock } from './ProgressBlock';
+import { SampleRecordsBlock } from './SampleRecordsBlock';
 
 interface ToolCallBlockProps {
   action: ActionEvent;
   observation?: ObservationEvent;
+  requestOptions: RequestOptions;
 }
 
-export function ToolCallBlock({ action, observation }: ToolCallBlockProps) {
+export function ToolCallBlock({ action, observation, requestOptions }: ToolCallBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const toolName = action.tool_call.name;
@@ -23,6 +27,16 @@ export function ToolCallBlock({ action, observation }: ToolCallBlockProps) {
   // Get observation text
   const obsText = observation
     ? getObservationText(observation)
+    : null;
+
+  // DataFlow pipeline submissions get a live progress panel
+  const progressOutputDir = toolName === 'df_submit_pipeline'
+    ? extractOutputDir(observation)
+    : null;
+
+  // Local df_run_pipeline runs surface their output records directly
+  const sampleRecords = toolName === 'df_run_pipeline'
+    ? extractSampleRecords(observation)
     : null;
 
   return (
@@ -62,6 +76,16 @@ export function ToolCallBlock({ action, observation }: ToolCallBlockProps) {
           {obsText.split('\n')[0]}
         </p>
       )}
+
+      {progressOutputDir && (
+        <ProgressBlock outputDir={progressOutputDir} requestOptions={requestOptions} />
+      )}
+      {sampleRecords && (
+        <SampleRecordsBlock
+          records={sampleRecords.records}
+          recordCount={sampleRecords.recordCount}
+        />
+      )}
     </div>
   );
 }
@@ -73,6 +97,9 @@ function getSummary(toolName: string, args: Record<string, unknown>): string {
   }
   if (toolName === 'file_editor' && args.path) {
     return String(args.path);
+  }
+  if (toolName === 'df_submit_pipeline' && args.script_path) {
+    return String(args.script_path);
   }
   return '';
 }
@@ -106,4 +133,45 @@ function getObservationText(obs: ObservationEvent): string {
       .join('\n');
   }
   return JSON.stringify(obs.observation.result ?? obs.observation, null, 2);
+}
+
+function extractOutputDir(obs: ObservationEvent | undefined): string | null {
+  if (!obs) {
+    return null;
+  }
+  const structured = (obs.observation as { output_dir?: unknown }).output_dir;
+  if (typeof structured === 'string' && structured.trim()) {
+    return structured.trim();
+  }
+  const match = getObservationText(obs).match(/output_dir=([^,.\s]+)/);
+  return match ? match[1] : null;
+}
+
+function extractSampleRecords(obs: ObservationEvent | undefined): {
+  records: Record<string, unknown>[];
+  recordCount: number | null;
+} | null {
+  if (!obs) {
+    return null;
+  }
+  const structured = obs.observation as {
+    sample_records?: unknown;
+    record_count?: unknown;
+  };
+  if (
+    !Array.isArray(structured.sample_records) ||
+    structured.sample_records.length === 0
+  ) {
+    return null;
+  }
+  const records = structured.sample_records.filter(
+    (record): record is Record<string, unknown> =>
+      typeof record === 'object' && record !== null,
+  );
+  if (records.length === 0) {
+    return null;
+  }
+  const recordCount =
+    typeof structured.record_count === 'number' ? structured.record_count : null;
+  return { records, recordCount };
 }

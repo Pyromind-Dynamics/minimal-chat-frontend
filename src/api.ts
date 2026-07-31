@@ -13,6 +13,23 @@ interface RequestOptions extends RequestOverrides {
   userId?: string;
 }
 
+export type { RequestOptions };
+
+export interface DataPreparationProgress {
+  output_dir: string;
+  progress_found: boolean;
+  total: number | null;
+  processed: number | null;
+  succeeded: number | null;
+  failed: number | null;
+  elapsed_ms: number | null;
+  records_per_second: number | null;
+  eta_ms: number | null;
+  updated_at: string | null;
+  percent: number | null;
+  latest_records: Record<string, unknown>[];
+}
+
 export interface DebugUrlResult {
   url: string;
   context_source: string;
@@ -230,6 +247,38 @@ export async function requestDebugUrl(
   if (!res.ok) {
     const errorText = await res.text();
     throw new Error(`Failed to request debug URL: ${res.status} ${errorText}`);
+  }
+
+  return res.json();
+}
+
+/**
+ * Poll the live progress of a submitted DataFlow pipeline run.
+ * Reads progress.json and the tail of processed.jsonl from the run's
+ * Storage output directory.
+ */
+export async function getDataPreparationProgress(
+  outputDir: string,
+  options?: RequestOptions,
+  tailLines = 5,
+): Promise<DataPreparationProgress> {
+  await prepareAuth(options);
+  const params = new URLSearchParams({
+    output_dir: outputDir,
+    tail_lines: String(tailLines),
+  });
+  const res = await fetch(
+    `${BACKEND_URL}/api/pyromind/data-preparation/progress?${params}`,
+    {
+      headers: getHeaders(options),
+      credentials: 'include',
+      cache: 'no-store',
+    },
+  );
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to load progress: ${res.status} ${errorText}`);
   }
 
   return res.json();

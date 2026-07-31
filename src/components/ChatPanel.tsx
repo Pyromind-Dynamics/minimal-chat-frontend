@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import type { RequestOptions } from '../api';
 import {
   getLatestPlan,
   getWorkflowFileObservation,
@@ -16,6 +17,7 @@ import { WorkflowBlock } from './WorkflowBlock';
 interface ChatPanelProps {
   events: ChatEvent[];
   isCondensing?: boolean;
+  requestOptions: RequestOptions;
   onRollbackWorkflow?: (eventId: string) => void;
   rollbackWorkflowDisabled?: boolean;
   rollingBackWorkflowEventId?: string | null;
@@ -24,6 +26,7 @@ interface ChatPanelProps {
 export function ChatPanel({
   events,
   isCondensing = false,
+  requestOptions,
   onRollbackWorkflow,
   rollbackWorkflowDisabled,
   rollingBackWorkflowEventId,
@@ -68,6 +71,7 @@ export function ChatPanel({
           <ToolCallBlock
             action={event as ActionEvent}
             observation={observation}
+            requestOptions={requestOptions}
           />
         </div>,
       );
