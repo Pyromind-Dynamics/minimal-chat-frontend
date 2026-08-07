@@ -15,6 +15,7 @@ import { CondensationBlock } from './CondensationBlock';
 import { ContentList } from './ContentList';
 import { MessageBubble } from './MessageBubble';
 import { PlanBlock } from './PlanBlock';
+import { SubAgentBlock } from './SubAgentBlock';
 import { ToolCallBlock } from './ToolCallBlock';
 import { WorkflowBlock } from './WorkflowBlock';
 
@@ -82,11 +83,15 @@ export function ChatPanel({
       const observation = observationsByActionId.get(event.id);
       rendered.push(
         <div key={event.id}>
-          <ToolCallBlock
-            action={event as ActionEvent}
-            observation={observation}
-            requestOptions={requestOptions}
-          />
+          {event.tool_call.name === 'subagent' ? (
+            <SubAgentBlock action={event} observation={observation} />
+          ) : (
+            <ToolCallBlock
+              action={event as ActionEvent}
+              observation={observation}
+              requestOptions={requestOptions}
+            />
+          )}
         </div>,
       );
     } else if (event.kind === 'ObservationEvent') {

@@ -56,6 +56,16 @@ export interface BaseObservation {
   new_content?: string | null;
 }
 
+export type SubAgentType = 'search' | 'general_purpose';
+
+export interface SubAgentObservation extends BaseObservation {
+  kind: 'SubAgentObservation';
+  task_id: string;
+  status: string;
+  type: SubAgentType;
+  child_conversation_id?: string | null;
+}
+
 export type PlanStatus = 'pending' | 'in_progress' | 'completed';
 
 export interface PlanStep {
@@ -87,7 +97,11 @@ export interface ObservationEvent {
   tool_name?: string;
   tool_call_id?: string;
   action_id?: string;
-  observation: BaseObservation | WorkflowFileObservation | UpdatePlanObservation;
+  observation:
+    | BaseObservation
+    | WorkflowFileObservation
+    | UpdatePlanObservation
+    | SubAgentObservation;
 }
 
 // Conversation state changes
@@ -182,6 +196,12 @@ export type ExecutionStatus =
   | 'stuck'
   | 'deleting';
 
+export type GuidanceStatus =
+  | 'waiting'
+  | 'context'
+  | 'processing'
+  | 'failed';
+
 export const CONTEXT_CONDENSATION_STATE_KEY = 'context_condensation';
 
 export function getContextCondensationState(
@@ -248,33 +268,6 @@ export function getWorkflowFileObservation(
     }
   }
 
-  return null;
-}
-
-export function getLatestWorkflowDsl(events: ChatEvent[]): string | null {
-  for (let index = events.length - 1; index >= 0; index--) {
-    const observation = getWorkflowFileObservation(events[index]);
-    if (observation) {
-      return observation.exists ? observation.workflow : '';
-    }
-  }
-  return null;
-}
-
-export function getLatestWorkflowXyflowJson(events: ChatEvent[]): string | null {
-  for (let index = events.length - 1; index >= 0; index--) {
-    const observation = getWorkflowFileObservation(events[index]);
-    if (!observation) {
-      continue;
-    }
-    if (!observation.exists) {
-      return '';
-    }
-    if (observation.xyflow) {
-      return JSON.stringify(observation.xyflow, null, 2);
-    }
-    return null;
-  }
   return null;
 }
 

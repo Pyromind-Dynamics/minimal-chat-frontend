@@ -1,38 +1,78 @@
 import { useState, type FormEvent } from 'react';
+import type { ExecutionStatus, GuidanceStatus } from '../types';
 
 interface MessageInputProps {
   onSend: (text: string) => void;
+  status: ExecutionStatus;
+  sending?: boolean;
   disabled?: boolean;
+  guidanceStatus?: GuidanceStatus | null;
 }
 
-export function MessageInput({ onSend, disabled }: MessageInputProps) {
+export function MessageInput({
+  onSend,
+  status,
+  sending = false,
+  disabled = false,
+  guidanceStatus = null,
+}: MessageInputProps) {
   const [text, setText] = useState('');
+  const isRunning = status === 'running';
+  const isPaused = status === 'paused';
+  const placeholder = isRunning
+    ? '输入引导，将在当前步骤结束后应用…'
+    : isPaused
+      ? '输入新要求并继续…'
+      : '输入消息…';
+  let helperText: string | null = null;
+  if (guidanceStatus === 'waiting') {
+    helperText = '引导已排队，将在当前步骤结束后加入上下文。';
+  } else if (guidanceStatus === 'context') {
+    helperText = '引导已加入上下文。';
+  } else if (guidanceStatus === 'processing') {
+    helperText = 'Agent 已按新的引导继续处理。';
+  } else if (guidanceStatus === 'failed') {
+    helperText = '引导发送失败，请重试。';
+  } else if (sending) {
+    helperText = '正在发送消息…';
+  } else if (isRunning) {
+    helperText = '输入时 Enter 换行，点击“引导”后在下一次 Agent 决策前生效。';
+  } else if (isPaused) {
+    helperText = '发送消息后，Agent 会按新要求继续运行。';
+  }
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     const trimmed = text.trim();
-    if (!trimmed || disabled) return;
+    if (!trimmed || disabled || sending) return;
     onSend(trimmed);
     setText('');
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex gap-2 p-4 border-t bg-white">
-      <input
-        type="text"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder="Type a message..."
-        disabled={disabled}
-        className="flex-1 px-4 py-2.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
-      />
-      <button
-        type="submit"
-        disabled={disabled || !text.trim()}
-        className="px-5 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-      >
-        Send
-      </button>
+    <form onSubmit={handleSubmit} className="border-t bg-white p-4">
+      <div className="flex items-end gap-2">
+        <textarea
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          placeholder={placeholder}
+          disabled={disabled}
+          rows={2}
+          className="max-h-40 min-h-14 flex-1 resize-y rounded-lg border px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+        />
+        <button
+          type="submit"
+          disabled={disabled || sending || !text.trim()}
+          className="h-10 rounded-lg bg-blue-600 px-5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+        >
+          {isRunning ? '引导' : '发送'}
+        </button>
+      </div>
+      {helperText && (
+        <p role="status" aria-live="polite" className="mt-2 text-xs text-gray-500">
+          {helperText}
+        </p>
+      )}
     </form>
   );
 }

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { RequestOptions } from '../api';
-import type { ActionEvent, ContentItem,ObservationEvent } from '../types';
+import type { ActionEvent, ContentItem, ObservationEvent } from '../types';
+import { ContentList } from './ContentList';
 import { ProgressBlock } from './ProgressBlock';
 import { SampleRecordsBlock } from './SampleRecordsBlock';
 

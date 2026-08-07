@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ChatProvider, useChatContext } from './ChatContext';
 import { useConversationSocket } from './hooks/useConversationSocket';
 import {
@@ -14,11 +14,11 @@ import {
 import { ChatPanel } from './components/ChatPanel';
 import { MessageInput } from './components/MessageInput';
 import { StatusBar } from './components/StatusBar';
-import { WorkflowDslEditor } from './components/WorkflowDslEditor';
 import {
-  getLatestWorkflowXyflowJson,
+  type ChatEvent,
   type ConversationInfo,
   type ExecutionStatus,
+  type GuidanceStatus,
 } from './types';
 
 const DEFAULT_USER_IDS = ['42', '7', '1001'];
@@ -80,26 +80,6 @@ function conversationTitle(conversation: ConversationInfo): string {
   return conversation.title?.trim() || conversation.id.slice(0, 8);
 }
 
-function emptyWorkflowXyflow(): Record<string, unknown> {
-  return { name: 'workflow', nodes: [], edges: [] };
-}
-
-function parseWorkflowXyflowJson(
-  value: string,
-  options: { emptyAsUndefined: boolean },
-): Record<string, unknown> | undefined {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return options.emptyAsUndefined ? undefined : emptyWorkflowXyflow();
-  }
-
-  const parsed = JSON.parse(trimmed) as unknown;
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('Workflow JSON must be a JSON object.');
-  }
-  return parsed as Record<string, unknown>;
-}
-
 function ChatApp() {
   const { state, dispatch, handleEvent } = useChatContext();
   const [userIds, setUserIds] = useState(loadUserIds);
@@ -109,6 +89,7 @@ function ChatApp() {
   const [draftRequestOverrides, setDraftRequestOverrides] = useState(loadRequestOverrides);
   const [conversations, setConversations] = useState<ConversationInfo[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [guidanceStatus, setGuidanceStatus] = useState<GuidanceStatus | null>(null);
   const [isLoadingList, setIsLoadingList] = useState(false);
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
   const [isRespondingToConfirmation, setIsRespondingToConfirmation] =
@@ -119,16 +100,37 @@ function ChatApp() {
   const [debugUrl, setDebugUrl] = useState('');
   const [debugUrlResult, setDebugUrlResult] = useState<DebugUrlResult | null>(null);
   const [isRequestingDebugUrl, setIsRequestingDebugUrl] = useState(false);
-  const [workflowXyflowJson, setWorkflowXyflowJson] = useState('');
-  const serverWorkflowXyflowJsonRef = useRef<string | null>(null);
+
+  const handleSocketEvent = useCallback(
+    (event: ChatEvent) => {
+      setGuidanceStatus((current) => {
+        if (event.kind === 'MessageEvent' && event.source === 'user') {
+          return current === 'waiting' ? 'context' : current;
+        }
+        if (
+          event.kind === 'ActionEvent'
+          || (event.kind === 'MessageEvent' && event.source === 'agent')
+        ) {
+          return current === 'context' ? 'processing' : current;
+        }
+        return current;
+      });
+      handleEvent(event);
+    },
+    [handleEvent],
+  );
 
   const { wsState } = useConversationSocket({
     conversationId: state.conversationId,
     userId: activeUserId,
     cookie: requestOverrides.cookie,
     xCluster: requestOverrides.xCluster,
-    onEvent: handleEvent,
+    onEvent: handleSocketEvent,
   });
+
+  useEffect(() => {
+    setGuidanceStatus(null);
+  }, [state.conversationId]);
 
   useEffect(() => {
     localStorage.setItem(USER_IDS_STORAGE_KEY, JSON.stringify(userIds));
@@ -137,17 +139,6 @@ function ChatApp() {
   useEffect(() => {
     localStorage.setItem(REQUEST_OVERRIDES_STORAGE_KEY, JSON.stringify(requestOverrides));
   }, [requestOverrides]);
-
-  useEffect(() => {
-    const latestWorkflowXyflowJson = getLatestWorkflowXyflowJson(state.events);
-    if (
-      latestWorkflowXyflowJson !== null
-      && latestWorkflowXyflowJson !== serverWorkflowXyflowJsonRef.current
-    ) {
-      serverWorkflowXyflowJsonRef.current = latestWorkflowXyflowJson;
-      setWorkflowXyflowJson(latestWorkflowXyflowJson);
-    }
-  }, [state.events]);
 
   const getRequestOptions = useCallback(
     (userId = activeUserId) => ({
@@ -165,8 +156,6 @@ function ChatApp() {
         type: 'SET_STATUS',
         status: conversation.execution_status as ExecutionStatus,
       });
-      serverWorkflowXyflowJsonRef.current = null;
-      setWorkflowXyflowJson('');
       setIsLoadingEvents(true);
       try {
         const events = await listConversationEvents(conversation.id, getRequestOptions(userId));
@@ -219,30 +208,33 @@ function ChatApp() {
 
   const handleSend = useCallback(
     async (text: string) => {
+      const isGuidance = state.status === 'running';
+      if (isGuidance) {
+        setGuidanceStatus('waiting');
+      }
       setIsSending(true);
       try {
         const requestOptions = getRequestOptions(activeUserId);
-        const workflowXyflow = parseWorkflowXyflowJson(workflowXyflowJson, {
-          emptyAsUndefined: !state.conversationId,
-        });
         if (!state.conversationId) {
-          const info = await createConversation(
-            text,
-            requestOptions,
-            workflowXyflow,
-          );
-          serverWorkflowXyflowJsonRef.current = workflowXyflowJson || null;
+          const info = await createConversation(text, requestOptions);
           await refreshConversations(info.id, activeUserId);
         } else {
           await sendPyromindMessage(
             state.conversationId,
             text,
-            workflowXyflow ?? emptyWorkflowXyflow(),
             requestOptions,
           );
+          if (isGuidance) {
+            setGuidanceStatus((current) =>
+              current === 'waiting' ? 'context' : current,
+            );
+          }
           void refreshConversations(state.conversationId, activeUserId);
         }
       } catch (err) {
+        if (isGuidance) {
+          setGuidanceStatus('failed');
+        }
         dispatch({
           type: 'SET_ERROR',
           error: err instanceof Error ? err.message : 'Unknown error',
@@ -257,13 +249,9 @@ function ChatApp() {
       getRequestOptions,
       refreshConversations,
       state.conversationId,
-      workflowXyflowJson,
+      state.status,
     ],
   );
-
-  const handleTestWorkflow = useCallback(() => {
-    void handleSend('请测试当前工作流：触发试跑，如有报错请定位并修复后重试，直到通过。');
-  }, [handleSend]);
 
   const handleRespondToConfirmation = useCallback(
     async (accept: boolean) => {
@@ -302,7 +290,6 @@ function ChatApp() {
       state.conversationId,
     ],
   );
-
   const handleRollbackWorkflow = useCallback(
     async (eventId: string) => {
       if (!state.conversationId) {
@@ -570,8 +557,6 @@ function ChatApp() {
                 type="button"
                 onClick={() => {
                   dispatch({ type: 'RESET_CONVERSATION' });
-                  serverWorkflowXyflowJsonRef.current = null;
-                  setWorkflowXyflowJson('');
                 }}
                 className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
               >
@@ -651,30 +636,17 @@ function ChatApp() {
             onRespondToConfirmation={handleRespondToConfirmation}
           />
 
-          <WorkflowDslEditor
-            value={workflowXyflowJson}
-            onChange={setWorkflowXyflowJson}
-            isSynced={
-              workflowXyflowJson === (serverWorkflowXyflowJsonRef.current ?? '')
-            }
-            onTest={handleTestWorkflow}
-            testDisabled={
-              isSending
-              || isRespondingToConfirmation
-              || state.status === 'running'
-              || state.status === 'waiting_for_confirmation'
-              || !workflowXyflowJson.trim()
-            }
-          />
-
           <MessageInput
             onSend={handleSend}
+            status={state.status}
+            sending={isSending}
             disabled={
-              isSending
+              isLoadingEvents
               || isRespondingToConfirmation
-              || state.status === 'running'
+              || state.status === 'deleting'
               || state.status === 'waiting_for_confirmation'
             }
+            guidanceStatus={guidanceStatus}
           />
         </main>
       </div>

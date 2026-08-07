@@ -66,7 +66,6 @@ function getHeaders(options?: RequestOptions): Record<string, string> {
 export async function createConversation(
   initialMessage?: string,
   options?: RequestOptions,
-  workflowXyflow?: Record<string, unknown>,
 ): Promise<ConversationInfo> {
   await prepareAuth(options);
   const body: Record<string, unknown> = {
@@ -76,7 +75,6 @@ export async function createConversation(
       base_url: LLM_BASE_URL || undefined,
     },
     message: initialMessage || undefined,
-    workflow_xyflow: workflowXyflow,
     extra: {},  // Extensible: e.g. { knowledge_base_path, language, custom_instructions }
   };
 
@@ -150,7 +148,6 @@ export async function respondToConfirmation(
 export async function sendPyromindMessage(
   conversationId: string,
   text: string,
-  workflowXyflow: Record<string, unknown>,
   options?: RequestOptions,
 ): Promise<void> {
   await prepareAuth(options);
@@ -162,7 +159,6 @@ export async function sendPyromindMessage(
       credentials: 'include',
       body: JSON.stringify({
         text,
-        workflow_xyflow: workflowXyflow,
         run: true,
       }),
     },
