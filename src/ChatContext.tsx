@@ -41,6 +41,24 @@ function getEventId(event: ChatEvent): string | undefined {
   return 'id' in event ? event.id : undefined;
 }
 
+// Merge a REST history snapshot with events already in the store (e.g. new
+// WebSocket events that arrived while the snapshot request was in flight).
+// The snapshot is older, so it goes first; incoming event ids win over
+// existing ones to avoid duplicates.
+function mergeEvents(existing: ChatEvent[], incoming: ChatEvent[]): ChatEvent[] {
+  const seen = new Set<string>();
+  const merged: ChatEvent[] = [];
+  for (const event of [...incoming, ...existing]) {
+    const id = getEventId(event);
+    if (id !== undefined) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+    }
+    merged.push(event);
+  }
+  return merged;
+}
+
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case 'SET_CONVERSATION_ID':
@@ -61,7 +79,11 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         error: null,
       };
     case 'SET_EVENTS':
-      return { ...state, events: action.events, error: null };
+      return {
+        ...state,
+        events: mergeEvents(state.events, action.events),
+        error: null,
+      };
     case 'ADD_EVENT':
       if (
         getEventId(action.event) &&

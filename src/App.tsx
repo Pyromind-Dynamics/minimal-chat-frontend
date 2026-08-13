@@ -100,6 +100,7 @@ function ChatApp() {
   const [debugUrl, setDebugUrl] = useState('');
   const [debugUrlResult, setDebugUrlResult] = useState<DebugUrlResult | null>(null);
   const [isRequestingDebugUrl, setIsRequestingDebugUrl] = useState(false);
+  const [isCreatingConversation, setIsCreatingConversation] = useState(false);
 
   const handleSocketEvent = useCallback(
     (event: ChatEvent) => {
@@ -151,7 +152,9 @@ function ChatApp() {
 
   const openConversation = useCallback(
     async (conversation: ConversationInfo, userId = activeUserId) => {
-      dispatch({ type: 'SET_CONVERSATION_ID', id: conversation.id });
+      if (conversation.id !== state.conversationId) {
+        dispatch({ type: 'SET_CONVERSATION_ID', id: conversation.id });
+      }
       dispatch({
         type: 'SET_STATUS',
         status: conversation.execution_status as ExecutionStatus,
@@ -169,7 +172,7 @@ function ChatApp() {
         setIsLoadingEvents(false);
       }
     },
-    [activeUserId, dispatch, getRequestOptions],
+    [activeUserId, dispatch, getRequestOptions, state.conversationId],
   );
 
   const refreshConversations = useCallback(
@@ -321,6 +324,22 @@ function ChatApp() {
       state.conversationId,
     ],
   );
+
+  const handleNewConversation = useCallback(async () => {
+    setIsCreatingConversation(true);
+    try {
+      const requestOptions = getRequestOptions(activeUserId);
+      const info = await createConversation(undefined, requestOptions);
+      await refreshConversations(info.id, activeUserId);
+    } catch (err) {
+      dispatch({
+        type: 'SET_ERROR',
+        error: err instanceof Error ? err.message : 'Unknown error',
+      });
+    } finally {
+      setIsCreatingConversation(false);
+    }
+  }, [activeUserId, dispatch, getRequestOptions, refreshConversations]);
 
   const handleAddUser = useCallback(() => {
     const nextUserId = draftUserId.trim();
@@ -555,12 +574,11 @@ function ChatApp() {
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  dispatch({ type: 'RESET_CONVERSATION' });
-                }}
-                className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
+                onClick={() => void handleNewConversation()}
+                disabled={isCreatingConversation}
+                className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
               >
-                New
+                {isCreatingConversation ? 'Creating...' : 'New'}
               </button>
               <button
                 type="button"
