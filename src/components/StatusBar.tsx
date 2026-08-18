@@ -23,6 +23,7 @@ export function StatusBar({ wsState, status, conversationId }: StatusBarProps) {
     error: 'Error',
     stuck: 'Stuck',
     deleting: 'Deleting',
+    closed: 'Closed',
   }[status];
 
   return (

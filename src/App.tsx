@@ -1,24 +1,30 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ChatProvider, useChatContext } from './ChatContext';
-import { useConversationSocket } from './hooks/useConversationSocket';
 import {
-  createConversation,
-  forkPyromindConversationAtEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { ChatProvider, useChatContext } from './ChatContext';
+import { useProductEventStream } from './hooks/useProductEventStream';
+import {
+  createProductConversation,
+  forkProductConversation,
+  getProductSnapshot,
+  listProductConversations,
   requestDebugUrl,
-  listConversationEvents,
-  listConversations,
-  respondToConfirmation,
-  sendPyromindMessage,
+  respondToProductPermission,
+  sendProductMessage,
   type DebugUrlResult,
+  type RequestOptions,
 } from './api';
 import { ChatPanel } from './components/ChatPanel';
 import { MessageInput } from './components/MessageInput';
 import { StatusBar } from './components/StatusBar';
 import {
-  type ChatEvent,
-  type ConversationInfo,
-  type ExecutionStatus,
+  type ConversationSnapshot,
   type GuidanceStatus,
+  type ProductEvent,
 } from './types';
 
 const DEFAULT_USER_IDS = ['42', '7', '1001'];
@@ -63,31 +69,27 @@ function loadRequestOverrides(): RequestOverrideFields {
   }
 }
 
-function formatTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '';
+function conversationTitle(conversation: ConversationSnapshot): string {
+  const firstMessage = conversation.timeline.find(
+    (item) => item.kind === 'message' && item.role === 'user',
+  );
+  if (firstMessage?.kind === 'message') {
+    const text = firstMessage.content.find((item) => item.type === 'text');
+    if (text?.type === 'text' && text.text.trim()) {
+      return text.text.trim().slice(0, 40);
+    }
   }
-  return date.toLocaleString([], {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function conversationTitle(conversation: ConversationInfo): string {
-  return conversation.title?.trim() || conversation.id.slice(0, 8);
+  return conversation.conversation_id.slice(0, 8);
 }
 
 function ChatApp() {
-  const { state, dispatch, handleEvent } = useChatContext();
+  const { state, dispatch } = useChatContext();
   const [userIds, setUserIds] = useState(loadUserIds);
   const [activeUserId, setActiveUserId] = useState(userIds[0] ?? DEFAULT_USER_IDS[0]);
   const [draftUserId, setDraftUserId] = useState('');
   const [requestOverrides, setRequestOverrides] = useState(loadRequestOverrides);
   const [draftRequestOverrides, setDraftRequestOverrides] = useState(loadRequestOverrides);
-  const [conversations, setConversations] = useState<ConversationInfo[]>([]);
+  const [conversations, setConversations] = useState<ConversationSnapshot[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [guidanceStatus, setGuidanceStatus] = useState<GuidanceStatus | null>(null);
   const [isLoadingList, setIsLoadingList] = useState(false);
@@ -100,34 +102,15 @@ function ChatApp() {
   const [debugUrl, setDebugUrl] = useState('');
   const [debugUrlResult, setDebugUrlResult] = useState<DebugUrlResult | null>(null);
   const [isRequestingDebugUrl, setIsRequestingDebugUrl] = useState(false);
-  const [isCreatingConversation, setIsCreatingConversation] = useState(false);
-
-  const handleSocketEvent = useCallback(
-    (event: ChatEvent) => {
-      setGuidanceStatus((current) => {
-        if (event.kind === 'MessageEvent' && event.source === 'user') {
-          return current === 'waiting' ? 'context' : current;
-        }
-        if (
-          event.kind === 'ActionEvent'
-          || (event.kind === 'MessageEvent' && event.source === 'agent')
-        ) {
-          return current === 'context' ? 'processing' : current;
-        }
-        return current;
-      });
-      handleEvent(event);
-    },
-    [handleEvent],
-  );
-
-  const { wsState } = useConversationSocket({
-    conversationId: state.conversationId,
-    userId: activeUserId,
-    cookie: requestOverrides.cookie,
-    xCluster: requestOverrides.xCluster,
-    onEvent: handleSocketEvent,
-  });
+  const [streamAfterSeq, setStreamAfterSeq] = useState(0);
+  const snapshotRefreshTimerRef = useRef<number | null>(null);
+  const conversationIdRef = useRef<string | null>(null);
+  const latestSnapshotRef = useRef<{
+    conversationId: string;
+    throughSeq: number;
+  } | null>(null);
+  const openConversationRequestRef = useRef(0);
+  conversationIdRef.current = state.conversationId;
 
   useEffect(() => {
     setGuidanceStatus(null);
@@ -141,8 +124,14 @@ function ChatApp() {
     localStorage.setItem(REQUEST_OVERRIDES_STORAGE_KEY, JSON.stringify(requestOverrides));
   }, [requestOverrides]);
 
+  useEffect(() => () => {
+    if (snapshotRefreshTimerRef.current !== null) {
+      window.clearTimeout(snapshotRefreshTimerRef.current);
+    }
+  }, []);
+
   const getRequestOptions = useCallback(
-    (userId = activeUserId) => ({
+    (userId = activeUserId): RequestOptions => ({
       userId,
       cookie: requestOverrides.cookie,
       xCluster: requestOverrides.xCluster,
@@ -150,41 +139,140 @@ function ChatApp() {
     [activeUserId, requestOverrides.cookie, requestOverrides.xCluster],
   );
 
-  const openConversation = useCallback(
-    async (conversation: ConversationInfo, userId = activeUserId) => {
-      if (conversation.id !== state.conversationId) {
-        dispatch({ type: 'SET_CONVERSATION_ID', id: conversation.id });
+  const productRequestOptions = useMemo(
+    () => getRequestOptions(activeUserId),
+    [activeUserId, getRequestOptions],
+  );
+
+  const applySnapshot = useCallback(
+    (snapshot: ConversationSnapshot, resetStream: boolean) => {
+      const latest = latestSnapshotRef.current;
+      if (
+        latest?.conversationId === snapshot.conversation_id
+        && latest.throughSeq > snapshot.through_seq
+      ) {
+        return;
       }
-      dispatch({
-        type: 'SET_STATUS',
-        status: conversation.execution_status as ExecutionStatus,
+      latestSnapshotRef.current = {
+        conversationId: snapshot.conversation_id,
+        throughSeq: snapshot.through_seq,
+      };
+      dispatch({ type: 'SET_PRODUCT_SNAPSHOT', snapshot });
+      if (resetStream) setStreamAfterSeq(snapshot.through_seq);
+      setConversations((current) => {
+        const remaining = current.filter(
+          (item) => item.conversation_id !== snapshot.conversation_id,
+        );
+        return [snapshot, ...remaining];
       });
+    },
+    [dispatch],
+  );
+
+  const refreshCurrentSnapshot = useCallback(async (): Promise<number> => {
+    const conversationId = conversationIdRef.current;
+    if (!conversationId) return 0;
+    const snapshot = await getProductSnapshot(
+      conversationId,
+      productRequestOptions,
+    );
+    if (conversationIdRef.current !== conversationId) {
+      return 0;
+    }
+    applySnapshot(snapshot, false);
+    return snapshot.through_seq;
+  }, [applySnapshot, productRequestOptions]);
+
+  const handleProductEvent = useCallback(
+    (event: ProductEvent) => {
+      setGuidanceStatus((current) => {
+        if (event.type === 'message.completed' && event.payload.role === 'user') {
+          return current === 'waiting' ? 'context' : current;
+        }
+        if (
+          event.type === 'operation.started'
+          || (event.type === 'message.started'
+            && event.payload.role === 'assistant')
+        ) {
+          return current === 'context' ? 'processing' : current;
+        }
+        return current;
+      });
+      if (snapshotRefreshTimerRef.current !== null) {
+        window.clearTimeout(snapshotRefreshTimerRef.current);
+      }
+      const delay = event.type === 'message.delta' ? 75 : 0;
+      snapshotRefreshTimerRef.current = window.setTimeout(() => {
+        snapshotRefreshTimerRef.current = null;
+        void refreshCurrentSnapshot().catch((error) => {
+          dispatch({
+            type: 'SET_ERROR',
+            error: error instanceof Error ? error.message : 'Unknown error',
+          });
+        });
+      }, delay);
+    },
+    [dispatch, refreshCurrentSnapshot],
+  );
+
+  const wsState = useProductEventStream({
+    conversationId: state.conversationId,
+    afterSeq: streamAfterSeq,
+    requestOptions: productRequestOptions,
+    onEvent: handleProductEvent,
+    onGap: refreshCurrentSnapshot,
+  });
+
+  const openConversation = useCallback(
+    async (conversation: ConversationSnapshot, userId = activeUserId) => {
+      const requestId = openConversationRequestRef.current + 1;
+      openConversationRequestRef.current = requestId;
+      setStreamAfterSeq(conversation.through_seq);
+      if (conversation.conversation_id !== conversationIdRef.current) {
+        dispatch({
+          type: 'SET_CONVERSATION_ID',
+          id: conversation.conversation_id,
+        });
+      }
       setIsLoadingEvents(true);
       try {
-        const events = await listConversationEvents(conversation.id, getRequestOptions(userId));
-        dispatch({ type: 'SET_EVENTS', events });
+        const snapshot = await getProductSnapshot(
+          conversation.conversation_id,
+          getRequestOptions(userId),
+        );
+        if (openConversationRequestRef.current !== requestId) {
+          return;
+        }
+        applySnapshot(snapshot, true);
       } catch (err) {
+        if (openConversationRequestRef.current !== requestId) {
+          return;
+        }
         dispatch({
           type: 'SET_ERROR',
           error: err instanceof Error ? err.message : 'Unknown error',
         });
       } finally {
-        setIsLoadingEvents(false);
+        if (openConversationRequestRef.current === requestId) {
+          setIsLoadingEvents(false);
+        }
       }
     },
-    [activeUserId, dispatch, getRequestOptions, state.conversationId],
+    [activeUserId, applySnapshot, dispatch, getRequestOptions],
   );
 
   const refreshConversations = useCallback(
     async (preferredConversationId?: string, userId = activeUserId) => {
       setIsLoadingList(true);
       try {
-        const items = await listConversations(getRequestOptions(userId));
+        const items = await listProductConversations(getRequestOptions(userId));
         setConversations(items);
 
         const selected =
           (preferredConversationId
-            ? items.find((item) => item.id === preferredConversationId)
+            ? items.find(
+                (item) => item.conversation_id === preferredConversationId,
+              )
             : undefined) ?? items[0];
         if (selected) {
           await openConversation(selected, userId);
@@ -219,10 +307,11 @@ function ChatApp() {
       try {
         const requestOptions = getRequestOptions(activeUserId);
         if (!state.conversationId) {
-          const info = await createConversation(text, requestOptions);
-          await refreshConversations(info.id, activeUserId);
+          const snapshot = await createProductConversation(text, requestOptions);
+          applySnapshot(snapshot, true);
+          void refreshConversations(snapshot.conversation_id, activeUserId);
         } else {
-          await sendPyromindMessage(
+          await sendProductMessage(
             state.conversationId,
             text,
             requestOptions,
@@ -232,7 +321,6 @@ function ChatApp() {
               current === 'waiting' ? 'context' : current,
             );
           }
-          void refreshConversations(state.conversationId, activeUserId);
         }
       } catch (err) {
         if (isGuidance) {
@@ -248,6 +336,7 @@ function ChatApp() {
     },
     [
       activeUserId,
+      applySnapshot,
       dispatch,
       getRequestOptions,
       refreshConversations,
@@ -262,19 +351,24 @@ function ChatApp() {
         dispatch({ type: 'SET_ERROR', error: 'Select a conversation first.' });
         return;
       }
+      const permission = state.snapshot?.pending_permissions[0];
+      if (!permission) {
+        dispatch({ type: 'SET_ERROR', error: 'No pending permission found.' });
+        return;
+      }
 
       setIsRespondingToConfirmation(true);
       try {
-        await respondToConfirmation(
+        await respondToProductPermission(
           state.conversationId,
+          permission.permission_id,
           accept,
-          accept ? 'User approved the pending action.' : 'User rejected the pending action.',
           getRequestOptions(activeUserId),
         );
         if (!accept) {
           dispatch({ type: 'SET_STATUS', status: 'idle' });
         }
-        await refreshConversations(state.conversationId, activeUserId);
+        await refreshCurrentSnapshot();
       } catch (err) {
         dispatch({ type: 'SET_STATUS', status: 'waiting_for_confirmation' });
         dispatch({
@@ -289,8 +383,9 @@ function ChatApp() {
       activeUserId,
       dispatch,
       getRequestOptions,
-      refreshConversations,
+      refreshCurrentSnapshot,
       state.conversationId,
+      state.snapshot,
     ],
   );
   const handleRollbackWorkflow = useCallback(
@@ -301,12 +396,13 @@ function ChatApp() {
       }
       setRollingBackWorkflowEventId(eventId);
       try {
-        const result = await forkPyromindConversationAtEvent(
+        const snapshot = await forkProductConversation(
           state.conversationId,
           eventId,
           getRequestOptions(activeUserId),
         );
-        await refreshConversations(result.conversationId, activeUserId);
+        applySnapshot(snapshot, true);
+        void refreshConversations(snapshot.conversation_id, activeUserId);
       } catch (err) {
         dispatch({
           type: 'SET_ERROR',
@@ -318,6 +414,7 @@ function ChatApp() {
     },
     [
       activeUserId,
+      applySnapshot,
       dispatch,
       getRequestOptions,
       refreshConversations,
@@ -325,21 +422,19 @@ function ChatApp() {
     ],
   );
 
-  const handleNewConversation = useCallback(async () => {
-    setIsCreatingConversation(true);
-    try {
-      const requestOptions = getRequestOptions(activeUserId);
-      const info = await createConversation(undefined, requestOptions);
-      await refreshConversations(info.id, activeUserId);
-    } catch (err) {
-      dispatch({
-        type: 'SET_ERROR',
-        error: err instanceof Error ? err.message : 'Unknown error',
-      });
-    } finally {
-      setIsCreatingConversation(false);
+  const handleNewConversation = useCallback(() => {
+    openConversationRequestRef.current += 1;
+    conversationIdRef.current = null;
+    latestSnapshotRef.current = null;
+    if (snapshotRefreshTimerRef.current !== null) {
+      window.clearTimeout(snapshotRefreshTimerRef.current);
+      snapshotRefreshTimerRef.current = null;
     }
-  }, [activeUserId, dispatch, getRequestOptions, refreshConversations]);
+    setStreamAfterSeq(0);
+    setIsLoadingEvents(false);
+    setGuidanceStatus(null);
+    dispatch({ type: 'RESET_CONVERSATION' });
+  }, [dispatch]);
 
   const handleAddUser = useCallback(() => {
     const nextUserId = draftUserId.trim();
@@ -409,7 +504,7 @@ function ChatApp() {
   ]);
 
   const selectedConversation = conversations.find(
-    (conversation) => conversation.id === state.conversationId,
+    (conversation) => conversation.conversation_id === state.conversationId,
   );
 
   return (
@@ -574,11 +669,10 @@ function ChatApp() {
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => void handleNewConversation()}
-                disabled={isCreatingConversation}
+                onClick={handleNewConversation}
                 className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
               >
-                {isCreatingConversation ? 'Creating...' : 'New'}
+                New
               </button>
               <button
                 type="button"
@@ -599,10 +693,11 @@ function ChatApp() {
               <div className="px-3 py-6 text-sm text-gray-500">No conversations.</div>
             )}
             {conversations.map((conversation) => {
-              const isSelected = conversation.id === state.conversationId;
+              const isSelected =
+                conversation.conversation_id === state.conversationId;
               return (
                 <button
-                  key={conversation.id}
+                  key={conversation.conversation_id}
                   type="button"
                   onClick={() => void openConversation(conversation, activeUserId)}
                   className={`block w-full border-b px-3 py-3 text-left ${
@@ -614,12 +709,14 @@ function ChatApp() {
                       {conversationTitle(conversation)}
                     </span>
                     <span className="shrink-0 text-[11px] uppercase text-gray-400">
-                      {conversation.execution_status}
+                      {conversation.status}
                     </span>
                   </div>
                   <div className="mt-1 flex items-center justify-between gap-2 text-xs text-gray-500">
-                    <span className="font-mono">{conversation.id.slice(0, 8)}</span>
-                    <span>{formatTime(conversation.updated_at)}</span>
+                    <span className="font-mono">
+                      {conversation.conversation_id.slice(0, 8)}
+                    </span>
+                    <span>seq {conversation.through_seq}</span>
                   </div>
                 </button>
               );

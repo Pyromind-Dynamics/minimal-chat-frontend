@@ -3,9 +3,12 @@ import { BACKEND_URL, SESSION_API_KEY, LLM_MODEL, LLM_API_KEY, LLM_BASE_URL } fr
 import { applyRequestCookies, normalizeRequestValue, type RequestOverrides } from './requestOverrides';
 import type {
   ChatEvent,
+  CommandReceipt,
   ConversationInfo,
   ConversationPage,
+  ConversationSnapshot,
   EventPage,
+  ProductEvent,
   PyromindForkAtEventResult,
 } from './types';
 
@@ -14,6 +17,158 @@ interface RequestOptions extends RequestOverrides {
 }
 
 export type { RequestOptions };
+
+const PRODUCT_API = `${BACKEND_URL}/api/v2/pyromind/conversations`;
+
+export async function prepareProductRequest(
+  options?: RequestOptions,
+): Promise<void> {
+  await prepareAuth(options);
+}
+
+export function getProductRequestHeaders(
+  options?: RequestOptions,
+): Record<string, string> {
+  return getHeaders(options);
+}
+
+export function productEventsUrl(
+  conversationId: string,
+  afterSeq: number,
+): string {
+  const params = new URLSearchParams({ afterSeq: String(afterSeq) });
+  return `${PRODUCT_API}/${conversationId}/events?${params}`;
+}
+
+export async function createProductConversation(
+  initialMessage?: string,
+  options?: RequestOptions,
+): Promise<ConversationSnapshot> {
+  return productRequest<ConversationSnapshot>(
+    PRODUCT_API,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        llm: {
+          model: LLM_MODEL || undefined,
+          api_key: LLM_API_KEY || undefined,
+          base_url: LLM_BASE_URL || undefined,
+        },
+        message: initialMessage || undefined,
+        extra: {},
+      }),
+    },
+    options,
+  );
+}
+
+export async function listProductConversations(
+  options?: RequestOptions,
+): Promise<ConversationSnapshot[]> {
+  return productRequest<ConversationSnapshot[]>(PRODUCT_API, {}, options);
+}
+
+export async function getProductSnapshot(
+  conversationId: string,
+  options?: RequestOptions,
+): Promise<ConversationSnapshot> {
+  return productRequest<ConversationSnapshot>(
+    `${PRODUCT_API}/${conversationId}/snapshot`,
+    {},
+    options,
+  );
+}
+
+export async function sendProductMessage(
+  conversationId: string,
+  text: string,
+  options?: RequestOptions,
+): Promise<CommandReceipt> {
+  return submitProductCommand(
+    conversationId,
+    {
+      command_id: crypto.randomUUID(),
+      type: 'user_message',
+      content: [{ type: 'text', text }],
+    },
+    options,
+  );
+}
+
+export async function respondToProductPermission(
+  conversationId: string,
+  permissionId: string,
+  accept: boolean,
+  options?: RequestOptions,
+): Promise<CommandReceipt> {
+  return submitProductCommand(
+    conversationId,
+    {
+      command_id: crypto.randomUUID(),
+      type: 'permission_response',
+      permission_id: permissionId,
+      decision: accept ? 'allow_once' : 'deny',
+      reason: accept ? undefined : 'User rejected the pending action.',
+    },
+    options,
+  );
+}
+
+export async function forkProductConversation(
+  conversationId: string,
+  eventId: string,
+  options?: RequestOptions,
+): Promise<ConversationSnapshot> {
+  return productRequest<ConversationSnapshot>(
+    `${PRODUCT_API}/${conversationId}/forks`,
+    { method: 'POST', body: JSON.stringify({ eventId }) },
+    options,
+  );
+}
+
+export function parseProductEvent(data: string): ProductEvent {
+  const parsed = JSON.parse(data) as ProductEvent;
+  if (
+    !parsed
+    || typeof parsed !== 'object'
+    || typeof parsed.conversation_id !== 'string'
+    || typeof parsed.seq !== 'number'
+    || typeof parsed.type !== 'string'
+  ) {
+    throw new Error('Invalid ProductEvent payload');
+  }
+  return parsed;
+}
+
+async function submitProductCommand(
+  conversationId: string,
+  command: Record<string, unknown>,
+  options?: RequestOptions,
+): Promise<CommandReceipt> {
+  return productRequest<CommandReceipt>(
+    `${PRODUCT_API}/${conversationId}/commands`,
+    { method: 'POST', body: JSON.stringify(command) },
+    options,
+  );
+}
+
+async function productRequest<T>(
+  url: string,
+  init: RequestInit,
+  options?: RequestOptions,
+): Promise<T> {
+  await prepareProductRequest(options);
+  const response = await fetch(url, {
+    ...init,
+    credentials: 'include',
+    headers: { ...getProductRequestHeaders(options), ...init.headers },
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Request failed: ${response.status} ${detail}`);
+  }
+  return response.json() as Promise<T>;
+}
 
 export interface DataPreparationProgress {
   output_dir: string;

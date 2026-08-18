@@ -194,7 +194,155 @@ export type ExecutionStatus =
   | 'finished'
   | 'error'
   | 'stuck'
-  | 'deleting';
+  | 'deleting'
+  | 'closed';
+
+export interface HarnessCapabilities {
+  resume: boolean;
+  cancel: boolean;
+  permission_reply: boolean;
+  partial_message: boolean;
+  fork: boolean;
+  workflow_rollback: boolean;
+  native_workspace_tools: string[];
+}
+
+export interface ProductTextContent {
+  type: 'text';
+  text: string;
+}
+
+export interface ProductImageContent {
+  type: 'image';
+  image_urls: string[];
+}
+
+export interface ProductImageUrlContent {
+  type: 'image_url';
+  url: string;
+}
+
+export type ProductContent =
+  | ProductTextContent
+  | ProductImageContent
+  | ProductImageUrlContent;
+
+export interface TimelineMessage {
+  kind: 'message';
+  item_id: string;
+  started_seq: number;
+  completed_seq?: number | null;
+  role: 'user' | 'assistant' | 'system';
+  content: ProductContent[];
+  status: 'streaming' | 'completed' | 'failed';
+  run_id?: string | null;
+}
+
+export interface TimelineOperation {
+  kind: 'operation';
+  item_id: string;
+  started_seq: number;
+  completed_seq?: number | null;
+  name: string;
+  category: 'tool' | 'subagent' | 'observation';
+  status: 'running' | 'completed' | 'failed';
+  thought: ProductContent[];
+  arguments: unknown;
+  output: ProductContent[];
+  details: unknown;
+  error_code?: string | null;
+  run_id?: string | null;
+}
+
+export interface ProductWorkflowState {
+  resource_id: string;
+  version: string;
+  dsl: string;
+  canvas?: Record<string, unknown> | null;
+}
+
+export interface TimelineWorkflow {
+  kind: 'workflow';
+  item_id: string;
+  started_seq: number;
+  workflow: ProductWorkflowState;
+}
+
+export interface TimelineCompaction {
+  kind: 'compaction';
+  item_id: string;
+  started_seq: number;
+  status: 'started' | 'completed' | 'skipped' | 'failed';
+  summary?: string | null;
+}
+
+export interface TimelineNotice {
+  kind: 'notice';
+  item_id: string;
+  started_seq: number;
+  severity: 'info' | 'warning' | 'error';
+  code: string;
+  message: string;
+}
+
+export type TimelineItem =
+  | TimelineMessage
+  | TimelineOperation
+  | TimelineWorkflow
+  | TimelineCompaction
+  | TimelineNotice;
+
+export interface ProductPlanState {
+  explanation?: string | null;
+  steps: PlanStep[];
+}
+
+export interface ProductPermission {
+  permission_id: string;
+  operation_ids: string[];
+  description: string;
+  choices: Array<'allow_once' | 'deny'>;
+}
+
+export interface ProductUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  cost_usd?: number | null;
+}
+
+export interface ConversationSnapshot {
+  schema_version: number;
+  conversation_id: string;
+  through_seq: number;
+  status: ExecutionStatus;
+  capabilities: HarnessCapabilities;
+  timeline: TimelineItem[];
+  current_workflow?: ProductWorkflowState | null;
+  plan?: ProductPlanState | null;
+  pending_permissions: ProductPermission[];
+  compaction_status?: 'started' | 'completed' | 'skipped' | 'failed' | null;
+  usage: ProductUsage;
+}
+
+export interface ProductEvent {
+  schema_version: number;
+  event_id: string;
+  conversation_id: string;
+  seq: number;
+  occurred_at: string;
+  type: string;
+  run_id?: string | null;
+  payload: Record<string, unknown>;
+  source_event_id?: string | null;
+}
+
+export interface CommandReceipt {
+  command_id: string;
+  status: 'accepted' | 'completed' | 'failed';
+  response: Record<string, unknown>;
+  recorded_at: string;
+}
 
 export type GuidanceStatus =
   | 'waiting'

@@ -2,13 +2,16 @@ import { createContext, useContext, useReducer, useCallback, type ReactNode } fr
 import {
   getContextCondensationState,
   type ChatEvent,
+  type ConversationSnapshot,
   type ExecutionStatus,
 } from './types';
 import type { WsState } from './hooks/useConversationSocket';
+import { snapshotToChatEvents } from './productSnapshot';
 
 // State shape
 interface ChatState {
   conversationId: string | null;
+  snapshot: ConversationSnapshot | null;
   events: ChatEvent[];
   status: ExecutionStatus;
   isCondensing: boolean;
@@ -19,6 +22,7 @@ interface ChatState {
 // Actions
 type ChatAction =
   | { type: 'SET_CONVERSATION_ID'; id: string }
+  | { type: 'SET_PRODUCT_SNAPSHOT'; snapshot: ConversationSnapshot }
   | { type: 'RESET_CONVERSATION' }
   | { type: 'SET_EVENTS'; events: ChatEvent[] }
   | { type: 'ADD_EVENT'; event: ChatEvent }
@@ -30,6 +34,7 @@ type ChatAction =
 
 const initialState: ChatState = {
   conversationId: null,
+  snapshot: null,
   events: [],
   status: 'idle',
   isCondensing: false,
@@ -65,6 +70,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return {
         ...state,
         conversationId: action.id,
+        snapshot: null,
         events: [],
         isCondensing: false,
         error: null,
@@ -73,9 +79,20 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return {
         ...state,
         conversationId: null,
+        snapshot: null,
         events: [],
         status: 'idle',
         isCondensing: false,
+        error: null,
+      };
+    case 'SET_PRODUCT_SNAPSHOT':
+      return {
+        ...state,
+        conversationId: action.snapshot.conversation_id,
+        snapshot: action.snapshot,
+        events: snapshotToChatEvents(action.snapshot),
+        status: action.snapshot.status,
+        isCondensing: action.snapshot.compaction_status === 'started',
         error: null,
       };
     case 'SET_EVENTS':
