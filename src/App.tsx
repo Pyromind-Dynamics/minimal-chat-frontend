@@ -1,24 +1,23 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ChatProvider, useChatContext } from './ChatContext';
-import { useConversationSocket } from './hooks/useConversationSocket';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  cancelConversation,
   createConversation,
-  forkPyromindConversationAtEvent,
-  requestDebugUrl,
-  listConversationEvents,
+  getConversationSnapshot,
   listConversations,
-  respondToConfirmation,
-  sendPyromindMessage,
-  type DebugUrlResult,
+  respondToPermission,
+  sendUserMessage,
+  type RequestOptions,
 } from './api';
+import { useChatContext } from './ChatContext';
+import { ChatProvider } from './ChatProvider';
 import { ChatPanel } from './components/ChatPanel';
 import { MessageInput } from './components/MessageInput';
 import { StatusBar } from './components/StatusBar';
-import {
-  type ChatEvent,
-  type ConversationInfo,
-  type ExecutionStatus,
-  type GuidanceStatus,
+import { useProductEventStream } from './hooks/useProductEventStream';
+import type {
+  ConversationSnapshot,
+  GuidanceStatus,
+  ProductEvent,
 } from './types';
 
 const DEFAULT_USER_IDS = ['42', '7', '1001'];
@@ -30,316 +29,209 @@ interface RequestOverrideFields {
   xCluster: string;
 }
 
-function loadUserIds(): string[] {
-  const saved = localStorage.getItem(USER_IDS_STORAGE_KEY);
-  if (!saved) {
-    return DEFAULT_USER_IDS;
-  }
-  try {
-    const parsed = JSON.parse(saved);
-    if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) {
-      return parsed.length > 0 ? parsed : DEFAULT_USER_IDS;
-    }
-  } catch {
-    return DEFAULT_USER_IDS;
-  }
-  return DEFAULT_USER_IDS;
-}
-
-function loadRequestOverrides(): RequestOverrideFields {
-  const empty = { cookie: '', xCluster: '' };
-  const saved = localStorage.getItem(REQUEST_OVERRIDES_STORAGE_KEY);
-  if (!saved) {
-    return empty;
-  }
-  try {
-    const parsed = JSON.parse(saved) as Partial<RequestOverrideFields>;
-    return {
-      cookie: typeof parsed.cookie === 'string' ? parsed.cookie : '',
-      xCluster: typeof parsed.xCluster === 'string' ? parsed.xCluster : '',
-    };
-  } catch {
-    return empty;
-  }
-}
-
-function formatTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
-  return date.toLocaleString([], {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function conversationTitle(conversation: ConversationInfo): string {
-  return conversation.title?.trim() || conversation.id.slice(0, 8);
-}
-
 function ChatApp() {
   const { state, dispatch, handleEvent } = useChatContext();
   const [userIds, setUserIds] = useState(loadUserIds);
-  const [activeUserId, setActiveUserId] = useState(userIds[0] ?? DEFAULT_USER_IDS[0]);
+  const [activeUserId, setActiveUserId] = useState(
+    userIds[0] ?? DEFAULT_USER_IDS[0],
+  );
   const [draftUserId, setDraftUserId] = useState('');
   const [requestOverrides, setRequestOverrides] = useState(loadRequestOverrides);
-  const [draftRequestOverrides, setDraftRequestOverrides] = useState(loadRequestOverrides);
-  const [conversations, setConversations] = useState<ConversationInfo[]>([]);
-  const [isSending, setIsSending] = useState(false);
-  const [guidanceStatus, setGuidanceStatus] = useState<GuidanceStatus | null>(null);
-  const [isLoadingList, setIsLoadingList] = useState(false);
-  const [isLoadingEvents, setIsLoadingEvents] = useState(false);
-  const [isRespondingToConfirmation, setIsRespondingToConfirmation] =
-    useState(false);
-  const [rollingBackWorkflowEventId, setRollingBackWorkflowEventId] = useState<
-    string | null
-  >(null);
-  const [debugUrl, setDebugUrl] = useState('');
-  const [debugUrlResult, setDebugUrlResult] = useState<DebugUrlResult | null>(null);
-  const [isRequestingDebugUrl, setIsRequestingDebugUrl] = useState(false);
-  const [isCreatingConversation, setIsCreatingConversation] = useState(false);
-
-  const handleSocketEvent = useCallback(
-    (event: ChatEvent) => {
-      setGuidanceStatus((current) => {
-        if (event.kind === 'MessageEvent' && event.source === 'user') {
-          return current === 'waiting' ? 'context' : current;
-        }
-        if (
-          event.kind === 'ActionEvent'
-          || (event.kind === 'MessageEvent' && event.source === 'agent')
-        ) {
-          return current === 'context' ? 'processing' : current;
-        }
-        return current;
-      });
-      handleEvent(event);
-    },
-    [handleEvent],
+  const [draftRequestOverrides, setDraftRequestOverrides] = useState(
+    loadRequestOverrides,
   );
+  const [conversations, setConversations] = useState<ConversationSnapshot[]>([]);
+  const [isLoadingList, setIsLoadingList] = useState(false);
+  const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [isRespondingToPermission, setIsRespondingToPermission] = useState(false);
+  const [guidanceStatus, setGuidanceStatus] = useState<GuidanceStatus | null>(null);
+  const [streamAfterSeq, setStreamAfterSeq] = useState(0);
+  const conversationIdRef = useRef<string | null>(null);
+  conversationIdRef.current = state.conversationId;
 
-  const { wsState } = useConversationSocket({
-    conversationId: state.conversationId,
+  const requestOptions = useMemo<RequestOptions>(() => ({
     userId: activeUserId,
     cookie: requestOverrides.cookie,
     xCluster: requestOverrides.xCluster,
-    onEvent: handleSocketEvent,
+  }), [activeUserId, requestOverrides.cookie, requestOverrides.xCluster]);
+
+  const handleProductEvent = useCallback((event: ProductEvent) => {
+    setGuidanceStatus((current) => {
+      if (
+        event.type === 'message.completed'
+        && event.payload.role === 'user'
+        && current === 'waiting'
+      ) {
+        return 'context';
+      }
+      if (
+        (event.type === 'operation.started'
+          || (event.type === 'message.started' && event.payload.role === 'assistant'))
+        && current === 'context'
+      ) {
+        return 'processing';
+      }
+      return current;
+    });
+    handleEvent(event);
+  }, [handleEvent]);
+
+  const handleSequenceGap = useCallback(async (): Promise<number> => {
+    const conversationId = conversationIdRef.current;
+    if (!conversationId) return 0;
+    const snapshot = await getConversationSnapshot(conversationId, requestOptions);
+    dispatch({ type: 'SET_SNAPSHOT', snapshot });
+    setStreamAfterSeq(snapshot.through_seq);
+    return snapshot.through_seq;
+  }, [dispatch, requestOptions]);
+
+  const connectionState = useProductEventStream({
+    conversationId: state.conversationId,
+    afterSeq: streamAfterSeq,
+    requestOptions,
+    onEvent: handleProductEvent,
+    onGap: handleSequenceGap,
   });
 
+  const openConversation = useCallback(async (
+    conversationId: string,
+  ): Promise<void> => {
+    setIsLoadingSnapshot(true);
+    try {
+      const snapshot = await getConversationSnapshot(conversationId, requestOptions);
+      dispatch({ type: 'SET_SNAPSHOT', snapshot });
+      setStreamAfterSeq(snapshot.through_seq);
+      setGuidanceStatus(null);
+    } catch (error) {
+      reportError(dispatch, error);
+    } finally {
+      setIsLoadingSnapshot(false);
+    }
+  }, [dispatch, requestOptions]);
+
+  const refreshConversations = useCallback(async (
+    preferredConversationId?: string,
+  ): Promise<void> => {
+    setIsLoadingList(true);
+    try {
+      const items = await listConversations(requestOptions);
+      setConversations(items);
+      const selectedId = preferredConversationId
+        ?? (items.some((item) => item.conversation_id === conversationIdRef.current)
+          ? conversationIdRef.current
+          : items[0]?.conversation_id);
+      if (selectedId) {
+        await openConversation(selectedId);
+      } else {
+        dispatch({ type: 'RESET_CONVERSATION' });
+      }
+    } catch (error) {
+      setConversations([]);
+      dispatch({ type: 'RESET_CONVERSATION' });
+      reportError(dispatch, error);
+    } finally {
+      setIsLoadingList(false);
+    }
+  }, [dispatch, openConversation, requestOptions]);
+
   useEffect(() => {
-    setGuidanceStatus(null);
-  }, [state.conversationId]);
+    void refreshConversations();
+  }, [refreshConversations]);
 
   useEffect(() => {
     localStorage.setItem(USER_IDS_STORAGE_KEY, JSON.stringify(userIds));
   }, [userIds]);
 
   useEffect(() => {
-    localStorage.setItem(REQUEST_OVERRIDES_STORAGE_KEY, JSON.stringify(requestOverrides));
+    localStorage.setItem(
+      REQUEST_OVERRIDES_STORAGE_KEY,
+      JSON.stringify(requestOverrides),
+    );
   }, [requestOverrides]);
 
-  const getRequestOptions = useCallback(
-    (userId = activeUserId) => ({
-      userId,
-      cookie: requestOverrides.cookie,
-      xCluster: requestOverrides.xCluster,
-    }),
-    [activeUserId, requestOverrides.cookie, requestOverrides.xCluster],
-  );
-
-  const openConversation = useCallback(
-    async (conversation: ConversationInfo, userId = activeUserId) => {
-      if (conversation.id !== state.conversationId) {
-        dispatch({ type: 'SET_CONVERSATION_ID', id: conversation.id });
-      }
-      dispatch({
-        type: 'SET_STATUS',
-        status: conversation.execution_status as ExecutionStatus,
-      });
-      setIsLoadingEvents(true);
-      try {
-        const events = await listConversationEvents(conversation.id, getRequestOptions(userId));
-        dispatch({ type: 'SET_EVENTS', events });
-      } catch (err) {
-        dispatch({
-          type: 'SET_ERROR',
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
-      } finally {
-        setIsLoadingEvents(false);
-      }
-    },
-    [activeUserId, dispatch, getRequestOptions, state.conversationId],
-  );
-
-  const refreshConversations = useCallback(
-    async (preferredConversationId?: string, userId = activeUserId) => {
-      setIsLoadingList(true);
-      try {
-        const items = await listConversations(getRequestOptions(userId));
-        setConversations(items);
-
-        const selected =
-          (preferredConversationId
-            ? items.find((item) => item.id === preferredConversationId)
-            : undefined) ?? items[0];
-        if (selected) {
-          await openConversation(selected, userId);
-        } else {
-          dispatch({ type: 'RESET_CONVERSATION' });
-        }
-      } catch (err) {
-        setConversations([]);
-        dispatch({ type: 'RESET_CONVERSATION' });
-        dispatch({
-          type: 'SET_ERROR',
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
-      } finally {
-        setIsLoadingList(false);
-      }
-    },
-    [activeUserId, dispatch, getRequestOptions, openConversation],
-  );
-
   useEffect(() => {
-    void refreshConversations(undefined, activeUserId);
-  }, [activeUserId, refreshConversations]);
+    if (!state.snapshot) return;
+    setConversations((current) => {
+      const exists = current.some(
+        (item) => item.conversation_id === state.snapshot!.conversation_id,
+      );
+      if (!exists) return [state.snapshot!, ...current];
+      return current.map((item) =>
+        item.conversation_id === state.snapshot!.conversation_id
+          ? state.snapshot!
+          : item
+      );
+    });
+  }, [state.snapshot]);
 
-  const handleSend = useCallback(
-    async (text: string) => {
-      const isGuidance = state.status === 'running';
-      if (isGuidance) {
-        setGuidanceStatus('waiting');
-      }
-      setIsSending(true);
-      try {
-        const requestOptions = getRequestOptions(activeUserId);
-        if (!state.conversationId) {
-          const info = await createConversation(text, requestOptions);
-          await refreshConversations(info.id, activeUserId);
-        } else {
-          await sendPyromindMessage(
-            state.conversationId,
-            text,
-            requestOptions,
-          );
-          if (isGuidance) {
-            setGuidanceStatus((current) =>
-              current === 'waiting' ? 'context' : current,
-            );
-          }
-          void refreshConversations(state.conversationId, activeUserId);
-        }
-      } catch (err) {
-        if (isGuidance) {
-          setGuidanceStatus('failed');
-        }
-        dispatch({
-          type: 'SET_ERROR',
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
-      } finally {
-        setIsSending(false);
-      }
-    },
-    [
-      activeUserId,
-      dispatch,
-      getRequestOptions,
-      refreshConversations,
-      state.conversationId,
-      state.status,
-    ],
-  );
-
-  const handleRespondToConfirmation = useCallback(
-    async (accept: boolean) => {
-      if (!state.conversationId) {
-        dispatch({ type: 'SET_ERROR', error: 'Select a conversation first.' });
-        return;
-      }
-
-      setIsRespondingToConfirmation(true);
-      try {
-        await respondToConfirmation(
-          state.conversationId,
-          accept,
-          accept ? 'User approved the pending action.' : 'User rejected the pending action.',
-          getRequestOptions(activeUserId),
-        );
-        if (!accept) {
-          dispatch({ type: 'SET_STATUS', status: 'idle' });
-        }
-        await refreshConversations(state.conversationId, activeUserId);
-      } catch (err) {
-        dispatch({ type: 'SET_STATUS', status: 'waiting_for_confirmation' });
-        dispatch({
-          type: 'SET_ERROR',
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
-      } finally {
-        setIsRespondingToConfirmation(false);
-      }
-    },
-    [
-      activeUserId,
-      dispatch,
-      getRequestOptions,
-      refreshConversations,
-      state.conversationId,
-    ],
-  );
-  const handleRollbackWorkflow = useCallback(
-    async (eventId: string) => {
-      if (!state.conversationId) {
-        dispatch({ type: 'SET_ERROR', error: 'Select a conversation first.' });
-        return;
-      }
-      setRollingBackWorkflowEventId(eventId);
-      try {
-        const result = await forkPyromindConversationAtEvent(
-          state.conversationId,
-          eventId,
-          getRequestOptions(activeUserId),
-        );
-        await refreshConversations(result.conversationId, activeUserId);
-      } catch (err) {
-        dispatch({
-          type: 'SET_ERROR',
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
-      } finally {
-        setRollingBackWorkflowEventId(null);
-      }
-    },
-    [
-      activeUserId,
-      dispatch,
-      getRequestOptions,
-      refreshConversations,
-      state.conversationId,
-    ],
-  );
-
-  const handleNewConversation = useCallback(async () => {
-    setIsCreatingConversation(true);
+  const handleSend = useCallback(async (text: string): Promise<void> => {
+    const steering = state.snapshot?.status === 'running';
+    if (steering) setGuidanceStatus('waiting');
+    setIsSending(true);
     try {
-      const requestOptions = getRequestOptions(activeUserId);
-      const info = await createConversation(undefined, requestOptions);
-      await refreshConversations(info.id, activeUserId);
-    } catch (err) {
-      dispatch({
-        type: 'SET_ERROR',
-        error: err instanceof Error ? err.message : 'Unknown error',
-      });
+      let snapshot = state.snapshot;
+      if (!snapshot) {
+        snapshot = await createConversation(requestOptions);
+        dispatch({ type: 'SET_SNAPSHOT', snapshot });
+        setStreamAfterSeq(snapshot.through_seq);
+      }
+      await sendUserMessage(snapshot.conversation_id, text, requestOptions);
+    } catch (error) {
+      if (steering) setGuidanceStatus('failed');
+      reportError(dispatch, error);
     } finally {
-      setIsCreatingConversation(false);
+      setIsSending(false);
     }
-  }, [activeUserId, dispatch, getRequestOptions, refreshConversations]);
+  }, [dispatch, requestOptions, state.snapshot]);
+
+  const handleNewConversation = useCallback(async (): Promise<void> => {
+    setIsCreating(true);
+    try {
+      const snapshot = await createConversation(requestOptions);
+      dispatch({ type: 'SET_SNAPSHOT', snapshot });
+      setStreamAfterSeq(snapshot.through_seq);
+      setGuidanceStatus(null);
+    } catch (error) {
+      reportError(dispatch, error);
+    } finally {
+      setIsCreating(false);
+    }
+  }, [dispatch, requestOptions]);
+
+  const handleCancel = useCallback(async (): Promise<void> => {
+    if (!state.conversationId) return;
+    setIsCancelling(true);
+    try {
+      await cancelConversation(state.conversationId, requestOptions);
+    } catch (error) {
+      reportError(dispatch, error);
+    } finally {
+      setIsCancelling(false);
+    }
+  }, [dispatch, requestOptions, state.conversationId]);
+
+  const handlePermission = useCallback(async (
+    decision: 'allow_once' | 'deny',
+  ): Promise<void> => {
+    const permission = state.snapshot?.pending_permissions[0];
+    if (!state.conversationId || !permission) return;
+    setIsRespondingToPermission(true);
+    try {
+      await respondToPermission(
+        state.conversationId,
+        permission.permission_id,
+        decision,
+        requestOptions,
+      );
+    } catch (error) {
+      reportError(dispatch, error);
+    } finally {
+      setIsRespondingToPermission(false);
+    }
+  }, [dispatch, requestOptions, state.conversationId, state.snapshot]);
 
   const handleAddUser = useCallback(() => {
     const nextUserId = draftUserId.trim();
@@ -347,75 +239,28 @@ function ChatApp() {
       dispatch({ type: 'SET_ERROR', error: 'User ID must be numeric for dev auth.' });
       return;
     }
-    setUserIds((current) =>
-      current.includes(nextUserId) ? current : [...current, nextUserId],
+    setUserIds((current) => current.includes(nextUserId)
+      ? current
+      : [...current, nextUserId]
     );
     setActiveUserId(nextUserId);
     setDraftUserId('');
   }, [dispatch, draftUserId]);
 
-  const handleApplyRequestOverrides = useCallback(() => {
-    setRequestOverrides({
-      cookie: draftRequestOverrides.cookie.trim(),
-      xCluster: draftRequestOverrides.xCluster.trim(),
-    });
-  }, [draftRequestOverrides.cookie, draftRequestOverrides.xCluster]);
-
-  const handleRequestDebugUrl = useCallback(async () => {
-    const url = debugUrl.trim();
-    if (!url) {
-      dispatch({ type: 'SET_ERROR', error: 'Test URL is required.' });
-      return;
-    }
-    if (!state.conversationId) {
-      dispatch({ type: 'SET_ERROR', error: 'Select or create a conversation first.' });
-      return;
-    }
-
-    const nextOverrides = {
-      cookie: draftRequestOverrides.cookie.trim(),
-      xCluster: draftRequestOverrides.xCluster.trim(),
-    };
-    setRequestOverrides(nextOverrides);
-    setIsRequestingDebugUrl(true);
-    setDebugUrlResult(null);
-    try {
-      setDebugUrlResult(
-        await requestDebugUrl(
-          url,
-          state.conversationId,
-          {
-            userId: activeUserId,
-            cookie: nextOverrides.cookie,
-            xCluster: nextOverrides.xCluster,
-          },
-        ),
-      );
-    } catch (err) {
-      dispatch({
-        type: 'SET_ERROR',
-        error: err instanceof Error ? err.message : 'Unknown error',
-      });
-    } finally {
-      setIsRequestingDebugUrl(false);
-    }
-  }, [
-    activeUserId,
-    debugUrl,
-    dispatch,
-    draftRequestOverrides.cookie,
-    draftRequestOverrides.xCluster,
-    state.conversationId,
-  ]);
-
-  const selectedConversation = conversations.find(
-    (conversation) => conversation.id === state.conversationId,
-  );
+  const snapshot = state.snapshot;
+  const status = snapshot?.status ?? 'idle';
+  const canSteer = snapshot?.capabilities.steer ?? false;
+  const canCancel = status === 'running' && (snapshot?.capabilities.cancel ?? false);
+  const inputDisabled = isLoadingSnapshot
+    || status === 'waiting_permission'
+    || status === 'closed'
+    || status === 'failed'
+    || (status === 'running' && !canSteer);
 
   return (
-    <div className="h-screen flex flex-col bg-white text-left">
-      <div className="border-b bg-white px-4 py-3">
-        <div className="flex items-center gap-2 overflow-x-auto pb-2">
+    <div className="flex h-screen flex-col bg-white text-left">
+      <header className="border-b bg-white px-4 py-3">
+        <div className="flex items-center gap-2 overflow-x-auto">
           {userIds.map((userId) => (
             <button
               key={userId}
@@ -441,121 +286,59 @@ function ChatApp() {
               value={draftUserId}
               onChange={(event) => setDraftUserId(event.target.value)}
               placeholder="custom user id"
-              className="w-36 rounded-md border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-blue-500"
+              className="w-36 rounded-md border border-gray-200 px-3 py-1.5 text-sm"
             />
-            <button
-              type="submit"
-              className="rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700"
-            >
+            <button type="submit" className="rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white">
               Add
             </button>
           </form>
         </div>
         <form
-          className="grid gap-2 pt-2 sm:grid-cols-[minmax(220px,1fr)_minmax(160px,220px)_auto]"
+          className="mt-2 grid gap-2 sm:grid-cols-[minmax(220px,1fr)_minmax(160px,220px)_auto]"
           onSubmit={(event) => {
             event.preventDefault();
-            handleApplyRequestOverrides();
+            setRequestOverrides({
+              cookie: draftRequestOverrides.cookie.trim(),
+              xCluster: draftRequestOverrides.xCluster.trim(),
+            });
           }}
         >
-          <label className="min-w-0">
-            <span className="mb-1 block text-xs font-medium text-gray-500">Cookie</span>
-            <input
-              value={draftRequestOverrides.cookie}
-              onChange={(event) =>
-                setDraftRequestOverrides((current) => ({
-                  ...current,
-                  cookie: event.target.value,
-                }))
-              }
-              placeholder="name=value; other=value"
-              spellCheck={false}
-              autoCapitalize="off"
-              className="w-full rounded-md border border-gray-200 px-3 py-1.5 font-mono text-xs outline-none focus:border-blue-500"
-            />
-          </label>
-          <label className="min-w-0">
-            <span className="mb-1 block text-xs font-medium text-gray-500">x-cluster</span>
-            <input
-              value={draftRequestOverrides.xCluster}
-              onChange={(event) =>
-                setDraftRequestOverrides((current) => ({
-                  ...current,
-                  xCluster: event.target.value,
-                }))
-              }
-              placeholder="cluster"
-              spellCheck={false}
-              autoCapitalize="off"
-              className="w-full rounded-md border border-gray-200 px-3 py-1.5 font-mono text-xs outline-none focus:border-blue-500"
-            />
-          </label>
-          <button
-            type="submit"
-            className="self-end rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700"
-          >
+          <input
+            value={draftRequestOverrides.cookie}
+            onChange={(event) => setDraftRequestOverrides((current) => ({
+              ...current,
+              cookie: event.target.value,
+            }))}
+            placeholder="Cookie override"
+            className="rounded-md border border-gray-200 px-3 py-1.5 font-mono text-xs"
+          />
+          <input
+            value={draftRequestOverrides.xCluster}
+            onChange={(event) => setDraftRequestOverrides((current) => ({
+              ...current,
+              xCluster: event.target.value,
+            }))}
+            placeholder="x-cluster"
+            className="rounded-md border border-gray-200 px-3 py-1.5 font-mono text-xs"
+          />
+          <button type="submit" className="rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white">
             Apply
           </button>
         </form>
-        <form
-          className="grid gap-2 pt-2 sm:grid-cols-[minmax(260px,1fr)_auto]"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void handleRequestDebugUrl();
-          }}
-        >
-          <label className="min-w-0">
-            <span className="mb-1 block text-xs font-medium text-gray-500">Test URL</span>
-            <input
-              value={debugUrl}
-              onChange={(event) => setDebugUrl(event.target.value)}
-              placeholder="https://example.test/debug"
-              spellCheck={false}
-              autoCapitalize="off"
-              className="w-full rounded-md border border-gray-200 px-3 py-1.5 font-mono text-xs outline-none focus:border-blue-500"
-            />
-          </label>
-          <button
-            type="submit"
-            disabled={isRequestingDebugUrl}
-            className="self-end rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-          >
-            {isRequestingDebugUrl ? 'Requesting...' : 'Request'}
-          </button>
-        </form>
-        {debugUrlResult && (
-          <div className="mt-2 grid gap-2 rounded-md border border-gray-200 bg-gray-50 p-2 text-xs text-gray-700 sm:grid-cols-[220px_1fr]">
-            <div className="min-w-0">
-              <div className="font-medium text-gray-900">
-                Status {debugUrlResult.status_code}
-              </div>
-              <div className="mt-1 text-[11px] text-gray-500">
-                {debugUrlResult.context_source}
-                {debugUrlResult.conversation_id
-                  ? ` ${debugUrlResult.conversation_id.slice(0, 8)}`
-                  : ''}
-              </div>
-              <pre className="mt-1 max-h-24 overflow-auto rounded border border-gray-200 bg-white p-2 font-mono text-[11px]">
-                {JSON.stringify(debugUrlResult.forwarded_headers, null, 2)}
-              </pre>
-            </div>
-            <pre className="max-h-28 min-w-0 overflow-auto rounded border border-gray-200 bg-white p-2 font-mono text-[11px]">
-              {debugUrlResult.body || '(empty body)'}
-            </pre>
-          </div>
-        )}
-      </div>
+      </header>
 
       <StatusBar
-        wsState={wsState}
-        status={state.status}
+        connectionState={connectionState}
+        status={status}
         conversationId={state.conversationId}
+        usage={snapshot?.usage}
       />
 
       {state.error && (
         <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">
           {state.error}
           <button
+            type="button"
             onClick={() => dispatch({ type: 'SET_ERROR', error: null })}
             className="ml-2 underline"
           >
@@ -575,101 +358,130 @@ function ChatApp() {
               <button
                 type="button"
                 onClick={() => void handleNewConversation()}
-                disabled={isCreatingConversation}
-                className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                disabled={isCreating}
+                className="rounded-md border bg-white px-2.5 py-1.5 text-xs font-medium disabled:opacity-50"
               >
-                {isCreatingConversation ? 'Creating...' : 'New'}
+                {isCreating ? 'Creating...' : 'New'}
               </button>
               <button
                 type="button"
-                onClick={() => void refreshConversations(undefined, activeUserId)}
+                onClick={() => void refreshConversations()}
                 disabled={isLoadingList}
-                className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                className="rounded-md border bg-white px-2.5 py-1.5 text-xs font-medium disabled:opacity-50"
               >
                 Refresh
               </button>
             </div>
           </div>
-
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {isLoadingList && (
-              <div className="px-3 py-3 text-xs text-gray-500">Loading...</div>
-            )}
+            {isLoadingList && <div className="px-3 py-3 text-xs text-gray-500">Loading...</div>}
             {!isLoadingList && conversations.length === 0 && (
               <div className="px-3 py-6 text-sm text-gray-500">No conversations.</div>
             )}
-            {conversations.map((conversation) => {
-              const isSelected = conversation.id === state.conversationId;
-              return (
-                <button
-                  key={conversation.id}
-                  type="button"
-                  onClick={() => void openConversation(conversation, activeUserId)}
-                  className={`block w-full border-b px-3 py-3 text-left ${
-                    isSelected ? 'bg-white' : 'hover:bg-white'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-sm font-medium text-gray-900">
-                      {conversationTitle(conversation)}
-                    </span>
-                    <span className="shrink-0 text-[11px] uppercase text-gray-400">
-                      {conversation.execution_status}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between gap-2 text-xs text-gray-500">
-                    <span className="font-mono">{conversation.id.slice(0, 8)}</span>
-                    <span>{formatTime(conversation.updated_at)}</span>
-                  </div>
-                </button>
-              );
-            })}
+            {conversations.map((conversation) => (
+              <button
+                key={conversation.conversation_id}
+                type="button"
+                onClick={() => void openConversation(conversation.conversation_id)}
+                className={`block w-full border-b px-3 py-3 text-left ${
+                  conversation.conversation_id === state.conversationId
+                    ? 'bg-white'
+                    : 'hover:bg-white'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-sm font-medium text-gray-900">
+                    {conversation.conversation_id.slice(0, 8)}
+                  </span>
+                  <span className="text-[11px] uppercase text-gray-400">
+                    {conversation.status}
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-gray-500">
+                  seq {conversation.through_seq}
+                </div>
+              </button>
+            ))}
           </div>
         </aside>
 
         <main className="flex min-w-0 flex-1 flex-col bg-white">
           <div className="flex items-center justify-between border-b px-4 py-2 text-xs text-gray-500">
-            <span>
-              {selectedConversation
-                ? conversationTitle(selectedConversation)
-                : 'New conversation'}
-            </span>
-            {isLoadingEvents && <span>Loading history...</span>}
+            <span>{state.conversationId?.slice(0, 8) ?? 'New conversation'}</span>
+            <div className="flex items-center gap-2">
+              {isLoadingSnapshot && <span>Loading snapshot...</span>}
+              {canCancel && (
+                <button
+                  type="button"
+                  onClick={() => void handleCancel()}
+                  disabled={isCancelling}
+                  className="rounded border border-red-200 px-2 py-1 text-red-700 disabled:opacity-50"
+                >
+                  {isCancelling ? 'Cancelling...' : 'Cancel'}
+                </button>
+              )}
+            </div>
           </div>
 
           <ChatPanel
-            events={state.events}
-            status={state.status}
-            isCondensing={state.isCondensing}
-            requestOptions={getRequestOptions()}
-            onRollbackWorkflow={handleRollbackWorkflow}
-            rollbackWorkflowDisabled={
-              isSending
-              || isLoadingEvents
-              || state.status === 'running'
-              || rollingBackWorkflowEventId !== null
-            }
-            rollingBackWorkflowEventId={rollingBackWorkflowEventId}
-            isRespondingToConfirmation={isRespondingToConfirmation}
-            onRespondToConfirmation={handleRespondToConfirmation}
+            snapshot={snapshot}
+            isRespondingToPermission={isRespondingToPermission}
+            onRespondToPermission={(decision) => void handlePermission(decision)}
           />
 
           <MessageInput
-            onSend={handleSend}
-            status={state.status}
+            onSend={(text) => void handleSend(text)}
+            status={status}
             sending={isSending}
-            disabled={
-              isLoadingEvents
-              || isRespondingToConfirmation
-              || state.status === 'deleting'
-              || state.status === 'waiting_for_confirmation'
-            }
+            disabled={inputDisabled}
+            canSteer={canSteer}
             guidanceStatus={guidanceStatus}
           />
         </main>
       </div>
     </div>
   );
+}
+
+function loadUserIds(): string[] {
+  const saved = localStorage.getItem(USER_IDS_STORAGE_KEY);
+  if (!saved) return DEFAULT_USER_IDS;
+  try {
+    const parsed = JSON.parse(saved) as unknown;
+    return Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')
+      ? parsed
+      : DEFAULT_USER_IDS;
+  } catch {
+    return DEFAULT_USER_IDS;
+  }
+}
+
+function loadRequestOverrides(): RequestOverrideFields {
+  const saved = localStorage.getItem(REQUEST_OVERRIDES_STORAGE_KEY);
+  if (!saved) return { cookie: '', xCluster: '' };
+  try {
+    const parsed = JSON.parse(saved) as Partial<RequestOverrideFields>;
+    return {
+      cookie: typeof parsed.cookie === 'string' ? parsed.cookie : '',
+      xCluster: typeof parsed.xCluster === 'string' ? parsed.xCluster : '',
+    };
+  } catch {
+    return { cookie: '', xCluster: '' };
+  }
+}
+
+function reportError(
+  dispatch: React.Dispatch<
+    { type: 'SET_ERROR'; error: string | null }
+    | { type: 'RESET_CONVERSATION' }
+    | { type: 'SET_SNAPSHOT'; snapshot: ConversationSnapshot }
+  >,
+  error: unknown,
+): void {
+  dispatch({
+    type: 'SET_ERROR',
+    error: error instanceof Error ? error.message : 'Unknown error',
+  });
 }
 
 function App() {

@@ -1,11 +1,12 @@
 import { useState, type FormEvent } from 'react';
-import type { ExecutionStatus, GuidanceStatus } from '../types';
+import type { ConversationStatus, GuidanceStatus } from '../types';
 
 interface MessageInputProps {
   onSend: (text: string) => void;
-  status: ExecutionStatus;
+  status: ConversationStatus;
   sending?: boolean;
   disabled?: boolean;
+  canSteer?: boolean;
   guidanceStatus?: GuidanceStatus | null;
 }
 
@@ -14,35 +15,28 @@ export function MessageInput({
   status,
   sending = false,
   disabled = false,
+  canSteer = false,
   guidanceStatus = null,
 }: MessageInputProps) {
   const [text, setText] = useState('');
-  const isRunning = status === 'running';
-  const isPaused = status === 'paused';
-  const placeholder = isRunning
-    ? '输入引导，将在当前步骤结束后应用…'
-    : isPaused
-      ? '输入新要求并继续…'
-      : '输入消息…';
-  let helperText: string | null = null;
-  if (guidanceStatus === 'waiting') {
-    helperText = '引导已排队，将在当前步骤结束后加入上下文。';
-  } else if (guidanceStatus === 'context') {
-    helperText = '引导已加入上下文。';
-  } else if (guidanceStatus === 'processing') {
-    helperText = 'Agent 已按新的引导继续处理。';
-  } else if (guidanceStatus === 'failed') {
-    helperText = '引导发送失败，请重试。';
-  } else if (sending) {
-    helperText = '正在发送消息…';
-  } else if (isRunning) {
-    helperText = '输入时 Enter 换行，点击“引导”后在下一次 Agent 决策前生效。';
-  } else if (isPaused) {
-    helperText = '发送消息后，Agent 会按新要求继续运行。';
-  }
+  const isSteering = status === 'running' && canSteer;
+  const placeholder = isSteering ? '输入对当前运行的引导…' : '输入消息…';
+  const helperText = guidanceStatus === 'waiting'
+    ? '引导已排队。'
+    : guidanceStatus === 'context'
+      ? '引导已加入上下文。'
+      : guidanceStatus === 'processing'
+        ? 'Agent 已按新的引导继续处理。'
+        : guidanceStatus === 'failed'
+          ? '引导发送失败，请重试。'
+          : sending
+            ? '正在发送消息…'
+            : status === 'running' && !canSteer
+              ? '当前 Harness 不支持运行中追加引导。'
+              : null;
 
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault();
     const trimmed = text.trim();
     if (!trimmed || disabled || sending) return;
     onSend(trimmed);
@@ -63,9 +57,9 @@ export function MessageInput({
         <button
           type="submit"
           disabled={disabled || sending || !text.trim()}
-          className="h-10 rounded-lg bg-blue-600 px-5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+          className="h-10 rounded-lg bg-blue-600 px-5 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300"
         >
-          {isRunning ? '引导' : '发送'}
+          {isSteering ? '引导' : '发送'}
         </button>
       </div>
       {helperText && (

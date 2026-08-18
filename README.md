@@ -1,32 +1,17 @@
-# React + TypeScript + Vite
+# Minimal Pyromind chat frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+This client consumes only the harness-neutral product API:
 
-Currently, two official plugins are available:
+- Snapshot: `GET /api/v2/pyromind/conversations/{id}/snapshot`
+- Commands: `POST /api/v2/pyromind/conversations/{id}/commands`
+- Events: authenticated fetch-SSE from `GET /api/v2/pyromind/conversations/{id}/events`
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+The UI renders `ConversationSnapshot` and `ProductEvent` data. It does not parse
+OpenHands, Pi, or any other harness-native event shape.
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Use `npm run build` and `npm run lint` as the local verification checks.

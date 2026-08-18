@@ -1,7 +1,7 @@
-import type { ContentItem } from '../types';
+import type { ContentBlock } from '../types';
 
 interface ContentListProps {
-  content: ContentItem[];
+  content: ContentBlock[];
   imageClassName?: string;
 }
 
@@ -12,34 +12,65 @@ export function ContentList({
   return (
     <div className="space-y-2">
       {content.map((item, index) => {
-        if (item.type === 'image') {
-          return item.image_urls.map((url, imageIndex) => (
-            <img
-              key={`image-${index}-${imageIndex}`}
-              src={url}
-              alt={`Sample preview ${index + imageIndex + 1}`}
-              className={imageClassName}
-              loading="lazy"
-            />
-          ));
+        if (item.type === 'text') {
+          return (
+            <div key={`text-${index}`} className="whitespace-pre-wrap">
+              {item.text}
+            </div>
+          );
         }
-        if (item.type === 'image_url') {
+        if (item.type === 'image') {
+          const source = item.data.startsWith('data:') || item.data.startsWith('http')
+            ? item.data
+            : `data:${item.mime_type};base64,${item.data}`;
           return (
             <img
               key={`image-${index}`}
-              src={item.image_url.url}
-              alt={`Sample preview ${index + 1}`}
+              src={source}
+              alt={`Content ${index + 1}`}
+              className={imageClassName}
+              loading="lazy"
+            />
+          );
+        }
+        if (item.text) {
+          return (
+            <div key={`resource-${index}`} className="whitespace-pre-wrap">
+              {item.text}
+            </div>
+          );
+        }
+        if (isImageResource(item.uri, item.mime_type)) {
+          return (
+            <img
+              key={`resource-image-${index}`}
+              src={item.uri}
+              alt={`Resource ${index + 1}`}
               className={imageClassName}
               loading="lazy"
             />
           );
         }
         return (
-          <div key={`text-${index}`} className="whitespace-pre-wrap">
-            {item.text}
-          </div>
+          <a
+            key={`resource-${index}`}
+            href={item.uri}
+            target="_blank"
+            rel="noreferrer"
+            className="break-all text-blue-600 underline"
+          >
+            {item.uri}
+          </a>
         );
       })}
     </div>
+  );
+}
+
+function isImageResource(uri: string, mimeType?: string | null): boolean {
+  return Boolean(
+    mimeType?.startsWith('image/')
+    || uri.startsWith('data:image/')
+    || /\.(png|jpe?g|gif|webp|svg)(?:\?|$)/i.test(uri),
   );
 }

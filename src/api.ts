@@ -1,12 +1,14 @@
 import { getDebugAuthHeaders } from './authToken';
-import { BACKEND_URL, SESSION_API_KEY, LLM_MODEL, LLM_API_KEY, LLM_BASE_URL } from './config';
-import { applyRequestCookies, normalizeRequestValue, type RequestOverrides } from './requestOverrides';
+import { BACKEND_URL, SESSION_API_KEY } from './config';
+import {
+  applyRequestCookies,
+  normalizeRequestValue,
+  type RequestOverrides,
+} from './requestOverrides';
 import type {
-  ChatEvent,
-  ConversationInfo,
-  ConversationPage,
-  EventPage,
-  PyromindForkAtEventResult,
+  CommandReceipt,
+  ConversationSnapshot,
+  ProductEvent,
 } from './types';
 
 interface RequestOptions extends RequestOverrides {
@@ -15,38 +17,16 @@ interface RequestOptions extends RequestOverrides {
 
 export type { RequestOptions };
 
-export interface DataPreparationProgress {
-  output_dir: string;
-  progress_found: boolean;
-  total: number | null;
-  processed: number | null;
-  succeeded: number | null;
-  failed: number | null;
-  elapsed_ms: number | null;
-  records_per_second: number | null;
-  eta_ms: number | null;
-  updated_at: string | null;
-  percent: number | null;
-  latest_records: Record<string, unknown>[];
-}
+const PRODUCT_API = `${BACKEND_URL}/api/v2/pyromind/conversations`;
 
-export interface DebugUrlResult {
-  url: string;
-  context_source: string;
-  conversation_id?: string | null;
-  status_code: number;
-  forwarded_headers: Record<string, string>;
-  response_headers: Record<string, string>;
-  body: string;
-}
-
-async function prepareAuth(options?: RequestOptions): Promise<void> {
+export async function prepareProductRequest(options?: RequestOptions): Promise<void> {
   await applyRequestCookies(options?.cookie);
 }
 
-function getHeaders(options?: RequestOptions): Record<string, string> {
+export function getProductRequestHeaders(
+  options?: RequestOptions,
+): Record<string, string> {
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
     ...getDebugAuthHeaders(options?.userId),
   };
   if (SESSION_API_KEY && !options?.userId) {
@@ -59,248 +39,117 @@ function getHeaders(options?: RequestOptions): Record<string, string> {
   return headers;
 }
 
-/**
- * Create a new conversation with the Pyromind knowledge-base agent.
- * The server assembles system_prompt, tools, and workspace internally.
- */
+export function productEventsUrl(conversationId: string, afterSeq: number): string {
+  const params = new URLSearchParams({ afterSeq: String(afterSeq) });
+  return `${PRODUCT_API}/${conversationId}/events?${params}`;
+}
+
 export async function createConversation(
-  initialMessage?: string,
   options?: RequestOptions,
-): Promise<ConversationInfo> {
-  await prepareAuth(options);
-  const body: Record<string, unknown> = {
-    llm: {
-      model: LLM_MODEL || undefined,
-      api_key: LLM_API_KEY || undefined,
-      base_url: LLM_BASE_URL || undefined,
-    },
-    message: initialMessage || undefined,
-    extra: {},  // Extensible: e.g. { knowledge_base_path, language, custom_instructions }
-  };
-
-  const res = await fetch(`${BACKEND_URL}/api/pyromind/conversations`, {
+): Promise<ConversationSnapshot> {
+  return requestJson<ConversationSnapshot>(PRODUCT_API, {
     method: 'POST',
-    headers: getHeaders(options),
-    credentials: 'include',
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Failed to create conversation: ${res.status} ${errorText}`);
-  }
-
-  return res.json();
+    body: JSON.stringify({}),
+  }, options);
 }
 
-/**
- * Send a message to an existing conversation.
- * Setting run=true automatically triggers the agent to process the message.
- */
-export async function sendMessage(
+export async function listConversations(
+  options?: RequestOptions,
+): Promise<ConversationSnapshot[]> {
+  return requestJson<ConversationSnapshot[]>(PRODUCT_API, {}, options);
+}
+
+export async function getConversationSnapshot(
+  conversationId: string,
+  options?: RequestOptions,
+): Promise<ConversationSnapshot> {
+  return requestJson<ConversationSnapshot>(
+    `${PRODUCT_API}/${conversationId}/snapshot`,
+    {},
+    options,
+  );
+}
+
+export async function sendUserMessage(
   conversationId: string,
   text: string,
   options?: RequestOptions,
-): Promise<void> {
-  await prepareAuth(options);
-  const res = await fetch(`${BACKEND_URL}/api/conversations/${conversationId}/events`, {
-    method: 'POST',
-    headers: getHeaders(options),
-    credentials: 'include',
-    body: JSON.stringify({
-      role: 'user',
-      content: [{ type: 'text', text }],
-      run: true,
-    }),
-  });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Failed to send message: ${res.status} ${errorText}`);
-  }
+): Promise<CommandReceipt> {
+  return submitCommand(conversationId, {
+    command_id: crypto.randomUUID(),
+    type: 'user_message',
+    content: [{ type: 'text', text }],
+  }, options);
 }
 
-export async function respondToConfirmation(
+export async function cancelConversation(
   conversationId: string,
-  accept: boolean,
-  reason: string,
   options?: RequestOptions,
-): Promise<void> {
-  await prepareAuth(options);
-  const res = await fetch(
-    `${BACKEND_URL}/api/conversations/${conversationId}/events/respond_to_confirmation`,
-    {
-      method: 'POST',
-      headers: getHeaders(options),
-      credentials: 'include',
-      body: JSON.stringify({ accept, reason }),
-    },
+): Promise<CommandReceipt> {
+  return submitCommand(conversationId, {
+    command_id: crypto.randomUUID(),
+    type: 'cancel',
+  }, options);
+}
+
+export async function respondToPermission(
+  conversationId: string,
+  permissionId: string,
+  decision: 'allow_once' | 'deny',
+  options?: RequestOptions,
+): Promise<CommandReceipt> {
+  return submitCommand(conversationId, {
+    command_id: crypto.randomUUID(),
+    type: 'permission_response',
+    permission_id: permissionId,
+    decision,
+  }, options);
+}
+
+export function parseProductEvent(data: string): ProductEvent {
+  const parsed = JSON.parse(data) as ProductEvent;
+  if (
+    !parsed
+    || typeof parsed !== 'object'
+    || typeof parsed.conversation_id !== 'string'
+    || typeof parsed.seq !== 'number'
+    || typeof parsed.type !== 'string'
+  ) {
+    throw new Error('Invalid ProductEvent payload');
+  }
+  return parsed;
+}
+
+async function submitCommand(
+  conversationId: string,
+  command: Record<string, unknown>,
+  options?: RequestOptions,
+): Promise<CommandReceipt> {
+  return requestJson<CommandReceipt>(
+    `${PRODUCT_API}/${conversationId}/commands`,
+    { method: 'POST', body: JSON.stringify(command) },
+    options,
   );
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(
-      `Failed to respond to confirmation: ${res.status} ${errorText}`,
-    );
-  }
 }
 
-export async function sendPyromindMessage(
-  conversationId: string,
-  text: string,
-  options?: RequestOptions,
-): Promise<void> {
-  await prepareAuth(options);
-  const res = await fetch(
-    `${BACKEND_URL}/api/pyromind/conversations/${conversationId}/messages`,
-    {
-      method: 'POST',
-      headers: getHeaders(options),
-      credentials: 'include',
-      body: JSON.stringify({
-        text,
-        run: true,
-      }),
-    },
-  );
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Failed to send message: ${res.status} ${errorText}`);
-  }
-}
-
-export async function forkPyromindConversationAtEvent(
-  conversationId: string,
-  eventId: string,
-  options?: RequestOptions,
-): Promise<PyromindForkAtEventResult> {
-  await prepareAuth(options);
-  const res = await fetch(
-    `${BACKEND_URL}/api/pyromind/conversations/${conversationId}/fork-at-event`,
-    {
-      method: 'POST',
-      headers: getHeaders(options),
-      credentials: 'include',
-      body: JSON.stringify({ eventId }),
-    },
-  );
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Failed to roll back conversation: ${res.status} ${errorText}`);
-  }
-
-  return res.json();
-}
-
-export async function listConversations(options?: RequestOptions): Promise<ConversationInfo[]> {
-  await prepareAuth(options);
-  const params = new URLSearchParams({
-    limit: '100',
-    sort_order: 'UPDATED_AT_DESC',
-  });
-  const res = await fetch(`${BACKEND_URL}/api/conversations/search?${params}`, {
-    headers: getHeaders(options),
-    credentials: 'include',
-  });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Failed to list conversations: ${res.status} ${errorText}`);
-  }
-
-  const page = (await res.json()) as ConversationPage;
-  return page.items;
-}
-
-export async function listConversationEvents(
-  conversationId: string,
-  options?: RequestOptions,
-): Promise<ChatEvent[]> {
-  await prepareAuth(options);
-  const events: ChatEvent[] = [];
-  let pageId: string | null = null;
-
-  do {
-    const params = new URLSearchParams({
-      limit: '100',
-      sort_order: 'TIMESTAMP',
-    });
-    if (pageId) {
-      params.set('page_id', pageId);
-    }
-    const res = await fetch(
-      `${BACKEND_URL}/api/conversations/${conversationId}/events/search?${params}`,
-      {
-        headers: getHeaders(options),
-        credentials: 'include',
-      },
-    );
-
-    if (!res.ok) {
-      const errorText = await res.text();
-      throw new Error(`Failed to list events: ${res.status} ${errorText}`);
-    }
-
-    const page = (await res.json()) as EventPage;
-    events.push(...page.items);
-    pageId = page.next_page_id;
-  } while (pageId);
-
-  return events;
-}
-
-export async function requestDebugUrl(
+async function requestJson<T>(
   url: string,
-  conversationId: string,
+  init: RequestInit,
   options?: RequestOptions,
-): Promise<DebugUrlResult> {
-  await prepareAuth(options);
-  const body: Record<string, string> = { url, conversation_id: conversationId };
-  const res = await fetch(`${BACKEND_URL}/api/pyromind/debug/request-url`, {
-    method: 'POST',
-    headers: getHeaders(options),
+): Promise<T> {
+  await prepareProductRequest(options);
+  const response = await fetch(url, {
+    ...init,
     credentials: 'include',
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Failed to request debug URL: ${res.status} ${errorText}`);
-  }
-
-  return res.json();
-}
-
-/**
- * Poll the live progress of a submitted DataFlow pipeline run.
- * Reads progress.json and the tail of processed.jsonl from the run's
- * Storage output directory.
- */
-export async function getDataPreparationProgress(
-  outputDir: string,
-  options?: RequestOptions,
-  tailLines = 5,
-): Promise<DataPreparationProgress> {
-  await prepareAuth(options);
-  const params = new URLSearchParams({
-    output_dir: outputDir,
-    tail_lines: String(tailLines),
-  });
-  const res = await fetch(
-    `${BACKEND_URL}/api/pyromind/data-preparation/progress?${params}`,
-    {
-      headers: getHeaders(options),
-      credentials: 'include',
-      cache: 'no-store',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getProductRequestHeaders(options),
+      ...init.headers,
     },
-  );
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Failed to load progress: ${res.status} ${errorText}`);
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Request failed: ${response.status} ${detail}`);
   }
-
-  return res.json();
+  return response.json() as Promise<T>;
 }

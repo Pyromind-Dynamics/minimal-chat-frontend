@@ -1,41 +1,46 @@
-import type { WsState } from '../hooks/useConversationSocket';
-import type { ExecutionStatus } from '../types';
+import type { ConnectionState } from '../hooks/useProductEventStream';
+import type { ConversationStatus, SnapshotUsage } from '../types';
 
 interface StatusBarProps {
-  wsState: WsState;
-  status: ExecutionStatus;
+  connectionState: ConnectionState;
+  status: ConversationStatus;
   conversationId: string | null;
+  usage?: SnapshotUsage;
 }
 
-export function StatusBar({ wsState, status, conversationId }: StatusBarProps) {
-  const wsIndicator = {
+export function StatusBar({
+  connectionState,
+  status,
+  conversationId,
+  usage,
+}: StatusBarProps) {
+  const connection = {
     connecting: { color: 'bg-yellow-400', label: 'Connecting...' },
-    open: { color: 'bg-green-400', label: 'Connected' },
+    open: { color: 'bg-green-400', label: 'SSE connected' },
     closed: { color: 'bg-red-400', label: 'Disconnected' },
-  }[wsState];
-
+  }[connectionState];
   const statusLabel = {
     idle: 'Idle',
     running: 'Running...',
-    paused: 'Paused',
-    waiting_for_confirmation: 'Waiting for confirmation',
-    finished: 'Finished',
-    error: 'Error',
-    stuck: 'Stuck',
-    deleting: 'Deleting',
+    waiting_permission: 'Waiting for permission',
+    failed: 'Failed',
+    closed: 'Closed',
   }[status];
 
   return (
-    <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b text-xs text-gray-600">
+    <div className="flex items-center justify-between border-b bg-gray-50 px-4 py-2 text-xs text-gray-600">
       <div className="flex items-center gap-2">
-        <span className={`w-2 h-2 rounded-full ${wsIndicator.color}`} />
-        <span>{wsIndicator.label}</span>
+        <span className={`h-2 w-2 rounded-full ${connection.color}`} />
+        <span>{connection.label}</span>
       </div>
       <div className="flex items-center gap-4">
-        {conversationId && (
-          <span className="font-mono text-gray-400">
-            {conversationId.slice(0, 8)}
+        {usage && (
+          <span className="text-gray-400">
+            {usage.input_tokens + usage.output_tokens} tokens
           </span>
+        )}
+        {conversationId && (
+          <span className="font-mono text-gray-400">{conversationId.slice(0, 8)}</span>
         )}
         <span className={`font-medium ${status === 'running' ? 'text-blue-600' : ''}`}>
           {statusLabel}
