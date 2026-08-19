@@ -91,6 +91,8 @@ function ChatApp() {
   const [draftRequestOverrides, setDraftRequestOverrides] = useState(loadRequestOverrides);
   const [conversations, setConversations] = useState<ConversationSnapshot[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [isCreatingConversation, setIsCreatingConversation] = useState(false);
+  const [hasConnectedStream, setHasConnectedStream] = useState(false);
   const [guidanceStatus, setGuidanceStatus] = useState<GuidanceStatus | null>(null);
   const [isLoadingList, setIsLoadingList] = useState(false);
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
@@ -223,6 +225,14 @@ function ChatApp() {
     onGap: refreshCurrentSnapshot,
   });
 
+  useEffect(() => {
+    setHasConnectedStream(false);
+  }, [state.conversationId]);
+
+  useEffect(() => {
+    if (wsState === 'open') setHasConnectedStream(true);
+  }, [wsState]);
+
   const openConversation = useCallback(
     async (conversation: ConversationSnapshot, userId = activeUserId) => {
       const requestId = openConversationRequestRef.current + 1;
@@ -293,6 +303,25 @@ function ChatApp() {
     [activeUserId, dispatch, getRequestOptions, openConversation],
   );
 
+  const refreshConversationList = useCallback(
+    async (userId = activeUserId) => {
+      setIsLoadingList(true);
+      try {
+        setConversations(
+          await listProductConversations(getRequestOptions(userId)),
+        );
+      } catch (err) {
+        dispatch({
+          type: 'SET_ERROR',
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+      } finally {
+        setIsLoadingList(false);
+      }
+    },
+    [activeUserId, dispatch, getRequestOptions],
+  );
+
   useEffect(() => {
     void refreshConversations(undefined, activeUserId);
   }, [activeUserId, refreshConversations]);
@@ -303,18 +332,31 @@ function ChatApp() {
       if (isGuidance) {
         setGuidanceStatus('waiting');
       }
+      const commandId = crypto.randomUUID();
+      dispatch({
+        type: 'ADD_PENDING_OUTBOUND',
+        message: { commandId, text, status: 'pending' },
+      });
       setIsSending(true);
       try {
         const requestOptions = getRequestOptions(activeUserId);
         if (!state.conversationId) {
-          const snapshot = await createProductConversation(text, requestOptions);
+          setIsCreatingConversation(true);
+          const snapshot = await createProductConversation(undefined, requestOptions);
           applySnapshot(snapshot, true);
-          void refreshConversations(snapshot.conversation_id, activeUserId);
+          await sendProductMessage(
+            snapshot.conversation_id,
+            text,
+            requestOptions,
+            commandId,
+          );
+          void refreshConversationList(activeUserId);
         } else {
           await sendProductMessage(
             state.conversationId,
             text,
             requestOptions,
+            commandId,
           );
           if (isGuidance) {
             setGuidanceStatus((current) =>
@@ -323,6 +365,7 @@ function ChatApp() {
           }
         }
       } catch (err) {
+        dispatch({ type: 'MARK_PENDING_OUTBOUND_FAILED', commandId });
         if (isGuidance) {
           setGuidanceStatus('failed');
         }
@@ -331,6 +374,7 @@ function ChatApp() {
           error: err instanceof Error ? err.message : 'Unknown error',
         });
       } finally {
+        setIsCreatingConversation(false);
         setIsSending(false);
       }
     },
@@ -339,7 +383,7 @@ function ChatApp() {
       applySnapshot,
       dispatch,
       getRequestOptions,
-      refreshConversations,
+      refreshConversationList,
       state.conversationId,
       state.status,
     ],
@@ -645,6 +689,8 @@ function ChatApp() {
         wsState={wsState}
         status={state.status}
         conversationId={state.conversationId}
+        isCreating={isCreatingConversation}
+        hasConnected={hasConnectedStream}
       />
 
       {state.error && (
@@ -736,6 +782,7 @@ function ChatApp() {
 
           <ChatPanel
             events={state.events}
+            pendingOutboundMessages={state.pendingOutboundMessages}
             status={state.status}
             isCondensing={state.isCondensing}
             requestOptions={getRequestOptions()}

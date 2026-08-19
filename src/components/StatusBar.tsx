@@ -5,14 +5,26 @@ interface StatusBarProps {
   wsState: WsState;
   status: ExecutionStatus;
   conversationId: string | null;
+  isCreating: boolean;
+  hasConnected: boolean;
 }
 
-export function StatusBar({ wsState, status, conversationId }: StatusBarProps) {
-  const wsIndicator = {
-    connecting: { color: 'bg-yellow-400', label: 'Connecting...' },
-    open: { color: 'bg-green-400', label: 'Connected' },
-    closed: { color: 'bg-red-400', label: 'Disconnected' },
-  }[wsState];
+export function StatusBar({
+  wsState,
+  status,
+  conversationId,
+  isCreating,
+  hasConnected,
+}: StatusBarProps) {
+  const wsIndicator = !conversationId
+    ? isCreating
+      ? { color: 'bg-blue-400', label: 'Creating conversation...' }
+      : { color: 'bg-gray-300', label: 'Not connected' }
+    : wsState === 'open'
+      ? { color: 'bg-green-400', label: 'Connected' }
+      : wsState === 'connecting' || !hasConnected
+        ? { color: 'bg-yellow-400', label: 'Connecting...' }
+        : { color: 'bg-red-400', label: 'Reconnecting...' };
 
   const statusLabel = {
     idle: 'Idle',

@@ -4,6 +4,7 @@ import {
   type ChatEvent,
   type ConversationSnapshot,
   type ExecutionStatus,
+  type PendingOutboundMessage,
 } from './types';
 import type { WsState } from './hooks/useConversationSocket';
 import { snapshotToChatEvents } from './productSnapshot';
@@ -17,6 +18,7 @@ interface ChatState {
   isCondensing: boolean;
   wsState: WsState;
   error: string | null;
+  pendingOutboundMessages: PendingOutboundMessage[];
 }
 
 // Actions
@@ -30,7 +32,9 @@ type ChatAction =
   | { type: 'SET_STATUS'; status: ExecutionStatus }
   | { type: 'SET_CONDENSING'; isCondensing: boolean }
   | { type: 'SET_WS_STATE'; wsState: WsState }
-  | { type: 'SET_ERROR'; error: string | null };
+  | { type: 'SET_ERROR'; error: string | null }
+  | { type: 'ADD_PENDING_OUTBOUND'; message: PendingOutboundMessage }
+  | { type: 'MARK_PENDING_OUTBOUND_FAILED'; commandId: string };
 
 const initialState: ChatState = {
   conversationId: null,
@@ -40,6 +44,7 @@ const initialState: ChatState = {
   isCondensing: false,
   wsState: 'closed',
   error: null,
+  pendingOutboundMessages: [],
 };
 
 function getEventId(event: ChatEvent): string | undefined {
@@ -74,6 +79,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         events: [],
         isCondensing: false,
         error: null,
+        pendingOutboundMessages: [],
       };
     case 'RESET_CONVERSATION':
       return {
@@ -84,8 +90,13 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         status: 'idle',
         isCondensing: false,
         error: null,
+        pendingOutboundMessages: [],
       };
-    case 'SET_PRODUCT_SNAPSHOT':
+    case 'SET_PRODUCT_SNAPSHOT': {
+      const completedRunIds = new Set(
+        action.snapshot.timeline.flatMap((item) =>
+          item.kind === 'message' && item.run_id ? [item.run_id] : []),
+      );
       return {
         ...state,
         conversationId: action.snapshot.conversation_id,
@@ -94,7 +105,11 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         status: action.snapshot.status,
         isCondensing: action.snapshot.compaction_status === 'started',
         error: null,
+        pendingOutboundMessages: state.pendingOutboundMessages.filter(
+          (message) => !completedRunIds.has(message.commandId),
+        ),
       };
+    }
     case 'SET_EVENTS':
       return {
         ...state,
@@ -119,6 +134,25 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, wsState: action.wsState };
     case 'SET_ERROR':
       return { ...state, error: action.error };
+    case 'ADD_PENDING_OUTBOUND':
+      return {
+        ...state,
+        pendingOutboundMessages: [
+          ...state.pendingOutboundMessages.filter(
+            (message) => message.commandId !== action.message.commandId,
+          ),
+          action.message,
+        ],
+      };
+    case 'MARK_PENDING_OUTBOUND_FAILED':
+      return {
+        ...state,
+        pendingOutboundMessages: state.pendingOutboundMessages.map((message) =>
+          message.commandId === action.commandId
+            ? { ...message, status: 'failed' }
+            : message,
+        ),
+      };
     default:
       return state;
   }

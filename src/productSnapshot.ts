@@ -21,6 +21,7 @@ export function snapshotToChatEvents(
         id: item.item_id,
         timestamp: '',
         source: item.role === 'assistant' ? 'agent' : 'user',
+        run_id: item.run_id,
         llm_message: {
           role: item.role,
           content: item.content.map(toLegacyContent),

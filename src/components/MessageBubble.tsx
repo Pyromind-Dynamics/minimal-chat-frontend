@@ -17,6 +17,13 @@ export function MessageBubble({ event }: MessageBubbleProps) {
         }`}
       >
         <ContentList content={event.llm_message.content} />
+        {event.delivery_status && (
+          <div
+            className={`mt-1 text-[10px] ${isUser ? 'text-blue-100' : 'text-gray-400'}`}
+          >
+            {event.delivery_status === 'pending' ? 'Sending…' : 'Failed to send'}
+          </div>
+        )}
       </div>
     </div>
   );

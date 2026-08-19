@@ -9,6 +9,7 @@ import {
   type ContentItem,
   type ExecutionStatus,
   type ObservationEvent,
+  type PendingOutboundMessage,
 } from '../types';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { CondensationBlock } from './CondensationBlock';
@@ -29,6 +30,7 @@ interface ChatPanelProps {
   status: ExecutionStatus;
   isRespondingToConfirmation?: boolean;
   onRespondToConfirmation?: (accept: boolean) => void;
+  pendingOutboundMessages?: PendingOutboundMessage[];
 }
 
 export function ChatPanel({
@@ -41,6 +43,7 @@ export function ChatPanel({
   status,
   isRespondingToConfirmation = false,
   onRespondToConfirmation,
+  pendingOutboundMessages = [],
 }: ChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const latestPlan = getLatestPlan(events);
@@ -48,9 +51,9 @@ export function ChatPanel({
   // Auto-scroll to bottom on new events
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [events.length, isCondensing]);
+  }, [events.length, isCondensing, pendingOutboundMessages.length]);
 
-  if (events.length === 0 && !isCondensing) {
+  if (events.length === 0 && pendingOutboundMessages.length === 0 && !isCondensing) {
     return (
       <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
         Start a conversation by sending a message below.
@@ -160,6 +163,23 @@ export function ChatPanel({
   return (
     <div className="flex-1 overflow-y-auto p-4">
       {rendered}
+      {pendingOutboundMessages.map((message) => (
+        <MessageBubble
+          key={message.commandId}
+          event={{
+            kind: 'MessageEvent',
+            id: `pending:${message.commandId}`,
+            timestamp: '',
+            source: 'user',
+            run_id: message.commandId,
+            delivery_status: message.status,
+            llm_message: {
+              role: 'user',
+              content: [{ type: 'text', text: message.text }],
+            },
+          }}
+        />
+      ))}
       {latestPlan && <PlanBlock plan={latestPlan.plan} />}
       {isCondensing && (
         <div

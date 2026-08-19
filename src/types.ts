@@ -23,6 +23,8 @@ export interface MessageEvent {
   id: string;
   timestamp: string;
   source: 'user' | 'agent';
+  run_id?: string | null;
+  delivery_status?: 'pending' | 'failed';
   llm_message: {
     role: string;
     content: ContentItem[];
@@ -335,6 +337,12 @@ export interface ProductEvent {
   run_id?: string | null;
   payload: Record<string, unknown>;
   source_event_id?: string | null;
+}
+
+export interface PendingOutboundMessage {
+  commandId: string;
+  text: string;
+  status: 'pending' | 'failed';
 }
 
 export interface CommandReceipt {

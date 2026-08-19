@@ -83,11 +83,12 @@ export async function sendProductMessage(
   conversationId: string,
   text: string,
   options?: RequestOptions,
+  commandId = crypto.randomUUID(),
 ): Promise<CommandReceipt> {
   return submitProductCommand(
     conversationId,
     {
-      command_id: crypto.randomUUID(),
+      command_id: commandId,
       type: 'user_message',
       content: [{ type: 'text', text }],
     },
