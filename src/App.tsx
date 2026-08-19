@@ -82,6 +82,20 @@ function conversationTitle(conversation: ConversationSnapshot): string {
   return conversation.conversation_id.slice(0, 8);
 }
 
+function productContentText(value: unknown): string {
+  if (!Array.isArray(value)) return '';
+  return value
+    .filter(
+      (item): item is { type: 'text'; text: string } =>
+        typeof item === 'object'
+        && item !== null
+        && (item as { type?: unknown }).type === 'text'
+        && typeof (item as { text?: unknown }).text === 'string',
+    )
+    .map((item) => item.text)
+    .join('');
+}
+
 function ChatApp() {
   const { state, dispatch } = useChatContext();
   const [userIds, setUserIds] = useState(loadUserIds);
@@ -106,6 +120,8 @@ function ChatApp() {
   const [isRequestingDebugUrl, setIsRequestingDebugUrl] = useState(false);
   const [streamAfterSeq, setStreamAfterSeq] = useState(0);
   const snapshotRefreshTimerRef = useRef<number | null>(null);
+  const deltaBufferRef = useRef<Record<string, string>>({});
+  const deltaFrameRef = useRef<number | null>(null);
   const conversationIdRef = useRef<string | null>(null);
   const latestSnapshotRef = useRef<{
     conversationId: string;
@@ -129,6 +145,9 @@ function ChatApp() {
   useEffect(() => () => {
     if (snapshotRefreshTimerRef.current !== null) {
       window.clearTimeout(snapshotRefreshTimerRef.current);
+    }
+    if (deltaFrameRef.current !== null) {
+      window.cancelAnimationFrame(deltaFrameRef.current);
     }
   }, []);
 
@@ -185,6 +204,27 @@ function ChatApp() {
     return snapshot.through_seq;
   }, [applySnapshot, productRequestOptions]);
 
+  const flushStreamingDeltas = useCallback(() => {
+    if (deltaFrameRef.current !== null) {
+      window.cancelAnimationFrame(deltaFrameRef.current);
+      deltaFrameRef.current = null;
+    }
+    const deltas = deltaBufferRef.current;
+    deltaBufferRef.current = {};
+    if (Object.keys(deltas).length > 0) {
+      dispatch({ type: 'APPEND_STREAMING_DELTAS', deltas });
+    }
+  }, [dispatch]);
+
+  const clearStreamingOverlay = useCallback(() => {
+    if (deltaFrameRef.current !== null) {
+      window.cancelAnimationFrame(deltaFrameRef.current);
+      deltaFrameRef.current = null;
+    }
+    deltaBufferRef.current = {};
+    dispatch({ type: 'CLEAR_STREAMING_MESSAGES' });
+  }, [dispatch]);
+
   const handleProductEvent = useCallback(
     (event: ProductEvent) => {
       setGuidanceStatus((current) => {
@@ -200,10 +240,55 @@ function ChatApp() {
         }
         return current;
       });
+      const messageId = typeof event.payload.message_id === 'string'
+        ? event.payload.message_id
+        : null;
+      const role = event.payload.role;
+      if (event.type === 'message.started' && role === 'assistant' && messageId) {
+        dispatch({
+          type: 'START_STREAMING_MESSAGE',
+          message: {
+            messageId,
+            runId: event.run_id ?? null,
+            role: 'assistant',
+            text: productContentText(event.payload.content),
+            status: 'streaming',
+          },
+        });
+        return;
+      }
+      if (event.type === 'message.delta' && messageId) {
+        const text = typeof event.payload.text === 'string'
+          ? event.payload.text
+          : '';
+        deltaBufferRef.current[messageId] =
+          (deltaBufferRef.current[messageId] ?? '') + text;
+        if (deltaFrameRef.current === null) {
+          deltaFrameRef.current = window.requestAnimationFrame(() => {
+            deltaFrameRef.current = null;
+            const deltas = deltaBufferRef.current;
+            deltaBufferRef.current = {};
+            if (Object.keys(deltas).length > 0) {
+              dispatch({ type: 'APPEND_STREAMING_DELTAS', deltas });
+            }
+          });
+        }
+        return;
+      }
+      if (event.type === 'message.completed' && role === 'assistant' && messageId) {
+        flushStreamingDeltas();
+        dispatch({ type: 'COMPLETE_STREAMING_MESSAGE', messageId });
+        void refreshCurrentSnapshot().catch((error) => {
+          dispatch({
+            type: 'SET_ERROR',
+            error: error instanceof Error ? error.message : 'Unknown error',
+          });
+        });
+        return;
+      }
       if (snapshotRefreshTimerRef.current !== null) {
         window.clearTimeout(snapshotRefreshTimerRef.current);
       }
-      const delay = event.type === 'message.delta' ? 75 : 0;
       snapshotRefreshTimerRef.current = window.setTimeout(() => {
         snapshotRefreshTimerRef.current = null;
         void refreshCurrentSnapshot().catch((error) => {
@@ -212,17 +297,22 @@ function ChatApp() {
             error: error instanceof Error ? error.message : 'Unknown error',
           });
         });
-      }, delay);
+      }, 0);
     },
-    [dispatch, refreshCurrentSnapshot],
+    [dispatch, flushStreamingDeltas, refreshCurrentSnapshot],
   );
+
+  const handleStreamGap = useCallback(async (): Promise<number> => {
+    clearStreamingOverlay();
+    return refreshCurrentSnapshot();
+  }, [clearStreamingOverlay, refreshCurrentSnapshot]);
 
   const wsState = useProductEventStream({
     conversationId: state.conversationId,
     afterSeq: streamAfterSeq,
     requestOptions: productRequestOptions,
     onEvent: handleProductEvent,
-    onGap: refreshCurrentSnapshot,
+    onGap: handleStreamGap,
   });
 
   useEffect(() => {
@@ -232,6 +322,12 @@ function ChatApp() {
   useEffect(() => {
     if (wsState === 'open') setHasConnectedStream(true);
   }, [wsState]);
+
+  useEffect(() => {
+    if (state.conversationId && wsState === 'closed') {
+      clearStreamingOverlay();
+    }
+  }, [clearStreamingOverlay, state.conversationId, wsState]);
 
   const openConversation = useCallback(
     async (conversation: ConversationSnapshot, userId = activeUserId) => {
@@ -783,6 +879,7 @@ function ChatApp() {
           <ChatPanel
             events={state.events}
             pendingOutboundMessages={state.pendingOutboundMessages}
+            streamingMessages={state.streamingMessages}
             status={state.status}
             isCondensing={state.isCondensing}
             requestOptions={getRequestOptions()}

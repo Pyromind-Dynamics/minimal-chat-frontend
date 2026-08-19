@@ -345,6 +345,14 @@ export interface PendingOutboundMessage {
   status: 'pending' | 'failed';
 }
 
+export interface StreamingMessage {
+  messageId: string;
+  runId: string | null;
+  role: 'assistant';
+  text: string;
+  status: 'streaming' | 'completed';
+}
+
 export interface CommandReceipt {
   command_id: string;
   status: 'accepted' | 'completed' | 'failed';

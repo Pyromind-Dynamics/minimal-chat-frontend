@@ -5,6 +5,7 @@ import {
   type ConversationSnapshot,
   type ExecutionStatus,
   type PendingOutboundMessage,
+  type StreamingMessage,
 } from './types';
 import type { WsState } from './hooks/useConversationSocket';
 import { snapshotToChatEvents } from './productSnapshot';
@@ -19,6 +20,7 @@ interface ChatState {
   wsState: WsState;
   error: string | null;
   pendingOutboundMessages: PendingOutboundMessage[];
+  streamingMessages: Record<string, StreamingMessage>;
 }
 
 // Actions
@@ -34,7 +36,11 @@ type ChatAction =
   | { type: 'SET_WS_STATE'; wsState: WsState }
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'ADD_PENDING_OUTBOUND'; message: PendingOutboundMessage }
-  | { type: 'MARK_PENDING_OUTBOUND_FAILED'; commandId: string };
+  | { type: 'MARK_PENDING_OUTBOUND_FAILED'; commandId: string }
+  | { type: 'START_STREAMING_MESSAGE'; message: StreamingMessage }
+  | { type: 'APPEND_STREAMING_DELTAS'; deltas: Record<string, string> }
+  | { type: 'COMPLETE_STREAMING_MESSAGE'; messageId: string }
+  | { type: 'CLEAR_STREAMING_MESSAGES' };
 
 const initialState: ChatState = {
   conversationId: null,
@@ -45,6 +51,7 @@ const initialState: ChatState = {
   wsState: 'closed',
   error: null,
   pendingOutboundMessages: [],
+  streamingMessages: {},
 };
 
 function getEventId(event: ChatEvent): string | undefined {
@@ -80,6 +87,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         isCondensing: false,
         error: null,
         pendingOutboundMessages: [],
+        streamingMessages: {},
       };
     case 'RESET_CONVERSATION':
       return {
@@ -91,11 +99,24 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         isCondensing: false,
         error: null,
         pendingOutboundMessages: [],
+        streamingMessages: {},
       };
     case 'SET_PRODUCT_SNAPSHOT': {
       const completedRunIds = new Set(
         action.snapshot.timeline.flatMap((item) =>
           item.kind === 'message' && item.run_id ? [item.run_id] : []),
+      );
+      const reconciledStreaming = Object.fromEntries(
+        Object.entries(state.streamingMessages).filter(([messageId, message]) =>
+          !action.snapshot.timeline.some(
+            (item) => item.kind === 'message'
+              && item.status === 'completed'
+              && (
+                item.item_id === messageId
+                || (message.runId !== null && item.run_id === message.runId)
+              ),
+          ),
+        ),
       );
       return {
         ...state,
@@ -108,6 +129,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         pendingOutboundMessages: state.pendingOutboundMessages.filter(
           (message) => !completedRunIds.has(message.commandId),
         ),
+        streamingMessages: reconciledStreaming,
       };
     }
     case 'SET_EVENTS':
@@ -153,6 +175,44 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             : message,
         ),
       };
+    case 'START_STREAMING_MESSAGE':
+      return {
+        ...state,
+        streamingMessages: {
+          ...state.streamingMessages,
+          [action.message.messageId]: {
+            ...action.message,
+            text: state.streamingMessages[action.message.messageId]?.text
+              || action.message.text,
+          },
+        },
+      };
+    case 'APPEND_STREAMING_DELTAS': {
+      const streamingMessages = { ...state.streamingMessages };
+      for (const [messageId, text] of Object.entries(action.deltas)) {
+        const message = streamingMessages[messageId];
+        if (message) {
+          streamingMessages[messageId] = {
+            ...message,
+            text: message.text + text,
+          };
+        }
+      }
+      return { ...state, streamingMessages };
+    }
+    case 'COMPLETE_STREAMING_MESSAGE': {
+      const message = state.streamingMessages[action.messageId];
+      if (!message) return state;
+      return {
+        ...state,
+        streamingMessages: {
+          ...state.streamingMessages,
+          [action.messageId]: { ...message, status: 'completed' },
+        },
+      };
+    }
+    case 'CLEAR_STREAMING_MESSAGES':
+      return { ...state, streamingMessages: {} };
     default:
       return state;
   }

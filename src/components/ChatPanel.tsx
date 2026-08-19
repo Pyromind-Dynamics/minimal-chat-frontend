@@ -10,6 +10,7 @@ import {
   type ExecutionStatus,
   type ObservationEvent,
   type PendingOutboundMessage,
+  type StreamingMessage,
 } from '../types';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { CondensationBlock } from './CondensationBlock';
@@ -31,6 +32,7 @@ interface ChatPanelProps {
   isRespondingToConfirmation?: boolean;
   onRespondToConfirmation?: (accept: boolean) => void;
   pendingOutboundMessages?: PendingOutboundMessage[];
+  streamingMessages?: Record<string, StreamingMessage>;
 }
 
 export function ChatPanel({
@@ -44,16 +46,36 @@ export function ChatPanel({
   isRespondingToConfirmation = false,
   onRespondToConfirmation,
   pendingOutboundMessages = [],
+  streamingMessages = {},
 }: ChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
-  const latestPlan = getLatestPlan(events);
+  const streaming = Object.values(streamingMessages);
+  const streamingIds = new Set(streaming.map((message) => message.messageId));
+  const streamingRunIds = new Set(
+    streaming.flatMap((message) => message.runId ? [message.runId] : []),
+  );
+  const visibleEvents = events.filter(
+    (event) => event.kind !== 'MessageEvent'
+      || event.source !== 'agent'
+      || (!streamingIds.has(event.id) && !streamingRunIds.has(event.run_id ?? '')),
+  );
+  const latestPlan = getLatestPlan(visibleEvents);
+  const streamingTextLength = streaming.reduce(
+    (total, message) => total + message.text.length,
+    0,
+  );
 
   // Auto-scroll to bottom on new events
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [events.length, isCondensing, pendingOutboundMessages.length]);
+  }, [visibleEvents.length, isCondensing, pendingOutboundMessages.length, streamingTextLength]);
 
-  if (events.length === 0 && pendingOutboundMessages.length === 0 && !isCondensing) {
+  if (
+    visibleEvents.length === 0
+    && pendingOutboundMessages.length === 0
+    && streaming.length === 0
+    && !isCondensing
+  ) {
     return (
       <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
         Start a conversation by sending a message below.
@@ -63,22 +85,22 @@ export function ChatPanel({
 
   const actionIds = new Set<string>();
   const observationsByActionId = new Map<string, ObservationEvent>();
-  for (const event of events) {
+  for (const event of visibleEvents) {
     if (event.kind === 'ActionEvent') {
       actionIds.add(event.id);
     } else if (event.kind === 'ObservationEvent' && event.action_id) {
       observationsByActionId.set(event.action_id, event);
     }
   }
-  const pendingActions = events.filter(
+  const pendingActions = visibleEvents.filter(
     (event): event is ActionEvent =>
       event.kind === 'ActionEvent' && !observationsByActionId.has(event.id),
   );
 
   // Pair actions and observations by id; parallel tool calls are not adjacent.
   const rendered: React.ReactNode[] = [];
-  for (let i = 0; i < events.length; i++) {
-    const event = events[i];
+  for (let i = 0; i < visibleEvents.length; i++) {
+    const event = visibleEvents[i];
 
     if (event.kind === 'MessageEvent') {
       rendered.push(<MessageBubble key={event.id} event={event} />);
@@ -176,6 +198,22 @@ export function ChatPanel({
             llm_message: {
               role: 'user',
               content: [{ type: 'text', text: message.text }],
+            },
+          }}
+        />
+      ))}
+      {streaming.map((message) => (
+        <MessageBubble
+          key={message.messageId}
+          event={{
+            kind: 'MessageEvent',
+            id: message.messageId,
+            timestamp: '',
+            source: 'agent',
+            run_id: message.runId,
+            llm_message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: message.text || '…' }],
             },
           }}
         />
