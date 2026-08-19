@@ -7,6 +7,7 @@ import {
   type RequestOptions,
 } from '../api';
 import type { ProductEvent } from '../types';
+import { classifyProductSequence } from '../productStreamState';
 
 export type ConnectionState = 'connecting' | 'open' | 'closed';
 
@@ -62,11 +63,13 @@ export function useProductEventStream({
             if (stopped) return;
             const event = parseProductEvent(data);
             if (event.conversation_id !== conversationId) continue;
-            if (event.seq <= cursor) continue;
-            if (event.seq !== cursor + 1) {
+            let disposition = classifyProductSequence(cursor, event.seq);
+            if (disposition === 'ignore') continue;
+            if (disposition === 'gap') {
               cursor = await onGapRef.current();
-              if (event.seq <= cursor) continue;
-              if (event.seq !== cursor + 1) {
+              disposition = classifyProductSequence(cursor, event.seq);
+              if (disposition === 'ignore') continue;
+              if (disposition === 'gap') {
                 throw new Error(
                   `Event sequence gap after refresh: ${cursor} -> ${event.seq}`,
                 );

@@ -36,6 +36,14 @@ interface RequestOverrideFields {
   xCluster: string;
 }
 
+interface PendingInitialCommand {
+  conversationId: string;
+  commandId: string;
+  text: string;
+  requestOptions: RequestOptions;
+  userId: string;
+}
+
 function loadUserIds(): string[] {
   const saved = localStorage.getItem(USER_IDS_STORAGE_KEY);
   if (!saved) {
@@ -106,6 +114,8 @@ function ChatApp() {
   const [conversations, setConversations] = useState<ConversationSnapshot[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
+  const [pendingInitialCommand, setPendingInitialCommand] =
+    useState<PendingInitialCommand | null>(null);
   const [hasConnectedStream, setHasConnectedStream] = useState(false);
   const [guidanceStatus, setGuidanceStatus] = useState<GuidanceStatus | null>(null);
   const [isLoadingList, setIsLoadingList] = useState(false);
@@ -419,6 +429,42 @@ function ChatApp() {
   );
 
   useEffect(() => {
+    if (
+      wsState !== 'open'
+      || !pendingInitialCommand
+      || state.conversationId !== pendingInitialCommand.conversationId
+    ) {
+      return;
+    }
+    const command = pendingInitialCommand;
+    setPendingInitialCommand(null);
+    void sendProductMessage(
+      command.conversationId,
+      command.text,
+      command.requestOptions,
+      command.commandId,
+    ).catch((err) => {
+      dispatch({
+        type: 'MARK_PENDING_OUTBOUND_FAILED',
+        commandId: command.commandId,
+      });
+      dispatch({
+        type: 'SET_ERROR',
+        error: err instanceof Error ? err.message : 'Unknown error',
+      });
+    }).finally(() => {
+      setIsSending(false);
+      void refreshConversationList(command.userId);
+    });
+  }, [
+    dispatch,
+    pendingInitialCommand,
+    refreshConversationList,
+    state.conversationId,
+    wsState,
+  ]);
+
+  useEffect(() => {
     void refreshConversations(undefined, activeUserId);
   }, [activeUserId, refreshConversations]);
 
@@ -434,19 +480,21 @@ function ChatApp() {
         message: { commandId, text, status: 'pending' },
       });
       setIsSending(true);
+      let sendDeferredUntilStreamOpens = false;
       try {
         const requestOptions = getRequestOptions(activeUserId);
         if (!state.conversationId) {
           setIsCreatingConversation(true);
           const snapshot = await createProductConversation(undefined, requestOptions);
           applySnapshot(snapshot, true);
-          await sendProductMessage(
-            snapshot.conversation_id,
+          setPendingInitialCommand({
+            conversationId: snapshot.conversation_id,
+            commandId,
             text,
             requestOptions,
-            commandId,
-          );
-          void refreshConversationList(activeUserId);
+            userId: activeUserId,
+          });
+          sendDeferredUntilStreamOpens = true;
         } else {
           await sendProductMessage(
             state.conversationId,
@@ -471,7 +519,7 @@ function ChatApp() {
         });
       } finally {
         setIsCreatingConversation(false);
-        setIsSending(false);
+        if (!sendDeferredUntilStreamOpens) setIsSending(false);
       }
     },
     [
@@ -479,7 +527,6 @@ function ChatApp() {
       applySnapshot,
       dispatch,
       getRequestOptions,
-      refreshConversationList,
       state.conversationId,
       state.status,
     ],
@@ -573,6 +620,8 @@ function ChatApp() {
     setStreamAfterSeq(0);
     setIsLoadingEvents(false);
     setGuidanceStatus(null);
+    setPendingInitialCommand(null);
+    setIsSending(false);
     dispatch({ type: 'RESET_CONVERSATION' });
   }, [dispatch]);
 

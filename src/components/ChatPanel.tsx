@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { RequestOptions } from '../api';
+import { matchesStreamingMessage } from '../productStreamState';
 import {
   getLatestPlan,
   getWorkflowFileObservation,
@@ -50,14 +51,9 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const streaming = Object.values(streamingMessages);
-  const streamingIds = new Set(streaming.map((message) => message.messageId));
-  const streamingRunIds = new Set(
-    streaming.flatMap((message) => message.runId ? [message.runId] : []),
-  );
   const visibleEvents = events.filter(
-    (event) => event.kind !== 'MessageEvent'
-      || event.source !== 'agent'
-      || (!streamingIds.has(event.id) && !streamingRunIds.has(event.run_id ?? '')),
+    (event) => !streaming.some((message) =>
+      matchesStreamingMessage(event, message)),
   );
   const latestPlan = getLatestPlan(visibleEvents);
   const streamingTextLength = streaming.reduce(

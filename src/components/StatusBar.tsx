@@ -1,5 +1,6 @@
 import type { WsState } from '../hooks/useConversationSocket';
 import type { ExecutionStatus } from '../types';
+import { deriveDisplayConnectionState } from '../productStreamState';
 
 interface StatusBarProps {
   wsState: WsState;
@@ -16,15 +17,19 @@ export function StatusBar({
   isCreating,
   hasConnected,
 }: StatusBarProps) {
-  const wsIndicator = !conversationId
-    ? isCreating
-      ? { color: 'bg-blue-400', label: 'Creating conversation...' }
-      : { color: 'bg-gray-300', label: 'Not connected' }
-    : wsState === 'open'
-      ? { color: 'bg-green-400', label: 'Connected' }
-      : wsState === 'connecting' || !hasConnected
-        ? { color: 'bg-yellow-400', label: 'Connecting...' }
-        : { color: 'bg-red-400', label: 'Reconnecting...' };
+  const displayConnectionState = deriveDisplayConnectionState({
+    conversationId,
+    isCreating,
+    connectionState: wsState,
+    hasConnected,
+  });
+  const wsIndicator = {
+    idle: { color: 'bg-gray-300', label: 'Not connected' },
+    creating: { color: 'bg-blue-400', label: 'Creating conversation...' },
+    connecting: { color: 'bg-yellow-400', label: 'Connecting...' },
+    connected: { color: 'bg-green-400', label: 'Connected' },
+    reconnecting: { color: 'bg-red-400', label: 'Reconnecting...' },
+  }[displayConnectionState];
 
   const statusLabel = {
     idle: 'Idle',

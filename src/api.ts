@@ -83,7 +83,7 @@ export async function sendProductMessage(
   conversationId: string,
   text: string,
   options?: RequestOptions,
-  commandId = crypto.randomUUID(),
+  commandId: string = crypto.randomUUID(),
 ): Promise<CommandReceipt> {
   return submitProductCommand(
     conversationId,
