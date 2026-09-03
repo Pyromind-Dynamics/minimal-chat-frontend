@@ -49,6 +49,11 @@ export interface BaseObservation {
   kind?: string;
   content?: ContentItem[];
   is_error?: boolean;
+  error_code?: string | null;
+  error_message?: string | null;
+  retryable?: boolean | null;
+  suggestion?: string | null;
+  context?: Record<string, unknown>;
   name?: string | null;
   result?: Record<string, unknown>;
   to_llm_content?: ContentItem[];

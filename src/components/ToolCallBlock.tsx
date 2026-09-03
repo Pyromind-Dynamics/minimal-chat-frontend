@@ -4,6 +4,10 @@ import type { ActionEvent, ContentItem, ObservationEvent } from '../types';
 import { ContentList } from './ContentList';
 import { ProgressBlock } from './ProgressBlock';
 import { SampleRecordsBlock } from './SampleRecordsBlock';
+import {
+  getObservationDisplayText,
+  getToolErrorPresentation,
+} from '../toolErrorPresentation';
 
 interface ToolCallBlockProps {
   action: ActionEvent;
@@ -24,10 +28,14 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
 
   // Extract human-readable summary
   const summary = getSummary(toolName, args);
+  const isError = Boolean(observation?.observation.is_error);
+  const error = isError && observation
+    ? getToolErrorPresentation(observation.observation)
+    : null;
 
   // Get observation text
   const obsText = observation
-    ? getObservationText(observation)
+    ? getObservationDisplayText(observation.observation)
     : null;
   const obsImages = observation
     ? getObservationContent(observation).filter((item) => item.type !== 'text')
@@ -44,7 +52,7 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
     : null;
 
   return (
-    <div className="mb-3 ml-2 border-l-2 border-amber-300 pl-3">
+    <div className={`mb-3 ml-2 border-l-2 pl-3 ${isError ? 'border-red-400' : 'border-amber-300'}`}>
       {thought && (
         <p className="mb-2 whitespace-pre-wrap text-xs leading-5 text-purple-700">
           {thought}
@@ -55,9 +63,14 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
         onClick={() => setIsExpanded(!isExpanded)}
         className="flex items-center gap-2 text-xs text-gray-600 hover:text-gray-900 cursor-pointer"
       >
-        <span className="font-mono bg-amber-50 px-1.5 py-0.5 rounded text-amber-800">
+        <span className={`font-mono px-1.5 py-0.5 rounded ${isError ? 'bg-red-50 text-red-800' : 'bg-amber-50 text-amber-800'}`}>
           {toolName}
         </span>
+        {isError && (
+          <span className="rounded bg-red-50 px-1.5 py-0.5 font-medium text-red-700">
+            失败
+          </span>
+        )}
         <span className="text-gray-500">{summary}</span>
         <span className="text-gray-400">{isExpanded ? '▼' : '▶'}</span>
       </button>
@@ -68,16 +81,24 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
             {JSON.stringify(args, null, 2)}
           </pre>
           {obsText && (
-            <pre className="text-xs bg-green-50 rounded p-2 overflow-x-auto text-green-800 border border-green-200">
+            <pre className={`text-xs rounded p-2 overflow-x-auto border whitespace-pre-wrap ${isError ? 'bg-red-50 text-red-800 border-red-200' : 'bg-green-50 text-green-800 border-green-200'}`}>
               {obsText}
             </pre>
+          )}
+          {error?.errorCode && (
+            <p className="text-xs text-red-600">
+              错误码：<span className="font-mono">{error.errorCode}</span>
+            </p>
+          )}
+          {error?.suggestion && (
+            <p className="text-xs text-red-700">建议：{error.suggestion}</p>
           )}
           {obsImages.length > 0 && <ContentList content={obsImages} />}
         </div>
       )}
 
       {!isExpanded && obsText && (
-        <p className="text-xs text-green-700 mt-1 truncate max-w-md">
+        <p className={`text-xs mt-1 truncate max-w-md ${isError ? 'text-red-700' : 'text-green-700'}`}>
           {obsText.split('\n')[0]}
         </p>
       )}
@@ -124,22 +145,6 @@ function parseToolArgs(args: Record<string, unknown> | string): Record<string, u
   return { arguments: args };
 }
 
-function getObservationText(obs: ObservationEvent): string {
-  if (obs.observation.to_llm_content) {
-    return obs.observation.to_llm_content
-      .filter((c) => c.type === 'text')
-      .map((c) => (c as { type: 'text'; text: string }).text)
-      .join('\n');
-  }
-  if (obs.observation.content) {
-    return obs.observation.content
-      .filter((c) => c.type === 'text')
-      .map((c) => (c as { type: 'text'; text: string }).text)
-      .join('\n');
-  }
-  return JSON.stringify(obs.observation.result ?? obs.observation, null, 2);
-}
-
 function extractOutputDir(obs: ObservationEvent | undefined): string | null {
   if (!obs) {
     return null;
@@ -148,7 +153,7 @@ function extractOutputDir(obs: ObservationEvent | undefined): string | null {
   if (typeof structured === 'string' && structured.trim()) {
     return structured.trim();
   }
-  const match = getObservationText(obs).match(/output_dir=([^,.\s]+)/);
+  const match = getObservationDisplayText(obs.observation).match(/output_dir=([^,.\s]+)/);
   return match ? match[1] : null;
 }
 

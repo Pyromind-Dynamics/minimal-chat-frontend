@@ -116,6 +116,9 @@ function toObservation(item: TimelineOperation): ObservationEvent {
   const details = isObject(item.details) ? item.details : { result: item.details };
   const observation: BaseObservation = {
     ...details,
+    ...(typeof details.error_code !== 'string' && item.error_code
+      ? { error_code: item.error_code }
+      : {}),
     is_error: item.status === 'failed',
     to_llm_content: item.output.map(toLegacyContent),
   };
