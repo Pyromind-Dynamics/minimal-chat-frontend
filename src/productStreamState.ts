@@ -34,24 +34,3 @@ export function classifyProductSequence(
   if (eventSequence === cursor + 1) return 'next';
   return 'gap';
 }
-
-interface MessageIdentity {
-  kind: string;
-  source?: string;
-  id?: string;
-  run_id?: string | null;
-}
-
-interface StreamingIdentity {
-  messageId: string;
-  runId: string | null;
-}
-
-export function matchesStreamingMessage(
-  event: MessageIdentity,
-  streaming: StreamingIdentity,
-): boolean {
-  if (event.kind !== 'MessageEvent' || event.source !== 'agent') return false;
-  return event.id === streaming.messageId
-    || (streaming.runId !== null && event.run_id === streaming.runId);
-}

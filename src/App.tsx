@@ -21,6 +21,7 @@ import {
 import { ChatPanel } from './components/ChatPanel';
 import { MessageInput } from './components/MessageInput';
 import { StatusBar } from './components/StatusBar';
+import { formatConversationUpdatedAt, sortConversations } from './conversationList';
 import {
   type ConversationSnapshot,
   type GuidanceStatus,
@@ -90,20 +91,6 @@ function conversationTitle(conversation: ConversationSnapshot): string {
   return conversation.conversation_id.slice(0, 8);
 }
 
-function productContentText(value: unknown): string {
-  if (!Array.isArray(value)) return '';
-  return value
-    .filter(
-      (item): item is { type: 'text'; text: string } =>
-        typeof item === 'object'
-        && item !== null
-        && (item as { type?: unknown }).type === 'text'
-        && typeof (item as { text?: unknown }).text === 'string',
-    )
-    .map((item) => item.text)
-    .join('');
-}
-
 function ChatApp() {
   const { state, dispatch } = useChatContext();
   const [userIds, setUserIds] = useState(loadUserIds);
@@ -130,7 +117,7 @@ function ChatApp() {
   const [isRequestingDebugUrl, setIsRequestingDebugUrl] = useState(false);
   const [streamAfterSeq, setStreamAfterSeq] = useState(0);
   const snapshotRefreshTimerRef = useRef<number | null>(null);
-  const deltaBufferRef = useRef<Record<string, string>>({});
+  const deltaBufferRef = useRef<ProductEvent[]>([]);
   const deltaFrameRef = useRef<number | null>(null);
   const conversationIdRef = useRef<string | null>(null);
   const latestSnapshotRef = useRef<{
@@ -194,7 +181,7 @@ function ChatApp() {
         const remaining = current.filter(
           (item) => item.conversation_id !== snapshot.conversation_id,
         );
-        return [snapshot, ...remaining];
+        return sortConversations([snapshot, ...remaining]);
       });
     },
     [dispatch],
@@ -220,19 +207,10 @@ function ChatApp() {
       deltaFrameRef.current = null;
     }
     const deltas = deltaBufferRef.current;
-    deltaBufferRef.current = {};
-    if (Object.keys(deltas).length > 0) {
-      dispatch({ type: 'APPEND_STREAMING_DELTAS', deltas });
+    deltaBufferRef.current = [];
+    if (deltas.length > 0) {
+      dispatch({ type: 'APPLY_MESSAGE_EVENTS', events: deltas });
     }
-  }, [dispatch]);
-
-  const clearStreamingOverlay = useCallback(() => {
-    if (deltaFrameRef.current !== null) {
-      window.cancelAnimationFrame(deltaFrameRef.current);
-      deltaFrameRef.current = null;
-    }
-    deltaBufferRef.current = {};
-    dispatch({ type: 'CLEAR_STREAMING_MESSAGES' });
   }, [dispatch]);
 
   const handleProductEvent = useCallback(
@@ -250,51 +228,17 @@ function ChatApp() {
         }
         return current;
       });
-      const messageId = typeof event.payload.message_id === 'string'
-        ? event.payload.message_id
-        : null;
-      const role = event.payload.role;
-      if (event.type === 'message.started' && role === 'assistant' && messageId) {
-        dispatch({
-          type: 'START_STREAMING_MESSAGE',
-          message: {
-            messageId,
-            runId: event.run_id ?? null,
-            role: 'assistant',
-            text: productContentText(event.payload.content),
-            status: 'streaming',
-          },
-        });
-        return;
-      }
-      if (event.type === 'message.delta' && messageId) {
-        const text = typeof event.payload.text === 'string'
-          ? event.payload.text
-          : '';
-        deltaBufferRef.current[messageId] =
-          (deltaBufferRef.current[messageId] ?? '') + text;
+      if (event.type === 'message.delta') {
+        deltaBufferRef.current.push(event);
         if (deltaFrameRef.current === null) {
-          deltaFrameRef.current = window.requestAnimationFrame(() => {
-            deltaFrameRef.current = null;
-            const deltas = deltaBufferRef.current;
-            deltaBufferRef.current = {};
-            if (Object.keys(deltas).length > 0) {
-              dispatch({ type: 'APPEND_STREAMING_DELTAS', deltas });
-            }
-          });
+          deltaFrameRef.current = window.requestAnimationFrame(flushStreamingDeltas);
         }
         return;
       }
-      if (event.type === 'message.completed' && role === 'assistant' && messageId) {
+      if (event.type === 'message.started' || event.type === 'message.completed') {
         flushStreamingDeltas();
-        dispatch({ type: 'COMPLETE_STREAMING_MESSAGE', messageId });
-        void refreshCurrentSnapshot().catch((error) => {
-          dispatch({
-            type: 'SET_ERROR',
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-        });
-        return;
+        dispatch({ type: 'APPLY_MESSAGE_EVENTS', events: [event] });
+        if (event.type === 'message.started') return;
       }
       if (snapshotRefreshTimerRef.current !== null) {
         window.clearTimeout(snapshotRefreshTimerRef.current);
@@ -313,9 +257,9 @@ function ChatApp() {
   );
 
   const handleStreamGap = useCallback(async (): Promise<number> => {
-    clearStreamingOverlay();
+    flushStreamingDeltas();
     return refreshCurrentSnapshot();
-  }, [clearStreamingOverlay, refreshCurrentSnapshot]);
+  }, [flushStreamingDeltas, refreshCurrentSnapshot]);
 
   const wsState = useProductEventStream({
     conversationId: state.conversationId,
@@ -333,11 +277,6 @@ function ChatApp() {
     if (wsState === 'open') setHasConnectedStream(true);
   }, [wsState]);
 
-  useEffect(() => {
-    if (state.conversationId && wsState === 'closed') {
-      clearStreamingOverlay();
-    }
-  }, [clearStreamingOverlay, state.conversationId, wsState]);
 
   const openConversation = useCallback(
     async (conversation: ConversationSnapshot, userId = activeUserId) => {
@@ -381,7 +320,9 @@ function ChatApp() {
     async (preferredConversationId?: string, userId = activeUserId) => {
       setIsLoadingList(true);
       try {
-        const items = await listProductConversations(getRequestOptions(userId));
+        const items = sortConversations(
+          await listProductConversations(getRequestOptions(userId)),
+        );
         setConversations(items);
 
         const selected =
@@ -414,7 +355,7 @@ function ChatApp() {
       setIsLoadingList(true);
       try {
         setConversations(
-          await listProductConversations(getRequestOptions(userId)),
+          sortConversations(await listProductConversations(getRequestOptions(userId))),
         );
       } catch (err) {
         dispatch({
@@ -907,7 +848,13 @@ function ChatApp() {
                     <span className="font-mono">
                       {conversation.conversation_id.slice(0, 8)}
                     </span>
-                    <span>seq {conversation.through_seq}</span>
+                    <time
+                      className="shrink-0 text-right"
+                      dateTime={conversation.updated_at ?? undefined}
+                      title={`更新时间：${formatConversationUpdatedAt(conversation.updated_at)}`}
+                    >
+                      {formatConversationUpdatedAt(conversation.updated_at)}
+                    </time>
                   </div>
                 </button>
               );
@@ -928,7 +875,6 @@ function ChatApp() {
           <ChatPanel
             events={state.events}
             pendingOutboundMessages={state.pendingOutboundMessages}
-            streamingMessages={state.streamingMessages}
             status={state.status}
             isCondensing={state.isCondensing}
             requestOptions={getRequestOptions()}

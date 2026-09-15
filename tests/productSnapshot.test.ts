@@ -42,3 +42,13 @@ test('failed operations copy their top-level error code into the observation', (
   assert.equal(observation.observation.error_code, 'sample_selection_limit');
   assert.equal(observation.observation.retryable, true);
 });
+
+test('workflow cards use the product event id required by fork and rollback', () => {
+  const snapshot = {
+    timeline: [{ kind: 'workflow', item_id: 'run-finished:workflow', started_seq: 7,
+      workflow: { resource_id: 'pyromind_workflow', version: 'workflow-v3', dsl: 'workflow = Final()' } }],
+  } as ConversationSnapshot;
+  const event = snapshotToChatEvents(snapshot)[0];
+  assert.equal(event.kind, 'ConversationStateUpdateEvent');
+  assert.equal('id' in event && event.id, 'run-finished:workflow');
+});

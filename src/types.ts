@@ -322,6 +322,7 @@ export interface ConversationSnapshot {
   schema_version: number;
   conversation_id: string;
   through_seq: number;
+  updated_at?: string | null;
   status: ExecutionStatus;
   capabilities: HarnessCapabilities;
   timeline: TimelineItem[];
@@ -348,14 +349,6 @@ export interface PendingOutboundMessage {
   commandId: string;
   text: string;
   status: 'pending' | 'failed';
-}
-
-export interface StreamingMessage {
-  messageId: string;
-  runId: string | null;
-  role: 'assistant';
-  text: string;
-  status: 'streaming' | 'completed';
 }
 
 export interface CommandReceipt {

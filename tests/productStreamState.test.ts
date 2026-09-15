@@ -4,7 +4,6 @@ import test from 'node:test';
 import {
   classifyProductSequence,
   deriveDisplayConnectionState,
-  matchesStreamingMessage,
 } from '../src/productStreamState.ts';
 
 test('connection display distinguishes creation and SSE reconnection', () => {
@@ -50,29 +49,4 @@ test('SSE sequence gaps require snapshot reconciliation', () => {
   assert.equal(classifyProductSequence(8, 10), 'gap');
   assert.equal(classifyProductSequence(10, 10), 'ignore');
   assert.equal(classifyProductSequence(10, 11), 'next');
-});
-
-test('streaming overlays deduplicate snapshots by message id or non-null run id', () => {
-  const byMessageId = {
-    kind: 'MessageEvent',
-    source: 'agent',
-    id: 'message-1',
-    run_id: 'other-run',
-  };
-  assert.equal(matchesStreamingMessage(byMessageId, {
-    messageId: 'message-1',
-    runId: 'run-1',
-  }), true);
-  assert.equal(matchesStreamingMessage({ ...byMessageId, id: 'other-message' }, {
-    messageId: 'message-1',
-    runId: 'other-run',
-  }), true);
-  assert.equal(matchesStreamingMessage({ ...byMessageId, id: 'other-message' }, {
-    messageId: 'message-1',
-    runId: null,
-  }), false);
-  assert.equal(matchesStreamingMessage({ ...byMessageId, source: 'user' }, {
-    messageId: 'message-1',
-    runId: 'other-run',
-  }), false);
 });

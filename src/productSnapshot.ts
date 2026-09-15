@@ -39,7 +39,7 @@ export function snapshotToChatEvents(
     if (item.kind === 'workflow') {
       events.push({
         kind: 'ConversationStateUpdateEvent',
-        id: item.workflow.version,
+        id: item.item_id,
         timestamp: '',
         source: 'environment',
         key: 'pyromind_workflow',

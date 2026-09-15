@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
 import type { RequestOptions } from '../api';
-import { matchesStreamingMessage } from '../productStreamState';
 import {
   getLatestPlan,
   getWorkflowFileObservation,
@@ -11,7 +10,6 @@ import {
   type ExecutionStatus,
   type ObservationEvent,
   type PendingOutboundMessage,
-  type StreamingMessage,
 } from '../types';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { CondensationBlock } from './CondensationBlock';
@@ -33,7 +31,6 @@ interface ChatPanelProps {
   isRespondingToConfirmation?: boolean;
   onRespondToConfirmation?: (accept: boolean) => void;
   pendingOutboundMessages?: PendingOutboundMessage[];
-  streamingMessages?: Record<string, StreamingMessage>;
 }
 
 export function ChatPanel({
@@ -47,29 +44,23 @@ export function ChatPanel({
   isRespondingToConfirmation = false,
   onRespondToConfirmation,
   pendingOutboundMessages = [],
-  streamingMessages = {},
 }: ChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
-  const streaming = Object.values(streamingMessages);
-  const visibleEvents = events.filter(
-    (event) => !streaming.some((message) =>
-      matchesStreamingMessage(event, message)),
-  );
+  const visibleEvents = events;
   const latestPlan = getLatestPlan(visibleEvents);
-  const streamingTextLength = streaming.reduce(
-    (total, message) => total + message.text.length,
-    0,
-  );
+  const textLength = events.reduce((total, event) => total + (
+    event.kind === 'MessageEvent' ? event.llm_message.content.reduce((size, block) =>
+      size + (block.type === 'text' ? block.text.length : 0), 0) : 0
+  ), 0);
 
   // Auto-scroll to bottom on new events
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [visibleEvents.length, isCondensing, pendingOutboundMessages.length, streamingTextLength]);
+  }, [visibleEvents.length, isCondensing, pendingOutboundMessages.length, textLength]);
 
   if (
     visibleEvents.length === 0
     && pendingOutboundMessages.length === 0
-    && streaming.length === 0
     && !isCondensing
   ) {
     return (
@@ -194,22 +185,6 @@ export function ChatPanel({
             llm_message: {
               role: 'user',
               content: [{ type: 'text', text: message.text }],
-            },
-          }}
-        />
-      ))}
-      {streaming.map((message) => (
-        <MessageBubble
-          key={message.messageId}
-          event={{
-            kind: 'MessageEvent',
-            id: message.messageId,
-            timestamp: '',
-            source: 'agent',
-            run_id: message.runId,
-            llm_message: {
-              role: 'assistant',
-              content: [{ type: 'text', text: message.text || '…' }],
             },
           }}
         />
