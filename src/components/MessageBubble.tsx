@@ -16,7 +16,7 @@ export function MessageBubble({ event }: MessageBubbleProps) {
             : 'bg-gray-100 text-gray-900 rounded-bl-sm'
         }`}
       >
-        <ContentList content={event.llm_message.content} />
+        <ContentList content={event.llm_message.content} markdown={!isUser} />
         {event.delivery_status && (
           <div
             className={`mt-1 text-[10px] ${isUser ? 'text-blue-100' : 'text-gray-400'}`}
