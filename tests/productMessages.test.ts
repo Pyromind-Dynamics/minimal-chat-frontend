@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { pendingMessageEvents, projectMessageEvents } from '../src/productMessages.ts';
+import { pendingMessageEvents, projectMessageEvents, receivedUserCommandIds } from '../src/productMessages.ts';
 import type { ConversationSnapshot, ProductEvent } from '../src/types.ts';
 
 const snapshot: ConversationSnapshot = {
@@ -57,4 +57,19 @@ test('completion works without an overlay or REST refresh and keeps operation or
   const result = projectMessageEvents(withTool, [event(6, 'message.completed', 'final', 'done')]);
   assert.deepEqual(texts(result), ['hello', 'done']);
   assert.deepEqual(result.timeline.map((item) => item.item_id), ['user', 'tool', 'final']);
+});
+
+
+test('callback steering acknowledges commands across SSE replay and refreshed snapshots', () => {
+  const updates = ['command-1', 'command-2'].map((commandId, index) => ({
+    ...event(index + 2, 'message.completed', `u${index}`, 'same message'),
+    run_id: 'callback:graph', payload: { message_id: `u${index}`, role: 'user',
+      command_id: commandId, content: [{ type: 'text', text: 'same message' }] },
+  }));
+  const projected = projectMessageEvents(snapshot, [...updates, ...updates]);
+  assert.deepEqual([...receivedUserCommandIds(projected)], ['run', 'command-1', 'command-2']);
+  assert.equal(projected.timeline.filter((item) => item.kind === 'message' && item.role === 'user').length, 3);
+  const refreshed = { ...projected, through_seq: 3 };
+  assert.deepEqual(projectMessageEvents(refreshed, updates), refreshed);
+  assert.equal(receivedUserCommandIds(refreshed).has('callback:graph'), false);
 });

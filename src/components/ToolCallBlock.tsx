@@ -18,6 +18,12 @@ interface ToolCallBlockProps {
 export function ToolCallBlock({ action, observation, requestOptions }: ToolCallBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
+  const progress = observation?.observation as Record<string, unknown> | undefined;
+  const running = progress?.operation_status === 'running';
+  const cancelled = progress?.status === 'cancelled';
+  const node = typeof progress?.node === 'string' ? progress.node : null;
+  const command = typeof progress?.command === 'string' ? progress.command : null;
+  const verdict = typeof progress?.verdict === 'string' ? progress.verdict : null;
   const toolName = action.tool_call.name;
   const args = parseToolArgs(action.tool_call.arguments);
   const thought = action.thought
@@ -66,6 +72,8 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
         <span className={`font-mono px-1.5 py-0.5 rounded ${isError ? 'bg-red-50 text-red-800' : 'bg-amber-50 text-amber-800'}`}>
           {toolName}
         </span>
+        {cancelled && <span className="text-gray-500">已取消</span>}
+        {running && <span className="text-blue-600">执行中</span>}
         {isError && (
           <span className="rounded bg-red-50 px-1.5 py-0.5 font-medium text-red-700">
             失败
@@ -75,11 +83,13 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
         <span className="text-gray-400">{isExpanded ? '▼' : '▶'}</span>
       </button>
 
-      {isExpanded && (
+      {node && <p className="mt-1 text-xs text-gray-600">当前节点：{node}{verdict ? ` · 验收：${verdict}` : ''}</p>}
+      {(isExpanded || running) && (
         <div className="mt-2 space-y-2">
           <pre className="text-xs bg-gray-50 rounded p-2 overflow-x-auto text-gray-700">
             {JSON.stringify(args, null, 2)}
           </pre>
+          {command && <pre className="text-xs whitespace-pre-wrap break-all">{command}</pre>}
           {obsText && (
             <pre className={`text-xs rounded p-2 overflow-x-auto border whitespace-pre-wrap ${isError ? 'bg-red-50 text-red-800 border-red-200' : 'bg-green-50 text-green-800 border-green-200'}`}>
               {obsText}

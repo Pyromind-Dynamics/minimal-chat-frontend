@@ -43,6 +43,9 @@ export function projectMessageEvents(
         content: 'content' in event.payload ? content(event.payload.content) : message.content,
       };
     }
+    if (typeof event.payload.command_id === 'string') {
+      message = { ...message, command_id: event.payload.command_id };
+    }
     if (index < 0) timeline.push(message);
     else timeline[index] = message;
   }
@@ -52,4 +55,13 @@ export function projectMessageEvents(
 
 function content(value: unknown): ProductContent[] {
   return Array.isArray(value) ? value as ProductContent[] : [];
+}
+
+
+export function receivedUserCommandIds(snapshot: ConversationSnapshot): Set<string> {
+  return new Set(snapshot.timeline.flatMap((item) => {
+    if (item.kind !== 'message' || item.role !== 'user') return [];
+    const id = item.command_id ?? item.run_id;
+    return typeof id === 'string' ? [id] : [];
+  }));
 }

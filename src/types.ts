@@ -46,6 +46,10 @@ export interface ActionEvent {
 }
 
 export interface BaseObservation {
+  operation_status?: 'running' | 'completed' | 'failed';
+  node?: string | null;
+  command?: string | null;
+  verdict?: string | null;
   kind?: string;
   content?: ContentItem[];
   is_error?: boolean;
@@ -58,7 +62,6 @@ export interface BaseObservation {
   result?: Record<string, unknown>;
   to_llm_content?: ContentItem[];
   path?: string | null;
-  command?: string;
   old_content?: string | null;
   new_content?: string | null;
 }
@@ -236,6 +239,7 @@ export type ProductContent =
 
 export interface TimelineMessage {
   kind: 'message';
+  command_id?: string | null;
   item_id: string;
   started_seq: number;
   completed_seq?: number | null;

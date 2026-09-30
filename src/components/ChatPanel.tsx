@@ -81,7 +81,7 @@ export function ChatPanel({
   }
   const pendingActions = visibleEvents.filter(
     (event): event is ActionEvent =>
-      event.kind === 'ActionEvent' && !observationsByActionId.has(event.id),
+      event.kind === 'ActionEvent' && (!observationsByActionId.has(event.id) || observationsByActionId.get(event.id)?.observation.operation_status === 'running'),
   );
 
   // Pair actions and observations by id; parallel tool calls are not adjacent.

@@ -14,7 +14,7 @@ test('only assistant text renders Markdown; signed images and legacy images rema
     const { MessageBubble } = await server.ssrLoadModule('/src/components/MessageBubble.tsx');
     const { ContentList } = await server.ssrLoadModule('/src/components/ContentList.tsx');
     const url = 'https://storage.test/image.png?credential=a%2Fb&signature=123';
-    const text = `Sample image\n\n![sample](${url})\n\n\`\`\`python\nprint("hello")\n\`\`\`\n\n<script>alert(1)</script>`;
+    const text = `Sample image\n\n![sample](<${url}>)\n\n\`\`\`python\nprint("hello")\n\`\`\`\n\n<script>alert(1)</script>`;
     const content = [{ type: 'text', text }, { type: 'image', image_urls: ['data:image/png;base64,YQ=='] }];
     const renderMessage = (source: string) => renderToStaticMarkup(createElement(MessageBubble, {
       event: { source, llm_message: { content } },

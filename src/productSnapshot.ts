@@ -31,9 +31,7 @@ export function snapshotToChatEvents(
     }
     if (item.kind === 'operation') {
       events.push(toAction(item));
-      if (item.status !== 'running') {
-        events.push(toObservation(item));
-      }
+      events.push(toObservation(item));
       continue;
     }
     if (item.kind === 'workflow') {
@@ -119,6 +117,7 @@ function toObservation(item: TimelineOperation): ObservationEvent {
     ...(typeof details.error_code !== 'string' && item.error_code
       ? { error_code: item.error_code }
       : {}),
+    operation_status: item.status,
     is_error: item.status === 'failed',
     to_llm_content: item.output.map(toLegacyContent),
   };

@@ -9,7 +9,7 @@ import {
 } from './types';
 import type { WsState } from './hooks/useConversationSocket';
 import { snapshotToChatEvents } from './productSnapshot';
-import { pendingMessageEvents, projectMessageEvents } from './productMessages';
+import { pendingMessageEvents, projectMessageEvents, receivedUserCommandIds } from './productMessages';
 
 // State shape
 interface ChatState {
@@ -104,10 +104,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         && state.snapshot.through_seq > action.snapshot.through_seq) return state;
       const messageEvents = pendingMessageEvents(action.snapshot, state.messageEvents);
       const projected = projectMessageEvents(action.snapshot, messageEvents);
-      const completedRunIds = new Set(
-        projected.timeline.flatMap((item) =>
-          item.kind === 'message' && item.role === 'user' && item.run_id ? [item.run_id] : []),
-      );
+      const completedRunIds = receivedUserCommandIds(projected);
       return {
         ...state,
         conversationId: action.snapshot.conversation_id,
@@ -169,8 +166,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       if (!state.snapshot) return state;
       const messageEvents = pendingMessageEvents(state.snapshot, [...state.messageEvents, ...action.events]);
       const projected = projectMessageEvents(state.snapshot, messageEvents);
-      const receivedCommands = new Set(projected.timeline.flatMap((item) =>
-        item.kind === 'message' && item.role === 'user' && item.run_id ? [item.run_id] : []));
+      const receivedCommands = receivedUserCommandIds(projected);
       return {
         ...state, messageEvents, events: snapshotToChatEvents(projected),
         pendingOutboundMessages: state.pendingOutboundMessages.filter((message) =>

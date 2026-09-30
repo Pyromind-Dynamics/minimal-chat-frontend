@@ -52,3 +52,19 @@ test('workflow cards use the product event id required by fork and rollback', ()
   assert.equal(event.kind, 'ConversationStateUpdateEvent');
   assert.equal('id' in event && event.id, 'run-finished:workflow');
 });
+
+
+test('running operations retain progress in place across refreshed snapshots', () => {
+  const snapshot = { timeline: [{ kind: 'operation', item_id: 'history:1', started_seq: 1,
+    name: '历史经验', category: 'tool', status: 'running', thought: [], arguments: {},
+    output: [{ type: 'text', text: '' }], details: { node: 'clean', command: 'python3 clean.py', verdict: null },
+  }] } as ConversationSnapshot;
+  const first = snapshotToChatEvents(snapshot)[1] as ObservationEvent;
+  assert.equal(first.observation.operation_status, 'running');
+  assert.equal(first.observation.node, 'clean');
+  snapshot.timeline[0] = { ...snapshot.timeline[0], details: { node: 'report', command: null, verdict: null } } as typeof snapshot.timeline[0];
+  const next = snapshotToChatEvents(snapshot)[1] as ObservationEvent;
+  assert.equal(next.id, first.id);
+  assert.equal(next.observation.node, 'report');
+  assert.equal(next.observation.command, null);
+});
