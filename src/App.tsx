@@ -874,6 +874,7 @@ function ChatApp() {
 
           <ChatPanel
             events={state.events}
+            pendingPermission={state.snapshot?.pending_permissions[0]}
             pendingOutboundMessages={state.pendingOutboundMessages}
             status={state.status}
             isCondensing={state.isCondensing}
@@ -899,6 +900,7 @@ function ChatApp() {
               || isRespondingToConfirmation
               || state.status === 'deleting'
               || state.status === 'waiting_for_confirmation'
+              || Boolean(state.snapshot?.pending_permissions.length)
             }
             guidanceStatus={guidanceStatus}
           />

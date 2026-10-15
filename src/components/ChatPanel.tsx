@@ -10,6 +10,7 @@ import {
   type ExecutionStatus,
   type ObservationEvent,
   type PendingOutboundMessage,
+  type ProductPermission,
 } from '../types';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { CondensationBlock } from './CondensationBlock';
@@ -31,6 +32,7 @@ interface ChatPanelProps {
   isRespondingToConfirmation?: boolean;
   onRespondToConfirmation?: (accept: boolean) => void;
   pendingOutboundMessages?: PendingOutboundMessage[];
+  pendingPermission?: ProductPermission;
 }
 
 export function ChatPanel({
@@ -44,6 +46,7 @@ export function ChatPanel({
   isRespondingToConfirmation = false,
   onRespondToConfirmation,
   pendingOutboundMessages = [],
+  pendingPermission,
 }: ChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const visibleEvents = events;
@@ -62,6 +65,7 @@ export function ChatPanel({
     visibleEvents.length === 0
     && pendingOutboundMessages.length === 0
     && !isCondensing
+    && !pendingPermission
   ) {
     return (
       <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
@@ -81,7 +85,12 @@ export function ChatPanel({
   }
   const pendingActions = visibleEvents.filter(
     (event): event is ActionEvent =>
-      event.kind === 'ActionEvent' && (!observationsByActionId.has(event.id) || observationsByActionId.get(event.id)?.observation.operation_status === 'running'),
+      event.kind === 'ActionEvent' && (
+        pendingPermission
+          ? pendingPermission.operation_ids.includes(event.id)
+          : !observationsByActionId.has(event.id)
+            || observationsByActionId.get(event.id)?.observation.operation_status === 'running'
+      ),
   );
 
   // Pair actions and observations by id; parallel tool calls are not adjacent.
@@ -95,7 +104,7 @@ export function ChatPanel({
       const observation = observationsByActionId.get(event.id);
       rendered.push(
         <div key={event.id}>
-          {event.tool_call.name === 'subagent' ? (
+          {event.category === 'subagent' ? (
             <SubAgentBlock action={event} observation={observation} />
           ) : (
             <ToolCallBlock
@@ -203,9 +212,10 @@ export function ChatPanel({
           <span>正在压缩上下文，请稍候…</span>
         </div>
       )}
-      {status === 'waiting_for_confirmation' && onRespondToConfirmation && (
+      {(pendingPermission || status === 'waiting_for_confirmation') && onRespondToConfirmation && (
         <ConfirmationDialog
           actions={pendingActions}
+          description={pendingPermission?.description}
           isSubmitting={isRespondingToConfirmation}
           onRespond={onRespondToConfirmation}
         />

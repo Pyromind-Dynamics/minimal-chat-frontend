@@ -1,3 +1,4 @@
+import { groupSubagentOperations, subagentDisplay } from './subagentPresentation.ts';
 import type {
   ActionEvent,
   BaseObservation,
@@ -14,6 +15,7 @@ export function snapshotToChatEvents(
   snapshot: ConversationSnapshot,
 ): ChatEvent[] {
   const events: ChatEvent[] = [];
+  const { hidden, related } = groupSubagentOperations(snapshot.timeline.filter((item): item is TimelineOperation => item.kind === 'operation'));
   for (const item of snapshot.timeline) {
     if (item.kind === 'message') {
       events.push({
@@ -30,7 +32,8 @@ export function snapshotToChatEvents(
       continue;
     }
     if (item.kind === 'operation') {
-      events.push(toAction(item));
+      if (hidden.has(item.item_id)) continue;
+      events.push({ ...toAction(item), related_operations: related.get(item.item_id) });
       events.push(toObservation(item));
       continue;
     }
@@ -99,7 +102,9 @@ function toAction(item: TimelineOperation): ActionEvent {
   return {
     kind: 'ActionEvent',
     id: item.item_id,
-    timestamp: '',
+    category: item.category,
+    details: item.details,
+    timestamp: subagentDisplay(item.details)?.started_at ?? '',
     source: 'agent',
     tool_name: item.name,
     thought: item.thought.map(toLegacyContent).filter(isTextContent),
@@ -124,7 +129,7 @@ function toObservation(item: TimelineOperation): ObservationEvent {
   return {
     kind: 'ObservationEvent',
     id: `${item.item_id}:observation`,
-    timestamp: '',
+    timestamp: subagentDisplay(item.details)?.ended_at ?? '',
     source: 'environment',
     tool_name: item.name,
     tool_call_id: item.item_id,

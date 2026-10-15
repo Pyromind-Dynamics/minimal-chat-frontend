@@ -34,6 +34,9 @@ export interface MessageEvent {
 // Tool call (action) from the agent
 export interface ActionEvent {
   kind: 'ActionEvent';
+  category?: TimelineOperation['category'];
+  details?: unknown;
+  related_operations?: TimelineOperation[];
   id: string;
   timestamp: string;
   source: 'agent';

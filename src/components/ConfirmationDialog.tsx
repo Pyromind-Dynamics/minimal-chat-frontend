@@ -2,12 +2,14 @@ import type { ActionEvent } from '../types';
 
 interface ConfirmationDialogProps {
   actions: ActionEvent[];
+  description?: string;
   isSubmitting: boolean;
   onRespond: (accept: boolean) => void;
 }
 
 export function ConfirmationDialog({
   actions,
+  description,
   isSubmitting,
   onRespond,
 }: ConfirmationDialogProps) {
@@ -24,13 +26,12 @@ export function ConfirmationDialog({
             Confirm agent action
           </h2>
           <p className="mt-1 text-sm text-gray-600">
-            The agent wants to run a potentially risky action. Review it before
-            continuing.
+            {description || 'The agent wants to run a potentially risky action. Review it before continuing.'}
           </p>
         </div>
 
         <div className="max-h-[55vh] space-y-3 overflow-y-auto px-5 py-4">
-          {actions.length === 0 && (
+          {actions.length === 0 && !description && (
             <p className="text-sm text-gray-500">
               Pending action details are still loading.
             </p>
@@ -59,7 +60,7 @@ export function ConfirmationDialog({
           <button
             type="button"
             onClick={() => onRespond(true)}
-            disabled={isSubmitting || actions.length === 0}
+            disabled={isSubmitting || (actions.length === 0 && !description)}
             className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-gray-300"
           >
             {isSubmitting ? 'Submitting...' : 'Allow'}

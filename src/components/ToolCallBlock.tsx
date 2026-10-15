@@ -24,6 +24,15 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
   const node = typeof progress?.node === 'string' ? progress.node : null;
   const command = typeof progress?.command === 'string' ? progress.command : null;
   const verdict = typeof progress?.verdict === 'string' ? progress.verdict : null;
+  const phase = typeof progress?.event === 'string' ? ({
+    waiting_agent: '等待 Agent 完成节点',
+    agent_stage_finished: 'Agent 阶段结束，等待验收',
+    verification_started: '正在验收',
+    taken_over: '已交由 Agent 接手',
+    regression_started: '正在验证兼容场景',
+    regression_passed: '场景验证通过',
+    regression_failed: '场景验证失败，不发布',
+  } as Record<string, string>)[progress.event] : undefined;
   const toolName = action.tool_call.name;
   const args = parseToolArgs(action.tool_call.arguments);
   const thought = action.thought
@@ -83,6 +92,8 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
         <span className="text-gray-400">{isExpanded ? '▼' : '▶'}</span>
       </button>
 
+      {typeof progress?.validation_case === 'string' && <p className="mt-1 text-xs text-gray-600">验证案例：{progress.validation_case}{typeof progress.candidate_version === 'string' ? ` · 候选版本 ${progress.candidate_version}` : ''}</p>}
+      {phase && <p className="mt-1 text-xs text-blue-600">{phase}</p>}
       {node && <p className="mt-1 text-xs text-gray-600">当前节点：{node}{verdict ? ` · 验收：${verdict}` : ''}</p>}
       {(isExpanded || running) && (
         <div className="mt-2 space-y-2">
