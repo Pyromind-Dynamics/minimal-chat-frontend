@@ -96,6 +96,17 @@ export async function sendProductMessage(
   );
 }
 
+export async function cancelProductConversation(
+  conversationId: string,
+  options?: RequestOptions,
+): Promise<CommandReceipt> {
+  return submitProductCommand(
+    conversationId,
+    { command_id: crypto.randomUUID(), type: 'cancel' },
+    options,
+  );
+}
+
 export async function respondToProductPermission(
   conversationId: string,
   permissionId: string,

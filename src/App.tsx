@@ -8,6 +8,7 @@ import {
 import { ChatProvider, useChatContext } from './ChatContext';
 import { useProductEventStream } from './hooks/useProductEventStream';
 import {
+  cancelProductConversation,
   createProductConversation,
   forkProductConversation,
   getProductSnapshot,
@@ -100,6 +101,8 @@ function ChatApp() {
   const [draftRequestOverrides, setDraftRequestOverrides] = useState(loadRequestOverrides);
   const [conversations, setConversations] = useState<ConversationSnapshot[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [interruptingConversationId, setInterruptingConversationId] = useState<string | null>(null);
+  const interruptRequestsRef = useRef(new Set<string>());
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
   const [pendingInitialCommand, setPendingInitialCommand] =
     useState<PendingInitialCommand | null>(null);
@@ -473,6 +476,47 @@ function ChatApp() {
     ],
   );
 
+  const handleInterrupt = useCallback(async () => {
+    const conversationId = state.conversationId;
+    if (
+      !conversationId
+      || !state.snapshot?.capabilities.cancel
+      || !['running', 'waiting_for_confirmation'].includes(state.status)
+      || isLoadingEvents
+      || isSending
+      || isRespondingToConfirmation
+      || interruptRequestsRef.current.has(conversationId)
+    ) return;
+
+    interruptRequestsRef.current.add(conversationId);
+    setInterruptingConversationId(conversationId);
+    try {
+      const requestOptions = getRequestOptions(activeUserId);
+      const receipt = await cancelProductConversation(conversationId, requestOptions);
+      if (receipt.status === 'failed') {
+        throw new Error('中断失败，请重试。');
+      }
+      const snapshot = await getProductSnapshot(conversationId, requestOptions);
+      if (conversationIdRef.current !== conversationId) return;
+      applySnapshot(snapshot, false);
+      setGuidanceStatus(null);
+    } catch (err) {
+      if (conversationIdRef.current === conversationId) {
+        dispatch({
+          type: 'SET_ERROR',
+          error: err instanceof Error ? err.message : '中断失败，请重试。',
+        });
+      }
+    } finally {
+      interruptRequestsRef.current.delete(conversationId);
+      setInterruptingConversationId((current) => current === conversationId ? null : current);
+    }
+  }, [
+    activeUserId, applySnapshot, dispatch, getRequestOptions, isLoadingEvents,
+    isRespondingToConfirmation, isSending, state.conversationId, state.snapshot,
+    state.status,
+  ]);
+
   const handleRespondToConfirmation = useCallback(
     async (accept: boolean) => {
       if (!state.conversationId) {
@@ -636,6 +680,8 @@ function ChatApp() {
   const selectedConversation = conversations.find(
     (conversation) => conversation.conversation_id === state.conversationId,
   );
+  const isInterrupting = interruptingConversationId !== null
+    && interruptingConversationId === state.conversationId;
 
   return (
     <div className="h-screen flex flex-col bg-white text-left">
@@ -887,12 +933,21 @@ function ChatApp() {
               || rollingBackWorkflowEventId !== null
             }
             rollingBackWorkflowEventId={rollingBackWorkflowEventId}
-            isRespondingToConfirmation={isRespondingToConfirmation}
+            isRespondingToConfirmation={isRespondingToConfirmation || isInterrupting}
             onRespondToConfirmation={handleRespondToConfirmation}
           />
 
           <MessageInput
             onSend={handleSend}
+            onInterrupt={handleInterrupt}
+            canInterrupt={
+              Boolean(state.conversationId && state.snapshot?.capabilities.cancel)
+              && (state.status === 'running' || state.status === 'waiting_for_confirmation')
+              && !isLoadingEvents
+              && !isSending
+              && !isRespondingToConfirmation
+            }
+            interrupting={isInterrupting}
             status={state.status}
             sending={isSending}
             disabled={
