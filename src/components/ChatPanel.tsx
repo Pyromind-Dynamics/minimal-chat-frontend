@@ -11,6 +11,8 @@ import {
   type ObservationEvent,
   type PendingOutboundMessage,
   type ProductPermission,
+  type PendingUserInput,
+  type RespondToUserInput,
 } from '../types';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { CondensationBlock } from './CondensationBlock';
@@ -20,6 +22,7 @@ import { PlanBlock } from './PlanBlock';
 import { SubAgentBlock } from './SubAgentBlock';
 import { ToolCallBlock } from './ToolCallBlock';
 import { WorkflowBlock } from './WorkflowBlock';
+import { UserInputCard } from './UserInputCard';
 
 interface ChatPanelProps {
   events: ChatEvent[];
@@ -33,6 +36,9 @@ interface ChatPanelProps {
   onRespondToConfirmation?: (accept: boolean) => void;
   pendingOutboundMessages?: PendingOutboundMessage[];
   pendingPermission?: ProductPermission;
+  pendingInputs?: PendingUserInput[];
+  onRespondToUserInput?: RespondToUserInput;
+  conversationId?: string | null;
 }
 
 export function ChatPanel({
@@ -47,10 +53,15 @@ export function ChatPanel({
   onRespondToConfirmation,
   pendingOutboundMessages = [],
   pendingPermission,
+  pendingInputs = [],
+  onRespondToUserInput,
+  conversationId,
 }: ChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLDivElement>(null);
   const visibleEvents = events;
   const latestPlan = getLatestPlan(visibleEvents);
+  const pendingInputIds = pendingInputs.map((input) => input.request_id).join(',');
   const textLength = events.reduce((total, event) => total + (
     event.kind === 'MessageEvent' ? event.llm_message.content.reduce((size, block) =>
       size + (block.type === 'text' ? block.text.length : 0), 0) : 0
@@ -58,12 +69,17 @@ export function ChatPanel({
 
   // Auto-scroll to bottom on new events
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [visibleEvents.length, isCondensing, pendingOutboundMessages.length, textLength]);
+    if (!pendingInputIds) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [visibleEvents.length, isCondensing, pendingOutboundMessages.length, textLength, pendingInputIds]);
+
+  useEffect(() => {
+    if (pendingInputIds) inputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [pendingInputIds]);
 
   if (
     visibleEvents.length === 0
     && pendingOutboundMessages.length === 0
+    && pendingInputs.length === 0
     && !isCondensing
     && !pendingPermission
   ) {
@@ -219,6 +235,13 @@ export function ChatPanel({
           isSubmitting={isRespondingToConfirmation}
           onRespond={onRespondToConfirmation}
         />
+      )}
+      {onRespondToUserInput && pendingInputs.length > 0 && (
+        <div ref={inputRef} className="mx-auto w-full max-w-3xl">
+          {pendingInputs.map((request) => (
+            <UserInputCard key={`${conversationId}:${request.request_id}`} request={request} onRespond={onRespondToUserInput} />
+          ))}
+        </div>
       )}
       <div ref={bottomRef} />
     </div>

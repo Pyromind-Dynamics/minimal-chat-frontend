@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   getObservationDisplayText,
   getToolErrorPresentation,
+  getUserInputInterruption,
 } from '../src/toolErrorPresentation.ts';
 
 test('structured tool errors display the specific output, code, and suggestion', () => {
@@ -52,4 +53,22 @@ test('successful observations retain their text', () => {
     is_error: false,
     to_llm_content: [{ type: 'text', text: 'workflow valid' }],
   }), 'workflow valid');
+});
+
+test('confirmed user-input resolutions display cancellation or interruption', () => {
+  assert.deepEqual(getUserInputInterruption('ask_user', {
+    is_error: true, user_input: { status: 'cancelled' },
+  }), { label: '已取消', message: '用户已取消本次提问。' });
+  assert.deepEqual(getUserInputInterruption('ask_user', {
+    is_error: true, user_input: { status: 'interrupted' },
+  }), { label: '已中断', message: '本次提问已中断，可发送新消息继续。' });
+});
+
+test('abort text alone and other tool failures are not treated as cancelled input', () => {
+  assert.equal(getUserInputInterruption('ask_user', {
+    is_error: true, to_llm_content: [{ type: 'text', text: 'This operation was aborted' }],
+  }), null);
+  assert.equal(getUserInputInterruption('terminal', {
+    is_error: true, user_input: { status: 'cancelled' },
+  }), null);
 });

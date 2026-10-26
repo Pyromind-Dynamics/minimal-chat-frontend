@@ -1,4 +1,5 @@
 import { getDebugAuthHeaders } from './authToken';
+import { formatApiError } from './apiError';
 import { BACKEND_URL, SESSION_API_KEY, LLM_MODEL, LLM_API_KEY, LLM_BASE_URL } from './config';
 import { applyRequestCookies, normalizeRequestValue, type RequestOverrides } from './requestOverrides';
 import type {
@@ -10,6 +11,7 @@ import type {
   EventPage,
   ProductEvent,
   PyromindForkAtEventResult,
+  UserInputAnswer,
 } from './types';
 
 interface RequestOptions extends RequestOverrides {
@@ -43,6 +45,7 @@ export function productEventsUrl(
 export async function createProductConversation(
   initialMessage?: string,
   options?: RequestOptions,
+  userInputEnabled = false,
 ): Promise<ConversationSnapshot> {
   return productRequest<ConversationSnapshot>(
     PRODUCT_API,
@@ -55,6 +58,7 @@ export async function createProductConversation(
           base_url: LLM_BASE_URL || undefined,
         },
         message: initialMessage || undefined,
+        user_input_enabled: userInputEnabled,
         extra: {},
       }),
     },
@@ -105,6 +109,23 @@ export async function cancelProductConversation(
     { command_id: crypto.randomUUID(), type: 'cancel' },
     options,
   );
+}
+
+export async function respondToProductInput(
+  conversationId: string,
+  requestId: string,
+  status: 'answered' | 'cancelled',
+  answers: UserInputAnswer[],
+  options: RequestOptions,
+  commandId: string,
+): Promise<CommandReceipt> {
+  return submitProductCommand(conversationId, {
+    command_id: commandId,
+    type: 'input_response',
+    request_id: requestId,
+    status,
+    answers,
+  }, options);
 }
 
 export async function respondToProductPermission(
@@ -177,7 +198,7 @@ async function productRequest<T>(
   });
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(`Request failed: ${response.status} ${detail}`);
+    throw new Error(formatApiError(response.status, detail));
   }
   return response.json() as Promise<T>;
 }

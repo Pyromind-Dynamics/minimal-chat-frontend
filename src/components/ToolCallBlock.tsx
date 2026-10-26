@@ -7,6 +7,7 @@ import { SampleRecordsBlock } from './SampleRecordsBlock';
 import {
   getObservationDisplayText,
   getToolErrorPresentation,
+  getUserInputInterruption,
 } from '../toolErrorPresentation';
 
 interface ToolCallBlockProps {
@@ -43,15 +44,16 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
 
   // Extract human-readable summary
   const summary = getSummary(toolName, args);
-  const isError = Boolean(observation?.observation.is_error);
+  const interruption = getUserInputInterruption(toolName, observation?.observation);
+  const isError = !interruption && Boolean(observation?.observation.is_error);
   const error = isError && observation
     ? getToolErrorPresentation(observation.observation)
     : null;
 
   // Get observation text
-  const obsText = observation
+  const obsText = interruption?.message ?? (observation
     ? getObservationDisplayText(observation.observation)
-    : null;
+    : null);
   const obsImages = observation
     ? getObservationContent(observation).filter((item) => item.type !== 'text')
     : [];
@@ -67,7 +69,7 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
     : null;
 
   return (
-    <div className={`mb-3 ml-2 border-l-2 pl-3 ${isError ? 'border-red-400' : 'border-amber-300'}`}>
+    <div className={`mb-3 ml-2 border-l-2 pl-3 ${interruption ? 'border-gray-300' : isError ? 'border-red-400' : 'border-amber-300'}`}>
       {thought && (
         <p className="mb-2 whitespace-pre-wrap text-xs leading-5 text-purple-700">
           {thought}
@@ -78,14 +80,12 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
         onClick={() => setIsExpanded(!isExpanded)}
         className="flex items-center gap-2 text-xs text-gray-600 hover:text-gray-900 cursor-pointer"
       >
-        <span className={`font-mono px-1.5 py-0.5 rounded ${isError ? 'bg-red-50 text-red-800' : 'bg-amber-50 text-amber-800'}`}>
+        <span className={`font-mono px-1.5 py-0.5 rounded ${interruption ? 'bg-gray-100 text-gray-600' : isError ? 'bg-red-50 text-red-800' : 'bg-amber-50 text-amber-800'}`}>
           {toolName}
         </span>
-        {cancelled && <span className="text-gray-500">已取消</span>}
-        {running && <span className="text-blue-600">执行中</span>}
-        {isError && (
-          <span className="rounded bg-red-50 px-1.5 py-0.5 font-medium text-red-700">
-            失败
+        {(interruption || cancelled || running || isError) && (
+          <span className={`rounded px-1.5 py-0.5 font-medium ${interruption || cancelled ? 'bg-gray-100 text-gray-600' : isError ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'}`}>
+            {interruption?.label ?? (cancelled ? '已取消' : running ? '执行中' : '失败')}
           </span>
         )}
         <span className="text-gray-500">{summary}</span>
@@ -102,7 +102,7 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
           </pre>
           {command && <pre className="text-xs whitespace-pre-wrap break-all">{command}</pre>}
           {obsText && (
-            <pre className={`text-xs rounded p-2 overflow-x-auto border whitespace-pre-wrap ${isError ? 'bg-red-50 text-red-800 border-red-200' : 'bg-green-50 text-green-800 border-green-200'}`}>
+            <pre className={`text-xs rounded p-2 overflow-x-auto border whitespace-pre-wrap ${interruption ? 'bg-gray-50 text-gray-600 border-gray-200' : isError ? 'bg-red-50 text-red-800 border-red-200' : 'bg-green-50 text-green-800 border-green-200'}`}>
               {obsText}
             </pre>
           )}
@@ -119,7 +119,7 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
       )}
 
       {!isExpanded && obsText && (
-        <p className={`text-xs mt-1 truncate max-w-md ${isError ? 'text-red-700' : 'text-green-700'}`}>
+        <p className={`text-xs mt-1 truncate max-w-md ${interruption ? 'text-gray-600' : isError ? 'text-red-700' : 'text-green-700'}`}>
           {obsText.split('\n')[0]}
         </p>
       )}

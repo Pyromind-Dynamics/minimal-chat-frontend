@@ -36,6 +36,7 @@ export function StatusBar({
     running: 'Running...',
     paused: 'Paused',
     waiting_for_confirmation: 'Waiting for confirmation',
+    waiting_for_input: '等待你的回答',
     finished: 'Finished',
     error: 'Error',
     stuck: 'Stuck',
@@ -55,7 +56,9 @@ export function StatusBar({
             {conversationId.slice(0, 8)}
           </span>
         )}
-        <span className={`font-medium ${status === 'running' ? 'text-blue-600' : ''}`}>
+        <span className={`font-medium ${status === 'waiting_for_input'
+          ? 'rounded-full bg-indigo-50 px-2.5 py-1 text-indigo-700'
+          : status === 'running' ? 'text-blue-600' : ''}`}>
           {statusLabel}
         </span>
       </div>

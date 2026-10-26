@@ -53,6 +53,7 @@ export interface BaseObservation {
   node?: string | null;
   command?: string | null;
   verdict?: string | null;
+  user_input?: { status: string; request_id?: string };
   kind?: string;
   content?: ContentItem[];
   is_error?: boolean;
@@ -204,6 +205,7 @@ export type ExecutionStatus =
   | 'running'
   | 'paused'
   | 'waiting_for_confirmation'
+  | 'waiting_for_input'
   | 'finished'
   | 'error'
   | 'stuck'
@@ -211,6 +213,7 @@ export type ExecutionStatus =
   | 'closed';
 
 export interface HarnessCapabilities {
+  user_input_reply?: boolean;
   resume: boolean;
   cancel: boolean;
   permission_reply: boolean;
@@ -325,6 +328,29 @@ export interface ProductUsage {
   cost_usd?: number | null;
 }
 
+export interface UserInputQuestion {
+  id: string;
+  prompt: string;
+  options: { id: string; label: string; description?: string | null }[];
+}
+
+export interface PendingUserInput {
+  request_id: string;
+  run_id?: string | null;
+  questions: UserInputQuestion[];
+}
+
+export type UserInputAnswer =
+  | { question_id: string; option_id: string; text?: never }
+  | { question_id: string; text: string; option_id?: never };
+
+export type RespondToUserInput = (
+  requestId: string,
+  status: 'answered' | 'cancelled',
+  answers: UserInputAnswer[],
+  commandId: string,
+) => Promise<void>;
+
 export interface ConversationSnapshot {
   schema_version: number;
   conversation_id: string;
@@ -336,6 +362,8 @@ export interface ConversationSnapshot {
   current_workflow?: ProductWorkflowState | null;
   plan?: ProductPlanState | null;
   pending_permissions: ProductPermission[];
+  pending_inputs?: PendingUserInput[];
+  automatic_turns_suspended?: boolean;
   compaction_status?: 'started' | 'completed' | 'skipped' | 'failed' | null;
   usage: ProductUsage;
 }

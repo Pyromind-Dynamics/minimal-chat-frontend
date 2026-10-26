@@ -14,6 +14,18 @@ export interface ToolErrorPresentation {
   suggestion: string | null;
 }
 
+export function getUserInputInterruption(
+  toolName: string,
+  observation?: BaseObservation,
+): { label: string; message: string } | null {
+  if (toolName !== 'ask_user') return null;
+  switch (observation?.user_input?.status) {
+    case 'cancelled': return { label: '已取消', message: '用户已取消本次提问。' };
+    case 'interrupted': return { label: '已中断', message: '本次提问已中断，可发送新消息继续。' };
+    default: return null;
+  }
+}
+
 export function getToolErrorPresentation(
   observation: BaseObservation,
 ): ToolErrorPresentation {

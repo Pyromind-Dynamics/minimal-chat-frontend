@@ -34,7 +34,8 @@ export function snapshotToChatEvents(
     if (item.kind === 'operation') {
       if (hidden.has(item.item_id)) continue;
       events.push({ ...toAction(item), related_operations: related.get(item.item_id) });
-      events.push(toObservation(item));
+      const observation = toObservation(item);
+      events.push(observation);
       continue;
     }
     if (item.kind === 'workflow') {

@@ -32,7 +32,16 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      '/api': 'http://localhost:8000',
+      '/api': {
+        target: 'http://localhost:8000',
+        configure(proxy) {
+          proxy.on('proxyRes', (upstream, _req, res) => {
+            if (upstream.headers['content-type']?.includes('text/event-stream')) {
+              upstream.on('aborted', () => res.destroy())
+            }
+          })
+        },
+      },
       '/sockets': {
         target: 'ws://localhost:8000',
         ws: true,

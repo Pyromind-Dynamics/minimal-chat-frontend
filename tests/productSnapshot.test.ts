@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { snapshotToChatEvents } from '../src/productSnapshot.ts';
+import { getUserInputInterruption } from '../src/toolErrorPresentation.ts';
 import type { ConversationSnapshot, ObservationEvent } from '../src/types.ts';
 
 test('failed operations copy their top-level error code into the observation', () => {
@@ -67,4 +68,18 @@ test('running operations retain progress in place across refreshed snapshots', (
   assert.equal(next.id, first.id);
   assert.equal(next.observation.node, 'report');
   assert.equal(next.observation.command, null);
+});
+
+test('resolved input is displayed even when the runner never reported tool completion', () => {
+  for (const status of ['cancelled', 'interrupted']) {
+    const snapshot = { timeline: [{
+      kind: 'operation', item_id: 'ask-1', name: 'ask_user', status: 'running',
+      thought: [], arguments: {}, output: [], details: { user_input: { status } },
+    }] } as ConversationSnapshot;
+    const events = snapshotToChatEvents(snapshot);
+    assert.equal(events.length, 2);
+    const observation = events[1] as ObservationEvent;
+    assert.equal(getUserInputInterruption('ask_user', observation.observation)?.label,
+      status === 'cancelled' ? '已取消' : '已中断');
+  }
 });

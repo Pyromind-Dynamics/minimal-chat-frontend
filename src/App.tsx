@@ -15,6 +15,7 @@ import {
   listProductConversations,
   requestDebugUrl,
   respondToProductPermission,
+  respondToProductInput,
   sendProductMessage,
   type DebugUrlResult,
   type RequestOptions,
@@ -27,11 +28,14 @@ import {
   type ConversationSnapshot,
   type GuidanceStatus,
   type ProductEvent,
+  type RespondToUserInput,
 } from './types';
 
 const DEFAULT_USER_IDS = ['42', '7', '1001'];
 const USER_IDS_STORAGE_KEY = 'minimal-chat.debugUserIds';
+const ACTIVE_USER_STORAGE_KEY = 'minimal-chat.activeUserId';
 const REQUEST_OVERRIDES_STORAGE_KEY = 'minimal-chat.requestOverrides';
+const SELECTED_CONVERSATION_KEY = 'minimal-chat.selectedConversation.';
 
 interface RequestOverrideFields {
   cookie: string;
@@ -95,7 +99,10 @@ function conversationTitle(conversation: ConversationSnapshot): string {
 function ChatApp() {
   const { state, dispatch } = useChatContext();
   const [userIds, setUserIds] = useState(loadUserIds);
-  const [activeUserId, setActiveUserId] = useState(userIds[0] ?? DEFAULT_USER_IDS[0]);
+  const [activeUserId, setActiveUserId] = useState(() => {
+    const saved = localStorage.getItem(ACTIVE_USER_STORAGE_KEY);
+    return saved && userIds.includes(saved) ? saved : userIds[0] ?? DEFAULT_USER_IDS[0];
+  });
   const [draftUserId, setDraftUserId] = useState('');
   const [requestOverrides, setRequestOverrides] = useState(loadRequestOverrides);
   const [draftRequestOverrides, setDraftRequestOverrides] = useState(loadRequestOverrides);
@@ -103,6 +110,7 @@ function ChatApp() {
   const [isSending, setIsSending] = useState(false);
   const [interruptingConversationId, setInterruptingConversationId] = useState<string | null>(null);
   const interruptRequestsRef = useRef(new Set<string>());
+  const hasPendingInput = (state.snapshot?.pending_inputs?.length ?? 0) > 0;
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
   const [pendingInitialCommand, setPendingInitialCommand] =
     useState<PendingInitialCommand | null>(null);
@@ -137,6 +145,10 @@ function ChatApp() {
   useEffect(() => {
     localStorage.setItem(USER_IDS_STORAGE_KEY, JSON.stringify(userIds));
   }, [userIds]);
+
+  useEffect(() => {
+    localStorage.setItem(ACTIVE_USER_STORAGE_KEY, activeUserId);
+  }, [activeUserId]);
 
   useEffect(() => {
     localStorage.setItem(REQUEST_OVERRIDES_STORAGE_KEY, JSON.stringify(requestOverrides));
@@ -302,6 +314,7 @@ function ChatApp() {
           return;
         }
         applySnapshot(snapshot, true);
+        localStorage.setItem(SELECTED_CONVERSATION_KEY + userId, snapshot.conversation_id);
       } catch (err) {
         if (openConversationRequestRef.current !== requestId) {
           return;
@@ -328,10 +341,11 @@ function ChatApp() {
         );
         setConversations(items);
 
+        const preferred = preferredConversationId || localStorage.getItem(SELECTED_CONVERSATION_KEY + userId);
         const selected =
-          (preferredConversationId
+          (preferred
             ? items.find(
-                (item) => item.conversation_id === preferredConversationId,
+                (item) => item.conversation_id === preferred,
               )
             : undefined) ?? items[0];
         if (selected) {
@@ -414,6 +428,7 @@ function ChatApp() {
 
   const handleSend = useCallback(
     async (text: string) => {
+      if (hasPendingInput) return;
       const isGuidance = state.status === 'running';
       if (isGuidance) {
         setGuidanceStatus('waiting');
@@ -429,8 +444,9 @@ function ChatApp() {
         const requestOptions = getRequestOptions(activeUserId);
         if (!state.conversationId) {
           setIsCreatingConversation(true);
-          const snapshot = await createProductConversation(undefined, requestOptions);
+          const snapshot = await createProductConversation(undefined, requestOptions, true);
           applySnapshot(snapshot, true);
+          localStorage.setItem(SELECTED_CONVERSATION_KEY + activeUserId, snapshot.conversation_id);
           setPendingInitialCommand({
             conversationId: snapshot.conversation_id,
             commandId,
@@ -473,6 +489,7 @@ function ChatApp() {
       getRequestOptions,
       state.conversationId,
       state.status,
+      hasPendingInput,
     ],
   );
 
@@ -516,6 +533,22 @@ function ChatApp() {
     isRespondingToConfirmation, isSending, state.conversationId, state.snapshot,
     state.status,
   ]);
+
+  const handleRespondToUserInput = useCallback<RespondToUserInput>(
+    async (requestId, status, answers, commandId) => {
+      const conversationId = state.conversationId;
+      if (!conversationId) throw new Error('未选择会话');
+      const options = getRequestOptions(activeUserId);
+      try {
+        const receipt = await respondToProductInput(conversationId, requestId, status, answers, options, commandId);
+        if (receipt.status === 'failed') throw new Error(JSON.stringify(receipt.response));
+      } finally {
+        const snapshot = await getProductSnapshot(conversationId, options);
+        if (conversationIdRef.current === conversationId) applySnapshot(snapshot, false);
+      }
+    },
+    [state.conversationId, activeUserId, getRequestOptions, applySnapshot],
+  );
 
   const handleRespondToConfirmation = useCallback(
     async (accept: boolean) => {
@@ -922,6 +955,9 @@ function ChatApp() {
             events={state.events}
             pendingPermission={state.snapshot?.pending_permissions[0]}
             pendingOutboundMessages={state.pendingOutboundMessages}
+            conversationId={state.conversationId}
+            pendingInputs={state.snapshot?.pending_inputs}
+            onRespondToUserInput={handleRespondToUserInput}
             status={state.status}
             isCondensing={state.isCondensing}
             requestOptions={getRequestOptions()}
@@ -929,6 +965,7 @@ function ChatApp() {
             rollbackWorkflowDisabled={
               isSending
               || isLoadingEvents
+              || hasPendingInput
               || state.status === 'running'
               || rollingBackWorkflowEventId !== null
             }
@@ -937,6 +974,11 @@ function ChatApp() {
             onRespondToConfirmation={handleRespondToConfirmation}
           />
 
+          {hasPendingInput ? (
+            <p className="border-t border-indigo-100 bg-indigo-50/70 px-4 py-2.5 text-xs leading-5 text-indigo-700">请在上方卡片完成回答，或取消提问后继续聊天。</p>
+          ) : state.snapshot?.automatic_turns_suspended && (
+            <p className="border-t bg-amber-50 px-4 py-2 text-xs text-amber-800">自动执行已暂停。发送一条新消息后继续。</p>
+          )}
           <MessageInput
             onSend={handleSend}
             onInterrupt={handleInterrupt}
@@ -952,6 +994,7 @@ function ChatApp() {
             sending={isSending}
             disabled={
               isLoadingEvents
+              || hasPendingInput
               || isRespondingToConfirmation
               || state.status === 'deleting'
               || state.status === 'waiting_for_confirmation'
