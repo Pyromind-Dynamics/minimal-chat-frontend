@@ -1,5 +1,5 @@
-import Markdown from 'react-markdown';
 import type { ContentItem } from '../types';
+import { MarkdownContent } from './MarkdownContent';
 
 interface ContentListProps {
   content: ContentItem[];
@@ -39,20 +39,10 @@ export function ContentList({
         }
         if (markdown) {
           return (
-            <div key={`text-${index}`} className="space-y-2 whitespace-normal break-words">
-              <Markdown
-                skipHtml
-                components={{
-                  img: ({ node: _node, ...props }) => (
-                    <img {...props} className={imageClassName} loading="lazy" />
-                  ),
-                  pre: ({ node: _node, ...props }) => (
-                    <pre {...props} className="overflow-x-auto whitespace-pre rounded bg-gray-200 p-2" />
-                  ),
-                }}
-              >
+            <div key={`text-${index}`} className="whitespace-normal break-words">
+              <MarkdownContent imageClassName={imageClassName}>
                 {item.text}
-              </Markdown>
+              </MarkdownContent>
             </div>
           );
         }
