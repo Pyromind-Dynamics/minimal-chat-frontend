@@ -27,9 +27,9 @@ export function useProductEventStream({
   conversationId,
   afterSeq,
   requestOptions,
+  eventsUrl = productEventsUrl,
   onEvent,
   onGap,
-  eventsUrl = productEventsUrl,
   refreshOnConnect = false,
 }: ProductEventStreamOptions): ConnectionState {
   const [connectionState, setConnectionState] =

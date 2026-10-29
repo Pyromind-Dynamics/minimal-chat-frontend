@@ -7,33 +7,47 @@ import {
   useState,
 } from 'react';
 import {
+  cancelEchoMindConversation,
   createEchoMindConversation,
   createProject,
+  echoMindProductEventsUrl,
   getEchoMindConversation,
+  getEchoMindProjectArtifact,
   getEchoMindProject,
   getEchoMindProjectRequest,
-  interruptConversation,
   listEchoMindConversations,
-  listEchoMindMessages,
+  listEchoMindProjectRuns,
+  respondToEchoMindInput,
+  respondToEchoMindPermission,
   runEchoMindProjectNode,
   sendEchoMindMessage,
+  startEchoMindProjectNode,
   type RequestOptions,
 } from './api';
 import type {
-  EchoMindConversationSummary,
+  ProjectArtifactDocument,
   ProjectEdge,
   ProjectInfo,
+  ProjectLifecycle,
   ProjectNode,
-  ProjectNodeExecutionResult,
   ProjectRequest,
+  StageRun,
+  StageRunStatus,
 } from './echomindContract';
+import type {
+  ConversationSnapshot,
+  ProductEvent,
+  RespondToUserInput,
+} from './types';
 import { useChatContext } from './ChatContext';
 import { ChatPanel } from './components/ChatPanel';
 import { MessageInput } from './components/MessageInput';
 import { StatusBar } from './components/StatusBar';
-import { formatConversationUpdatedAt } from './conversationList';
-import { useConversationSocket } from './hooks/useConversationSocket';
-import type { ExecutionStatus } from './types';
+import {
+  formatConversationUpdatedAt,
+  sortConversations,
+} from './conversationList';
+import { useProductEventStream } from './hooks/useProductEventStream';
 
 const ACTIVE_USER_STORAGE_KEY = 'minimal-chat.activeUserId';
 const REQUEST_OVERRIDES_STORAGE_KEY = 'minimal-chat.requestOverrides';
@@ -98,8 +112,33 @@ function clearActiveConversation(userId: string): void {
   localStorage.setItem(forceNewSessionStorageKey(userId), '1');
 }
 
+interface PendingInitialCommand {
+  conversationId: string;
+  commandId: string;
+  text: string;
+  requestOptions: RequestOptions;
+}
+
+interface LatestSnapshot {
+  conversationId: string;
+  throughSeq: number;
+}
+
+function conversationTitle(conversation: ConversationSnapshot): string {
+  const firstMessage = conversation.timeline.find(
+    (item) => item.kind === 'message' && item.role === 'user',
+  );
+  if (firstMessage?.kind === 'message') {
+    const text = firstMessage.content.find((item) => item.type === 'text');
+    if (text?.type === 'text' && text.text.trim()) {
+      return text.text.trim().slice(0, 40);
+    }
+  }
+  return conversation.conversation_id.slice(0, 8);
+}
+
 export function LegacyEchoMindChat() {
-  const { state, dispatch, handleEvent } = useChatContext();
+  const { state, dispatch } = useChatContext();
   const [userId] = useState(loadUserId);
   const [requestOverrides, setRequestOverrides] = useState(loadRequestOverrides);
   const [draftRequestOverrides, setDraftRequestOverrides] =
@@ -108,22 +147,31 @@ export function LegacyEchoMindChat() {
     null,
   );
   const [project, setProject] = useState<ProjectInfo | null>(null);
-  const [conversations, setConversations] = useState<
-    EchoMindConversationSummary[]
-  >([]);
+  const [conversations, setConversations] = useState<ConversationSnapshot[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isInterrupting, setIsInterrupting] = useState(false);
+  const [isRespondingToConfirmation, setIsRespondingToConfirmation] =
+    useState(false);
   const [isLoadingRequest, setIsLoadingRequest] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [isRestoringConversation, setIsRestoringConversation] = useState(false);
   const [isLoadingConversationList, setIsLoadingConversationList] =
     useState(false);
   const [hasConnected, setHasConnected] = useState(false);
+  const [streamAfterSeq, setStreamAfterSeq] = useState(0);
+  const [pendingInitialCommand, setPendingInitialCommand] =
+    useState<PendingInitialCommand | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const previousStatus = useRef(state.status);
   const restoreStartedRef = useRef(false);
   const restoreGenerationRef = useRef(0);
+  const conversationIdRef = useRef<string | null>(null);
+  const latestSnapshotRef = useRef<LatestSnapshot | null>(null);
+  const snapshotRefreshTimerRef = useRef<number | null>(null);
+  const deltaBufferRef = useRef<ProductEvent[]>([]);
+  const deltaFrameRef = useRef<number | null>(null);
+  conversationIdRef.current = state.conversationId;
 
   const requestOptions = useMemo<RequestOptions>(
     () => ({
@@ -133,17 +181,7 @@ export function LegacyEchoMindChat() {
     }),
     [requestOverrides.cookie, requestOverrides.xCluster, userId],
   );
-  const { wsState } = useConversationSocket({
-    conversationId: state.conversationId,
-    userId,
-    cookie: requestOverrides.cookie,
-    xCluster: requestOverrides.xCluster,
-    onEvent: handleEvent,
-  });
-
-  useEffect(() => {
-    setHasConnected(false);
-  }, [state.conversationId]);
+  const hasPendingInput = (state.snapshot?.pending_inputs?.length ?? 0) > 0;
 
   useEffect(() => {
     localStorage.setItem(
@@ -151,6 +189,125 @@ export function LegacyEchoMindChat() {
       JSON.stringify(requestOverrides),
     );
   }, [requestOverrides]);
+
+  useEffect(
+    () => () => {
+      if (snapshotRefreshTimerRef.current !== null) {
+        window.clearTimeout(snapshotRefreshTimerRef.current);
+      }
+      if (deltaFrameRef.current !== null) {
+        window.cancelAnimationFrame(deltaFrameRef.current);
+      }
+    },
+    [],
+  );
+
+  const applySnapshot = useCallback(
+    (snapshot: ConversationSnapshot, resetStream: boolean) => {
+      const latest = latestSnapshotRef.current;
+      if (
+        latest?.conversationId === snapshot.conversation_id
+        && latest.throughSeq > snapshot.through_seq
+      ) {
+        return;
+      }
+      latestSnapshotRef.current = {
+        conversationId: snapshot.conversation_id,
+        throughSeq: snapshot.through_seq,
+      };
+      dispatch({ type: 'SET_PRODUCT_SNAPSHOT', snapshot });
+      if (resetStream) setStreamAfterSeq(snapshot.through_seq);
+      setConversations((current) =>
+        sortConversations([
+          snapshot,
+          ...current.filter(
+            (item) => item.conversation_id !== snapshot.conversation_id,
+          ),
+        ]),
+      );
+    },
+    [dispatch],
+  );
+
+  const refreshCurrentSnapshot = useCallback(async (): Promise<number> => {
+    const conversationId = conversationIdRef.current;
+    if (!conversationId) return 0;
+    const snapshot = await getEchoMindConversation(
+      conversationId,
+      requestOptions,
+    );
+    if (!snapshot) {
+      throw new Error('EchoMind conversation not found.');
+    }
+    if (conversationIdRef.current !== conversationId) return 0;
+    applySnapshot(snapshot, false);
+    return snapshot.through_seq;
+  }, [applySnapshot, requestOptions]);
+
+  const flushStreamingDeltas = useCallback(() => {
+    if (deltaFrameRef.current !== null) {
+      window.cancelAnimationFrame(deltaFrameRef.current);
+      deltaFrameRef.current = null;
+    }
+    const deltas = deltaBufferRef.current;
+    deltaBufferRef.current = [];
+    if (deltas.length > 0) {
+      dispatch({ type: 'APPLY_MESSAGE_EVENTS', events: deltas });
+    }
+  }, [dispatch]);
+
+  const handleProductEvent = useCallback(
+    (event: ProductEvent) => {
+      if (event.type === 'message.delta') {
+        deltaBufferRef.current.push(event);
+        if (deltaFrameRef.current === null) {
+          deltaFrameRef.current =
+            window.requestAnimationFrame(flushStreamingDeltas);
+        }
+        return;
+      }
+      if (event.type === 'message.started' || event.type === 'message.completed') {
+        flushStreamingDeltas();
+        dispatch({ type: 'APPLY_MESSAGE_EVENTS', events: [event] });
+        if (event.type === 'message.started') return;
+      }
+      if (snapshotRefreshTimerRef.current !== null) {
+        window.clearTimeout(snapshotRefreshTimerRef.current);
+      }
+      snapshotRefreshTimerRef.current = window.setTimeout(() => {
+        snapshotRefreshTimerRef.current = null;
+        void refreshCurrentSnapshot().catch((error) => {
+          dispatch({
+            type: 'SET_ERROR',
+            error: error instanceof Error ? error.message : 'Unknown error',
+          });
+        });
+      }, 0);
+    },
+    [dispatch, flushStreamingDeltas, refreshCurrentSnapshot],
+  );
+
+  const handleStreamGap = useCallback(async (): Promise<number> => {
+    flushStreamingDeltas();
+    return refreshCurrentSnapshot();
+  }, [flushStreamingDeltas, refreshCurrentSnapshot]);
+
+  const wsState = useProductEventStream({
+    conversationId: state.conversationId,
+    afterSeq: streamAfterSeq,
+    requestOptions,
+    eventsUrl: echoMindProductEventsUrl,
+    onEvent: handleProductEvent,
+    onGap: handleStreamGap,
+  });
+
+  useEffect(() => {
+    setHasConnected(false);
+  }, [state.conversationId]);
+
+  useEffect(() => {
+    if (wsState === 'open') setHasConnected(true);
+  }, [wsState]);
 
   const openConversation = useCallback(
     async (conversationId: string): Promise<boolean> => {
@@ -162,51 +319,58 @@ export function LegacyEchoMindChat() {
       setProject(null);
 
       try {
-        const restoredConversation = await getEchoMindConversation(
+        const snapshot = await getEchoMindConversation(
           conversationId,
           requestOptions,
         );
         if (generation !== restoreGenerationRef.current) return false;
-        if (!restoredConversation) {
+        if (!snapshot) {
           localStorage.removeItem(activeConversationStorageKey(userId));
           return false;
         }
 
         saveActiveConversation(userId, conversationId);
-        dispatch({
-          type: 'SET_CONVERSATION_ID',
-          id: restoredConversation.conversationId,
-        });
-        dispatch({
-          type: 'SET_STATUS',
-          status: restoredConversation.conversation
-            .execution_status as ExecutionStatus,
-        });
+        if (state.conversationId !== conversationId) {
+          dispatch({ type: 'SET_CONVERSATION_ID', id: conversationId });
+        }
+        applySnapshot(snapshot, true);
 
-        const [events, request] = await Promise.all([
-          listEchoMindMessages(conversationId, requestOptions),
-          getEchoMindProjectRequest(conversationId, requestOptions),
-        ]);
-        if (generation !== restoreGenerationRef.current) return false;
-        dispatch({ type: 'SET_EVENTS', events });
-        setProjectRequest(request);
+        void getEchoMindProjectRequest(conversationId, requestOptions)
+          .then((request) => {
+            if (generation === restoreGenerationRef.current) {
+              setProjectRequest(request);
+            }
+          })
+          .catch((error) => {
+            if (generation === restoreGenerationRef.current) {
+              setLocalError(
+                error instanceof Error ? error.message : 'Unknown error',
+              );
+            }
+          });
 
         const projectId = localStorage.getItem(
           activeProjectStorageKey(userId, conversationId),
         );
         if (projectId) {
-          const restoredProject = await getEchoMindProject(
-            projectId,
-            requestOptions,
-          );
-          if (generation !== restoreGenerationRef.current) return false;
-          if (restoredProject) {
-            setProject(restoredProject);
-          } else {
-            localStorage.removeItem(
-              activeProjectStorageKey(userId, conversationId),
-            );
-          }
+          void getEchoMindProject(projectId, requestOptions)
+            .then((restoredProject) => {
+              if (generation !== restoreGenerationRef.current) return;
+              if (restoredProject) {
+                setProject(restoredProject);
+              } else {
+                localStorage.removeItem(
+                  activeProjectStorageKey(userId, conversationId),
+                );
+              }
+            })
+            .catch((error) => {
+              if (generation === restoreGenerationRef.current) {
+                setLocalError(
+                  error instanceof Error ? error.message : 'Unknown error',
+                );
+              }
+            });
         }
         return true;
       } catch (error) {
@@ -219,14 +383,15 @@ export function LegacyEchoMindChat() {
         }
       }
     },
-    [dispatch, requestOptions, userId],
+    [applySnapshot, dispatch, requestOptions, state.conversationId, userId],
   );
 
   const refreshConversationList = useCallback(async () => {
     setIsLoadingConversationList(true);
     try {
-      const items = await listEchoMindConversations(requestOptions);
-      setConversations(items);
+      setConversations(
+        sortConversations(await listEchoMindConversations(requestOptions)),
+      );
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : 'Unknown error');
     } finally {
@@ -241,7 +406,9 @@ export function LegacyEchoMindChat() {
 
     void (async () => {
       try {
-        const items = await listEchoMindConversations(requestOptions);
+        const items = sortConversations(
+          await listEchoMindConversations(requestOptions),
+        );
         setConversations(items);
         if (localStorage.getItem(forceNewSessionStorageKey(userId))) return;
 
@@ -251,12 +418,12 @@ export function LegacyEchoMindChat() {
         const preferred = savedConversationId
           ? items.find(
               (conversation) =>
-                conversation.conversationId === savedConversationId,
+                conversation.conversation_id === savedConversationId,
             )
           : undefined;
         const selected = preferred ?? items[0];
         if (selected) {
-          await openConversation(selected.conversationId);
+          await openConversation(selected.conversation_id);
         } else if (savedConversationId) {
           localStorage.removeItem(activeConversationStorageKey(userId));
         }
@@ -269,62 +436,169 @@ export function LegacyEchoMindChat() {
   }, [openConversation, requestOptions, userId]);
 
   useEffect(() => {
-    if (wsState === 'open') setHasConnected(true);
-  }, [wsState]);
+    if (
+      wsState !== 'open'
+      || !pendingInitialCommand
+      || state.conversationId !== pendingInitialCommand.conversationId
+    ) {
+      return;
+    }
+    const command = pendingInitialCommand;
+    setPendingInitialCommand(null);
+    void sendEchoMindMessage(
+      command.conversationId,
+      command.text,
+      command.requestOptions,
+      command.commandId,
+    ).then((receipt) => {
+      if (receipt.status === 'failed') {
+        throw new Error(JSON.stringify(receipt.response));
+      }
+    }).catch((error) => {
+      dispatch({
+        type: 'MARK_PENDING_OUTBOUND_FAILED',
+        commandId: command.commandId,
+      });
+      setLocalError(error instanceof Error ? error.message : 'Unknown error');
+    }).finally(() => {
+      setIsSending(false);
+      void refreshConversationList();
+    });
+  }, [
+    dispatch,
+    pendingInitialCommand,
+    refreshConversationList,
+    state.conversationId,
+    wsState,
+  ]);
 
   const handleSend = async (text: string) => {
-    if (isSending || isCreating) return;
+    if (isSending || isCreating || hasPendingInput) return;
+    const commandId = crypto.randomUUID();
+    dispatch({
+      type: 'ADD_PENDING_OUTBOUND',
+      message: { commandId, text, status: 'pending' },
+    });
     setLocalError(null);
     setIsSending(true);
+    let deferredUntilStreamOpens = false;
     try {
       if (!state.conversationId) {
         setIsCreating(true);
         const created = await createEchoMindConversation({
-          initialMessage: text,
           options: requestOptions,
         });
-        saveActiveConversation(userId, created.conversationId);
+        saveActiveConversation(userId, created.conversation_id);
         dispatch({
           type: 'SET_CONVERSATION_ID',
-          id: created.conversationId,
+          id: created.conversation_id,
         });
-        setConversations((current) => [
-          {
-            conversationId: created.conversationId,
-            agentProfile: 'echomind',
-            title: text.trim().slice(0, 80) || null,
-            executionStatus: created.conversation.execution_status,
-            createdAt: created.conversation.created_at,
-            updatedAt: created.conversation.updated_at,
-          },
-          ...current.filter(
-            (conversation) =>
-              conversation.conversationId !== created.conversationId,
-          ),
-        ]);
+        applySnapshot(created, true);
         setProjectRequest(null);
         setProject(null);
+        setPendingInitialCommand({
+          conversationId: created.conversation_id,
+          commandId,
+          text,
+          requestOptions,
+        });
+        deferredUntilStreamOpens = true;
       } else {
-        await sendEchoMindMessage(state.conversationId, text, requestOptions);
+        const receipt = await sendEchoMindMessage(
+          state.conversationId,
+          text,
+          requestOptions,
+          commandId,
+        );
+        if (receipt.status === 'failed') {
+          throw new Error(JSON.stringify(receipt.response));
+        }
       }
     } catch (error) {
+      dispatch({
+        type: 'MARK_PENDING_OUTBOUND_FAILED',
+        commandId,
+      });
       setLocalError(error instanceof Error ? error.message : 'Unknown error');
     } finally {
       setIsCreating(false);
-      setIsSending(false);
+      if (!deferredUntilStreamOpens) setIsSending(false);
     }
   };
 
   const handleInterrupt = async () => {
-    if (!state.conversationId || isInterrupting) return;
+    if (
+      !state.conversationId
+      || isInterrupting
+      || !state.snapshot?.capabilities.cancel
+      || !['running', 'waiting_for_confirmation', 'waiting_for_input'].includes(
+        state.status,
+      )
+    ) {
+      return;
+    }
     setIsInterrupting(true);
     setLocalError(null);
     try {
-      await interruptConversation(state.conversationId, requestOptions);
+      const receipt = await cancelEchoMindConversation(
+        state.conversationId,
+        requestOptions,
+      );
+      if (receipt.status === 'failed') {
+        throw new Error('中断失败，请重试。');
+      }
+      await refreshCurrentSnapshot();
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : 'Unknown error');
     } finally {
       setIsInterrupting(false);
+    }
+  };
+
+  const handleRespondToUserInput = useCallback<RespondToUserInput>(
+    async (requestId, status, answers, commandId) => {
+      const conversationId = state.conversationId;
+      if (!conversationId) throw new Error('未选择会话');
+      try {
+        const receipt = await respondToEchoMindInput(
+          conversationId,
+          requestId,
+          status,
+          answers,
+          requestOptions,
+          commandId,
+        );
+        if (receipt.status === 'failed') {
+          throw new Error(JSON.stringify(receipt.response));
+        }
+      } finally {
+        await refreshCurrentSnapshot();
+      }
+    },
+    [refreshCurrentSnapshot, requestOptions, state.conversationId],
+  );
+
+  const handleRespondToConfirmation = async (accept: boolean) => {
+    const conversationId = state.conversationId;
+    const permission = state.snapshot?.pending_permissions[0];
+    if (!conversationId || !permission) return;
+    setIsRespondingToConfirmation(true);
+    setLocalError(null);
+    try {
+      const receipt = await respondToEchoMindPermission(
+        conversationId,
+        permission.permission_id,
+        accept,
+        requestOptions,
+      );
+      if (receipt.status === 'failed') {
+        throw new Error(JSON.stringify(receipt.response));
+      }
+      await refreshCurrentSnapshot();
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : 'Unknown error');
+    } finally {
+      setIsRespondingToConfirmation(false);
     }
   };
 
@@ -375,6 +649,10 @@ export function LegacyEchoMindChat() {
   const handleNewConversation = () => {
     restoreGenerationRef.current += 1;
     clearActiveConversation(userId);
+    latestSnapshotRef.current = null;
+    setStreamAfterSeq(0);
+    setPendingInitialCommand(null);
+    setIsSending(false);
     dispatch({ type: 'RESET_CONVERSATION' });
     setProjectRequest(null);
     setProject(null);
@@ -407,6 +685,12 @@ export function LegacyEchoMindChat() {
               <span className="truncate font-mono text-xs text-slate-500">
                 user {userId}
               </span>
+              <a
+                href={`?chat=echomind&userId=${encodeURIComponent(userId)}`}
+                className="shrink-0 rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Manager
+              </a>
               <button
                 type="button"
                 onClick={handleNewConversation}
@@ -529,6 +813,14 @@ export function LegacyEchoMindChat() {
             requestOptions={requestOptions}
             status={state.status}
             isCondensing={state.isCondensing}
+            pendingOutboundMessages={state.pendingOutboundMessages}
+            pendingPermission={state.snapshot?.pending_permissions[0]}
+            pendingInputs={state.snapshot?.pending_inputs ?? []}
+            isRespondingToConfirmation={isRespondingToConfirmation}
+            onRespondToConfirmation={(accept) => {
+              void handleRespondToConfirmation(accept);
+            }}
+            onRespondToUserInput={handleRespondToUserInput}
           />
           <MessageInput
             onSend={(text) => {
@@ -538,7 +830,11 @@ export function LegacyEchoMindChat() {
               void handleInterrupt();
             }}
             canInterrupt={
-              Boolean(state.conversationId) && isRunning && !isInterrupting
+              Boolean(state.conversationId)
+              && Boolean(state.snapshot?.capabilities.cancel)
+              && ['running', 'waiting_for_confirmation', 'waiting_for_input']
+                .includes(state.status)
+              && !isInterrupting
             }
             interrupting={isInterrupting}
             status={state.status}
@@ -546,6 +842,7 @@ export function LegacyEchoMindChat() {
             disabled={
               isCreating
               || isRestoringConversation
+              || hasPendingInput
               || state.status === 'deleting'
             }
           />
@@ -572,7 +869,7 @@ export function LegacyEchoMindChat() {
 }
 
 interface ConversationListProps {
-  conversations: EchoMindConversationSummary[];
+  conversations: ConversationSnapshot[];
   activeConversationId: string | null;
   isLoading: boolean;
   disabled: boolean;
@@ -627,15 +924,16 @@ function ConversationList({
         </p>
       )}
       {conversations.map((conversation) => {
+        const conversationId = conversation.conversation_id;
         const isActive =
-          conversation.conversationId === activeConversationId;
+          conversationId === activeConversationId;
         return (
           <button
-            key={conversation.conversationId}
+            key={conversationId}
             type="button"
             aria-current={isActive ? 'page' : undefined}
-            title={conversation.conversationId}
-            onClick={() => onOpen(conversation.conversationId)}
+            title={conversationId}
+            onClick={() => onOpen(conversationId)}
             disabled={disabled || isActive}
             className={`block w-full border-b border-slate-200 px-3 py-3 text-left disabled:cursor-default ${
               isActive ? 'bg-white' : 'hover:bg-white disabled:hover:bg-slate-50'
@@ -643,23 +941,22 @@ function ConversationList({
           >
             <div className="flex items-start justify-between gap-2">
               <span className="min-w-0 truncate text-sm font-medium text-slate-900">
-                {conversation.title?.trim()
-                  || conversation.conversationId.slice(0, 8)}
+                {conversationTitle(conversation)}
               </span>
               <span className="shrink-0 text-[10px] uppercase text-slate-400">
-                {conversation.executionStatus}
+                {conversation.status}
               </span>
             </div>
             <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-slate-500">
               <span className="font-mono">
-                {conversation.conversationId.slice(0, 8)}
+                {conversationId.slice(0, 8)}
               </span>
               <time
                 className="shrink-0"
-                dateTime={conversation.updatedAt}
-                title={formatConversationUpdatedAt(conversation.updatedAt)}
+                dateTime={conversation.updated_at ?? undefined}
+                title={formatConversationUpdatedAt(conversation.updated_at)}
               >
-                {formatConversationUpdatedAt(conversation.updatedAt)}
+                {formatConversationUpdatedAt(conversation.updated_at)}
               </time>
             </div>
           </button>
@@ -741,6 +1038,7 @@ function ProjectPanel({
           <GraphPreview
             projectId={project.project.project_id}
             template={project.graph.template}
+            lifecycle={project.graph.lifecycle}
             nodes={project.graph.nodes}
             edges={project.graph.edges}
             requestOptions={requestOptions}
@@ -813,6 +1111,7 @@ function ProjectPanel({
 interface GraphPreviewProps {
   projectId: string;
   template: string | null;
+  lifecycle: ProjectLifecycle;
   nodes: ProjectNode[];
   edges: ProjectEdge[];
   requestOptions: RequestOptions;
@@ -853,7 +1152,9 @@ function nodeSummary(node: ProjectNode): string {
     typeof config[key] === 'string' ? config[key] : '';
 
   if (node.type === 'dataset') {
-    return [value('format'), value('image_roles')].filter(Boolean).join(' · ');
+    return [value('capability'), value('input_hint')]
+      .filter(Boolean)
+      .join(' · ');
   }
   if (node.type === 'inference') return value('model');
   if (node.type === 'evaluator') return value('rule');
@@ -862,9 +1163,12 @@ function nodeSummary(node: ProjectNode): string {
     .join(' · ');
 }
 
-function nodeStatusClass(status: ProjectNode['status']): string {
+function nodeStatusClass(
+  status: ProjectNode['status'] | StageRunStatus | 'development',
+): string {
   if (status === 'succeeded') return 'bg-emerald-100 text-emerald-700';
   if (status === 'running') return 'bg-blue-100 text-blue-700';
+  if (status === 'development') return 'bg-cyan-100 text-cyan-800';
   if (status === 'failed') return 'bg-rose-100 text-rose-700';
   if (status === 'not_implemented') return 'bg-amber-100 text-amber-700';
   if (status === 'skipped') return 'bg-slate-200 text-slate-600';
@@ -874,32 +1178,120 @@ function nodeStatusClass(status: ProjectNode['status']): string {
 function GraphPreview({
   projectId,
   template,
+  lifecycle,
   nodes,
   edges,
   requestOptions,
 }: GraphPreviewProps) {
   const orderedNodes = useMemo(() => orderGraphNodes(nodes, edges), [nodes, edges]);
-  const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
-  const [execution, setExecution] =
-    useState<ProjectNodeExecutionResult | null>(null);
-  const [executionError, setExecutionError] = useState<string | null>(null);
+  const [runs, setRuns] = useState<StageRun[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [artifactDocument, setArtifactDocument] =
+    useState<ProjectArtifactDocument | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
+  const [startMessage, setStartMessage] = useState<string | null>(null);
 
-  const runShell = async (nodeId: string) => {
-    setRunningNodeId(nodeId);
-    setExecutionError(null);
+  useEffect(() => {
+    let cancelled = false;
+    setRuns([]);
+    setSelectedRunId(null);
+    setRunError(null);
+    setStartMessage(null);
+    void listEchoMindProjectRuns(projectId, requestOptions)
+      .then((items) => {
+        if (cancelled) return;
+        setRuns(items);
+        setSelectedRunId(items[0]?.run_id ?? null);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setRunError(
+          error instanceof Error ? error.message : 'Failed to load Project runs.',
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, requestOptions]);
+
+  const latestRunByNode = useMemo(() => {
+    const latest = new Map<string, StageRun>();
+    for (const run of runs) {
+      if (!latest.has(run.node_id)) latest.set(run.node_id, run);
+    }
+    return latest;
+  }, [runs]);
+
+  const selectedRun =
+    runs.find((run) => run.run_id === selectedRunId) ?? runs[0] ?? null;
+
+  useEffect(() => {
+    setArtifactDocument(null);
+  }, [selectedRun?.run_id]);
+
+  const runProbe = async (nodeId: string) => {
+    setActiveNodeId(nodeId);
+    setRunError(null);
+    setStartMessage(null);
     try {
       const result = await runEchoMindProjectNode(
         projectId,
         nodeId,
         requestOptions,
       );
-      setExecution(result);
+      setRuns((current) => [
+        result,
+        ...current.filter((run) => run.run_id !== result.run_id),
+      ]);
+      setSelectedRunId(result.run_id);
     } catch (error) {
-      setExecutionError(
+      setRunError(
         error instanceof Error ? error.message : 'Failed to run Project node.',
       );
     } finally {
-      setRunningNodeId(null);
+      setActiveNodeId(null);
+    }
+  };
+
+  const startAgentNode = async (nodeId: string) => {
+    setActiveNodeId(nodeId);
+    setRunError(null);
+    setStartMessage(null);
+    try {
+      const result = await startEchoMindProjectNode(
+        projectId,
+        nodeId,
+        requestOptions,
+      );
+      setStartMessage(
+        `${result.node_id} development started in the EchoMind chat.`,
+      );
+    } catch (error) {
+      setRunError(
+        error instanceof Error
+          ? error.message
+          : 'Failed to start Project node.',
+      );
+    } finally {
+      setActiveNodeId(null);
+    }
+  };
+
+  const previewArtifact = async (artifactId: string) => {
+    setRunError(null);
+    try {
+      setArtifactDocument(
+        await getEchoMindProjectArtifact(
+          projectId,
+          artifactId,
+          requestOptions,
+        ),
+      );
+    } catch (error) {
+      setRunError(
+        error instanceof Error ? error.message : 'Failed to load artifact.',
+      );
     }
   };
 
@@ -920,8 +1312,15 @@ function GraphPreview({
         <div className="mt-3">
           <ol className="space-y-1">
             {orderedNodes.map((node, index) => {
+              const isAgentDevelopment =
+                lifecycle === 'development' && node.launch_mode === 'agent';
               const displayedStatus =
-                execution?.node_id === node.id ? execution.status : node.status;
+                latestRunByNode.get(node.id)?.status
+                ?? (isAgentDevelopment ? 'development' : node.status);
+              const bindingLabel =
+                node.launch_mode === 'agent'
+                  ? `agent · ${String(node.config.capability ?? '')}`.trim()
+                  : node.executor;
               return (
                 <Fragment key={node.id}>
                   <li className="flex min-h-28 w-full flex-col rounded-lg border border-slate-300 bg-white p-3">
@@ -945,16 +1344,29 @@ function GraphPreview({
                     </p>
                     <div className="mt-auto flex items-center justify-between gap-2 pt-3">
                       <span className="truncate font-mono text-[10px] text-slate-400">
-                        {node.executor}
+                        {bindingLabel}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => void runShell(node.id)}
-                        disabled={runningNodeId !== null}
-                        className="rounded-md border border-slate-300 px-2 py-1 text-[10px] font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400"
-                      >
-                        {runningNodeId === node.id ? 'Checking' : 'Run shell'}
-                      </button>
+                      {isAgentDevelopment ? (
+                        <button
+                          type="button"
+                          onClick={() => void startAgentNode(node.id)}
+                          disabled={activeNodeId !== null}
+                          className="rounded-md border border-cyan-300 bg-cyan-50 px-2 py-1 text-[10px] font-medium text-cyan-800 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:text-slate-400"
+                        >
+                          {activeNodeId === node.id
+                            ? 'Starting'
+                            : 'Start Dataset'}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void runProbe(node.id)}
+                          disabled={activeNodeId !== null}
+                          className="rounded-md border border-slate-300 px-2 py-1 text-[10px] font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400"
+                        >
+                          {activeNodeId === node.id ? 'Running' : 'Run probe'}
+                        </button>
+                      )}
                     </div>
                   </li>
                   {index < orderedNodes.length - 1 && (
@@ -971,14 +1383,58 @@ function GraphPreview({
           </ol>
         </div>
       )}
-      {execution && (
-        <p className="mt-1 border-y border-amber-200 bg-amber-50 px-2 py-2 text-[11px] leading-5 text-amber-800">
-          {execution.node_id}: {execution.message}
+      {selectedRun && (
+        <div className="mt-2 border-y border-slate-200 bg-slate-50 px-2 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] font-medium text-slate-700">
+              {selectedRun.node_id}: {selectedRun.message}
+            </p>
+            <span className="shrink-0 font-mono text-[9px] text-slate-400">
+              {selectedRun.run_id.slice(0, 8)}
+            </span>
+          </div>
+          {selectedRun.error && (
+            <p className="mt-1 break-words text-[11px] text-rose-700">
+              {selectedRun.error}
+            </p>
+          )}
+          {selectedRun.artifacts.map((artifact) => (
+            <div
+              key={artifact.artifact_id}
+              className="mt-2 flex items-center justify-between gap-2 rounded border border-slate-200 bg-white px-2 py-1.5"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-[10px] font-medium text-slate-700">
+                  {artifact.kind}
+                </p>
+                <p className="truncate font-mono text-[9px] text-slate-400">
+                  {artifact.artifact_id}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void previewArtifact(artifact.artifact_id)}
+                className="shrink-0 rounded border border-slate-300 px-2 py-1 text-[9px] font-medium text-slate-600 hover:bg-slate-100"
+              >
+                View
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {artifactDocument && (
+        <pre className="mt-2 max-h-48 overflow-auto border border-slate-200 bg-slate-950 p-2 text-[10px] leading-4 text-slate-100">
+          {JSON.stringify(artifactDocument.content, null, 2)}
+        </pre>
+      )}
+      {startMessage && (
+        <p className="mt-2 border-y border-cyan-200 bg-cyan-50 px-2 py-2 text-[11px] leading-5 text-cyan-900">
+          {startMessage}
         </p>
       )}
-      {executionError && (
+      {runError && (
         <p className="mt-2 border-y border-rose-200 bg-rose-50 px-2 py-2 text-[11px] leading-5 text-rose-700">
-          {executionError}
+          {runError}
         </p>
       )}
     </section>

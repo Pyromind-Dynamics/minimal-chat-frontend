@@ -166,7 +166,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
   return <div className="product-planning-chat flex h-screen flex-col bg-white text-left text-slate-900">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
       <div><h1 className="font-semibold">{title}</h1><p className="text-xs text-slate-500">实验目标 → 计划草稿 → 确认保存</p></div>
-      <div className="flex items-center gap-3 text-sm"><span>用户 {userId}</span><a href="./" className="text-blue-700">Workbench</a><button type="button" onClick={newConversation} disabled={busy || loading || state.status === 'running'} className="rounded border px-3 py-1 disabled:opacity-40">新会话</button></div>
+      <div className="flex items-center gap-3 text-sm"><span>用户 {userId}</span><a href="./" className="text-blue-700">Workbench</a><a href={`?chat=echomind-legacy&userId=${encodeURIComponent(userId)}`} className="text-blue-700">EchoMind Agent</a><button type="button" onClick={newConversation} disabled={busy || loading || state.status === 'running'} className="rounded border px-3 py-1 disabled:opacity-40">新会话</button></div>
     </header>
     <details className="border-b px-4 py-2 text-xs"><summary>请求配置</summary><form className="mt-2 flex gap-2" onSubmit={event => { event.preventDefault(); setCredentials({ cookie: credentialDraft.cookie.trim(), xCluster: credentialDraft.xCluster.trim() }); }}>
       <label>Cookie<input aria-label="Cookie" type="password" autoComplete="off" value={credentialDraft.cookie} onChange={event => setCredentialDraft(current => ({ ...current, cookie: event.target.value }))} className="ml-2 rounded border p-1" /></label>
