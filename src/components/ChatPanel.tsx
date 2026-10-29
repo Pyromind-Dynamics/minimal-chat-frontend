@@ -84,7 +84,7 @@ export function ChatPanel({
     && !pendingPermission
   ) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
+      <div className="flex flex-1 items-center justify-center px-4 text-center text-gray-400 text-sm">
         Start a conversation by sending a message below.
       </div>
     );

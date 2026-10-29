@@ -66,7 +66,7 @@ export function MessageInput({
           placeholder={placeholder}
           disabled={disabled}
           rows={2}
-          className="max-h-40 min-h-14 flex-1 resize-y rounded-lg border px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+          className="max-h-40 min-h-14 min-w-0 flex-1 resize-y rounded-lg border px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
         />
         <button
           type="submit"

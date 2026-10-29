@@ -2,6 +2,21 @@ import { getDebugAuthHeaders } from './authToken';
 import { formatApiError } from './apiError';
 import { BACKEND_URL, SESSION_API_KEY, LLM_MODEL, LLM_API_KEY, LLM_BASE_URL } from './config';
 import { applyRequestCookies, normalizeRequestValue, type RequestOverrides } from './requestOverrides';
+import {
+  ECHOMIND_CONVERSATIONS_PATH,
+  PROJECTS_PATH,
+  buildEchoMindConversationBody,
+  buildCreateProjectBody,
+  echomindConversationPath,
+  echomindConversationMessagesPath,
+  echomindProjectRequestPath,
+  echomindProjectNodeRunPath,
+  type EchoMindConversationInfo,
+  type EchoMindConversationSummary,
+  type ProjectNodeExecutionResult,
+  type ProjectRequest,
+  type ProjectInfo,
+} from './echomindContract';
 import type {
   ChatEvent,
   CommandReceipt,
@@ -281,6 +296,200 @@ export async function createConversation(
   return res.json();
 }
 
+export interface CreateEchoMindConversationInput {
+  initialMessage?: string;
+  options?: RequestOptions;
+}
+
+export async function createEchoMindConversation(
+  input: CreateEchoMindConversationInput,
+): Promise<EchoMindConversationInfo> {
+  await prepareAuth(input.options);
+  const res = await fetch(`${BACKEND_URL}${ECHOMIND_CONVERSATIONS_PATH}`, {
+    method: 'POST',
+    headers: getHeaders(input.options),
+    credentials: 'include',
+    body: JSON.stringify(buildEchoMindConversationBody({
+      llm: {
+        model: LLM_MODEL || undefined,
+        api_key: LLM_API_KEY || undefined,
+        base_url: LLM_BASE_URL || undefined,
+      },
+      initialMessage: input.initialMessage,
+    })),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(
+      `Failed to create EchoMind conversation: ${res.status} ${errorText}`,
+    );
+  }
+
+  return res.json();
+}
+
+export async function listEchoMindConversations(
+  options?: RequestOptions,
+): Promise<EchoMindConversationSummary[]> {
+  await prepareAuth(options);
+  const params = new URLSearchParams({
+    limit: '100',
+    sort_order: 'UPDATED_AT_DESC',
+  });
+  const res = await fetch(
+    `${BACKEND_URL}${ECHOMIND_CONVERSATIONS_PATH}?${params}`,
+    {
+      headers: getHeaders(options),
+      credentials: 'include',
+    },
+  );
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(
+      `Failed to list EchoMind conversations: ${res.status} ${errorText}`,
+    );
+  }
+  return res.json();
+}
+
+export async function getEchoMindConversation(
+  conversationId: string,
+  options?: RequestOptions,
+): Promise<EchoMindConversationInfo | null> {
+  await prepareAuth(options);
+  const res = await fetch(
+    `${BACKEND_URL}${echomindConversationPath(conversationId)}`,
+    {
+      headers: getHeaders(options),
+      credentials: 'include',
+    },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(
+      `Failed to load EchoMind conversation: ${res.status} ${errorText}`,
+    );
+  }
+  return res.json();
+}
+
+export async function listEchoMindMessages(
+  conversationId: string,
+  options?: RequestOptions,
+): Promise<ChatEvent[]> {
+  await prepareAuth(options);
+  const events: ChatEvent[] = [];
+  let pageId: string | null = null;
+
+  do {
+    const params = new URLSearchParams({
+      limit: '100',
+      sort_order: 'TIMESTAMP',
+    });
+    if (pageId) params.set('page_id', pageId);
+    const res = await fetch(
+      `${BACKEND_URL}${echomindConversationMessagesPath(conversationId)}?${params}`,
+      {
+        headers: getHeaders(options),
+        credentials: 'include',
+      },
+    );
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(
+        `Failed to load EchoMind messages: ${res.status} ${errorText}`,
+      );
+    }
+    const page = (await res.json()) as EventPage;
+    events.push(...page.items);
+    pageId = page.next_page_id;
+  } while (pageId);
+
+  return events;
+}
+
+export async function getEchoMindProjectRequest(
+  conversationId: string,
+  options?: RequestOptions,
+): Promise<ProjectRequest | null> {
+  await prepareAuth(options);
+  const res = await fetch(
+    `${BACKEND_URL}${echomindProjectRequestPath(conversationId)}`,
+    {
+      headers: getHeaders(options),
+      credentials: 'include',
+    },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(
+      `Failed to load EchoMind project request: ${res.status} ${errorText}`,
+    );
+  }
+  return res.json();
+}
+
+export async function getEchoMindProject(
+  projectId: string,
+  options?: RequestOptions,
+): Promise<ProjectInfo | null> {
+  await prepareAuth(options);
+  const res = await fetch(`${BACKEND_URL}${PROJECTS_PATH}/${projectId}`, {
+    headers: getHeaders(options),
+    credentials: 'include',
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to load Project: ${res.status} ${errorText}`);
+  }
+  return res.json();
+}
+
+export async function createProject(
+  conversationId: string,
+  options?: RequestOptions,
+): Promise<ProjectInfo> {
+  await prepareAuth(options);
+  const res = await fetch(`${BACKEND_URL}${PROJECTS_PATH}`, {
+    method: 'POST',
+    headers: getHeaders(options),
+    credentials: 'include',
+    body: JSON.stringify(buildCreateProjectBody(conversationId)),
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to create Project: ${res.status} ${errorText}`);
+  }
+  return res.json();
+}
+
+export async function runEchoMindProjectNode(
+  projectId: string,
+  nodeId: string,
+  options?: RequestOptions,
+): Promise<ProjectNodeExecutionResult> {
+  await prepareAuth(options);
+  const res = await fetch(
+    `${BACKEND_URL}${echomindProjectNodeRunPath(projectId, nodeId)}`,
+    {
+      method: 'POST',
+      headers: getHeaders(options),
+      credentials: 'include',
+    },
+  );
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(
+      `Failed to run Project node: ${res.status} ${errorText}`,
+    );
+  }
+  return res.json();
+}
+
 /**
  * Send a message to an existing conversation.
  * Setting run=true automatically triggers the agent to process the message.
@@ -355,6 +564,48 @@ export async function sendPyromindMessage(
   if (!res.ok) {
     const errorText = await res.text();
     throw new Error(`Failed to send message: ${res.status} ${errorText}`);
+  }
+}
+
+export async function sendEchoMindMessage(
+  conversationId: string,
+  text: string,
+  options?: RequestOptions,
+): Promise<void> {
+  await prepareAuth(options);
+  const res = await fetch(
+    `${BACKEND_URL}${echomindConversationMessagesPath(conversationId)}`,
+    {
+      method: 'POST',
+      headers: getHeaders(options),
+      credentials: 'include',
+      body: JSON.stringify({ text, run: true }),
+    },
+  );
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to send EchoMind message: ${res.status} ${errorText}`);
+  }
+}
+
+export async function interruptConversation(
+  conversationId: string,
+  options?: RequestOptions,
+): Promise<void> {
+  await prepareAuth(options);
+  const res = await fetch(
+    `${BACKEND_URL}/api/conversations/${conversationId}/interrupt`,
+    {
+      method: 'POST',
+      headers: getHeaders(options),
+      credentials: 'include',
+    },
+  );
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to interrupt conversation: ${res.status} ${errorText}`);
   }
 }
 
