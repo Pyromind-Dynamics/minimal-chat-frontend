@@ -17,6 +17,8 @@ interface ProductEventStreamOptions {
   requestOptions: RequestOptions;
   onEvent: (event: ProductEvent) => void;
   onGap: () => Promise<number>;
+  eventsUrl?: typeof productEventsUrl;
+  refreshOnConnect?: boolean;
 }
 
 const RECONNECT_DELAY_MS = 3_000;
@@ -27,6 +29,8 @@ export function useProductEventStream({
   requestOptions,
   onEvent,
   onGap,
+  eventsUrl = productEventsUrl,
+  refreshOnConnect = false,
 }: ProductEventStreamOptions): ConnectionState {
   const [connectionState, setConnectionState] =
     useState<ConnectionState>('closed');
@@ -49,8 +53,10 @@ export function useProductEventStream({
       while (!stopped) {
         try {
           setConnectionState('connecting');
+          if (refreshOnConnect) cursor = await onGapRef.current();
+          if (stopped) return;
           await prepareProductRequest(requestOptions);
-          const response = await fetch(productEventsUrl(conversationId!, cursor), {
+          const response = await fetch(eventsUrl(conversationId!, cursor), {
             credentials: 'include',
             headers: getProductRequestHeaders(requestOptions),
             signal: controller.signal,
@@ -93,7 +99,7 @@ export function useProductEventStream({
       controller.abort();
       setConnectionState('closed');
     };
-  }, [afterSeq, conversationId, requestOptions]);
+  }, [afterSeq, conversationId, requestOptions, eventsUrl, refreshOnConnect]);
 
   return connectionState;
 }

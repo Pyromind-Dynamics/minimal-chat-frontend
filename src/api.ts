@@ -200,7 +200,7 @@ async function submitProductCommand(
   );
 }
 
-async function productRequest<T>(
+export async function productRequest<T>(
   url: string,
   init: RequestInit,
   options?: RequestOptions,

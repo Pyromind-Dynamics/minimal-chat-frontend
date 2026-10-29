@@ -24,6 +24,7 @@ import { ChatPanel } from './components/ChatPanel';
 import { MessageInput } from './components/MessageInput';
 import { StatusBar } from './components/StatusBar';
 import { EchoMindChat } from './EchoMindChat';
+import { LegacyEchoMindChat } from './LegacyEchoMindChat';
 import { formatConversationUpdatedAt, sortConversations } from './conversationList';
 import {
   type ConversationSnapshot,
@@ -1029,7 +1030,7 @@ function App() {
 
   return (
     <ChatProvider>
-      {isEchoMindChat ? <EchoMindChat /> : <ChatApp />}
+      {isEchoMindChat ? <EchoMindChat /> : chatMode === 'echomind-legacy' ? <LegacyEchoMindChat /> : <ChatApp />}
     </ChatProvider>
   );
 }

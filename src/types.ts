@@ -361,6 +361,7 @@ export interface ConversationSnapshot {
   timeline: TimelineItem[];
   current_workflow?: ProductWorkflowState | null;
   plan?: ProductPlanState | null;
+  experiment_plan?: import('./experimentPlans').ExperimentPlanView | null;
   pending_permissions: ProductPermission[];
   pending_inputs?: PendingUserInput[];
   automatic_turns_suspended?: boolean;
