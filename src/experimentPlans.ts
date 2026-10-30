@@ -7,7 +7,7 @@ export interface ExperimentTask {
   completion_conditions: { kind: string; description: string }[];
 }
 export interface WorkflowPlan {
-  schema_version: 1; name: string; goal: string; resources: PlanResource[];
+  schema_version: 1; skill?: string | null; name: string; goal: string; resources: PlanResource[];
   unresolved: string[]; stages: ExperimentStage[]; tasks: ExperimentTask[];
   edges: { source: string; target: string }[];
 }

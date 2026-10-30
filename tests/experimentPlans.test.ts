@@ -41,7 +41,7 @@ test('draft, confirmed, revision and historical views render real plan data and 
     const view = { project_id: null, current_revision: 0, current: null, pending_proposal: proposal, history: [] };
     const props = { view, selectedRevision: null, busy: false, onDecision: () => {}, onHistory: () => {}, onRefresh: () => {} };
     const draft = renderToStaticMarkup(createElement(ExperimentPlanPanel, props));
-    assert.ok(draft.includes('确认创建项目和计划'));
+    assert.ok(draft.includes('确认创建 Project/Graph'));
     assert.ok(draft.includes('<title>Init → Data</title>'));
     assert.ok(draft.includes('基模自由命名评测'));
     assert.ok(draft.includes('训练参数待补充'));
@@ -51,13 +51,13 @@ test('draft, confirmed, revision and historical views render real plan data and 
     const confirmed = { ...view, project_id: 'project', current_revision: 1, current: revision, pending_proposal: null, history: [{ revision: 1, name: plan.name, confirmed_at: revision.confirmed_at }] };
     const saved = renderToStaticMarkup(createElement(ExperimentPlanPanel, { ...props, view: confirmed }));
     assert.ok(saved.includes('当前版本 1'));
-    assert.ok(!saved.includes('确认创建项目和计划'));
+    assert.ok(!saved.includes('确认创建 Project/Graph'));
     const modified = { ...confirmed, pending_proposal: { ...proposal, base_revision: 1, plan: { ...plan, goal: '只做评测' } } };
     const proposed = renderToStaticMarkup(createElement(ExperimentPlanPanel, { ...props, view: modified }));
     assert.ok(proposed.includes('相对当前版本的变化'));
-    assert.ok(proposed.includes('确认保存新版本'));
+    assert.ok(proposed.includes('确认更新 Graph'));
     const history = renderToStaticMarkup(createElement(ExperimentPlanPanel, { ...props, view: modified, selectedRevision: revision }));
     assert.ok(history.includes('历史版本 1'));
-    assert.ok(!history.includes('确认保存新版本'));
+    assert.ok(!history.includes('确认更新 Graph'));
   } finally { await server.close(); }
 });

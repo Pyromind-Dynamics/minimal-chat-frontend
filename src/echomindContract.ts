@@ -1,5 +1,5 @@
 export const ECHOMIND_CONVERSATIONS_PATH =
-  '/api/echomind/conversations';
+  '/api/v2/echomind/conversations';
 export const PROJECTS_PATH = '/api/echomind/projects';
 
 export interface EchoMindConversationBodyInput {
@@ -45,14 +45,6 @@ export interface ProjectNode {
 export interface ProjectEdge {
   source: string;
   target: string;
-}
-
-export interface ProjectRequest {
-  schema_version: 1;
-  name: string;
-  description: string;
-  skill: string;
-  requirements: ProjectRequirement[];
 }
 
 export interface ProjectRecord {
@@ -155,8 +147,8 @@ export function echomindConversationEventsPath(
   return `${echomindConversationPath(conversationId)}/events`;
 }
 
-export function echomindProjectRequestPath(conversationId: string): string {
-  return `${ECHOMIND_CONVERSATIONS_PATH}/${conversationId}/project-request`;
+export function echomindProjectPath(projectId: string): string {
+  return `${PROJECTS_PATH}/${projectId}`;
 }
 
 export function echomindProjectNodeRunPath(
@@ -191,14 +183,5 @@ export function buildEchoMindConversationBody(
     llm: input.llm,
     message: input.initialMessage || undefined,
     user_input_enabled: input.userInputEnabled ?? true,
-  };
-}
-
-export function buildCreateProjectBody(
-  conversationId: string,
-): Record<string, unknown> {
-  return {
-    conversation_id: conversationId,
-    confirmed: true,
   };
 }

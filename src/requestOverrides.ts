@@ -1,8 +1,14 @@
 const CUSTOM_COOKIE_NAMES_STORAGE_KEY = 'minimal-chat.customCookieNames';
+const REQUEST_OVERRIDES_STORAGE_KEY = 'minimal-chat.requestOverrides';
 
 export interface RequestOverrides {
   cookie?: string;
   xCluster?: string;
+}
+
+export interface RequestOverrideFields {
+  cookie: string;
+  xCluster: string;
 }
 
 interface CookiePair {
@@ -13,6 +19,26 @@ interface CookiePair {
 export function normalizeRequestValue(value?: string): string | undefined {
   const trimmed = value?.trim();
   return trimmed || undefined;
+}
+
+export function loadRequestOverrides(): RequestOverrideFields {
+  const saved = localStorage.getItem(REQUEST_OVERRIDES_STORAGE_KEY);
+  if (!saved) {
+    return { cookie: '', xCluster: '' };
+  }
+  try {
+    const parsed = JSON.parse(saved) as Partial<RequestOverrideFields>;
+    return {
+      cookie: typeof parsed.cookie === 'string' ? parsed.cookie : '',
+      xCluster: typeof parsed.xCluster === 'string' ? parsed.xCluster : '',
+    };
+  } catch {
+    return { cookie: '', xCluster: '' };
+  }
+}
+
+export function saveRequestOverrides(overrides: RequestOverrideFields): void {
+  localStorage.setItem(REQUEST_OVERRIDES_STORAGE_KEY, JSON.stringify(overrides));
 }
 
 function parseCookieHeader(cookieHeader?: string): CookiePair[] {

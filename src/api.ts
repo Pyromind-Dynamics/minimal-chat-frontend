@@ -2,24 +2,6 @@ import { getDebugAuthHeaders } from './authToken';
 import { formatApiError } from './apiError';
 import { BACKEND_URL, SESSION_API_KEY, LLM_MODEL, LLM_API_KEY, LLM_BASE_URL } from './config';
 import { applyRequestCookies, normalizeRequestValue, type RequestOverrides } from './requestOverrides';
-import {
-  ECHOMIND_CONVERSATIONS_PATH,
-  PROJECTS_PATH,
-  buildEchoMindConversationBody,
-  buildCreateProjectBody,
-  echomindConversationCommandsPath,
-  echomindConversationSnapshotPath,
-  echomindProjectRequestPath,
-  echomindProjectNodeRunPath,
-  echomindProjectNodeStartPath,
-  echomindProjectRunsPath,
-  echomindProjectArtifactPath,
-  type ProjectArtifactDocument,
-  type ProjectNodeStart,
-  type ProjectRequest,
-  type ProjectInfo,
-  type StageRun,
-} from './echomindContract';
 import type {
   ChatEvent,
   CommandReceipt,
@@ -39,7 +21,6 @@ interface RequestOptions extends RequestOverrides {
 export type { RequestOptions };
 
 const PRODUCT_API = `${BACKEND_URL}/api/v2/pyromind/conversations`;
-const ECHOMIND_PRODUCT_API = `${BACKEND_URL}${ECHOMIND_CONVERSATIONS_PATH}`;
 
 export async function prepareProductRequest(
   options?: RequestOptions,
@@ -58,17 +39,6 @@ export function productEventsUrl(
   afterSeq: number,
 ): string {
   return conversationEventsUrl(PRODUCT_API, conversationId, afterSeq);
-}
-
-export function echoMindProductEventsUrl(
-  conversationId: string,
-  afterSeq: number,
-): string {
-  return conversationEventsUrl(
-    ECHOMIND_PRODUCT_API,
-    conversationId,
-    afterSeq,
-  );
 }
 
 function conversationEventsUrl(
@@ -319,208 +289,6 @@ export async function createConversation(
   return res.json();
 }
 
-export interface CreateEchoMindConversationInput {
-  initialMessage?: string;
-  options?: RequestOptions;
-}
-
-export async function createEchoMindConversation(
-  input: CreateEchoMindConversationInput,
-): Promise<ConversationSnapshot> {
-  return productRequest<ConversationSnapshot>(
-    ECHOMIND_PRODUCT_API,
-    {
-      method: 'POST',
-      body: JSON.stringify(
-        buildEchoMindConversationBody({
-          llm: {
-            model: LLM_MODEL || undefined,
-            api_key: LLM_API_KEY || undefined,
-            base_url: LLM_BASE_URL || undefined,
-          },
-          initialMessage: input.initialMessage,
-        }),
-      ),
-    },
-    input.options,
-  );
-}
-
-export async function listEchoMindConversations(
-  options?: RequestOptions,
-): Promise<ConversationSnapshot[]> {
-  return productRequest<ConversationSnapshot[]>(
-    ECHOMIND_PRODUCT_API,
-    {},
-    options,
-  );
-}
-
-export async function getEchoMindConversation(
-  conversationId: string,
-  options?: RequestOptions,
-): Promise<ConversationSnapshot | null> {
-  await prepareProductRequest(options);
-  const res = await fetch(
-    `${BACKEND_URL}${echomindConversationSnapshotPath(conversationId)}`,
-    {
-      headers: getProductRequestHeaders(options),
-      credentials: 'include',
-    },
-  );
-  if (res.status === 404) return null;
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(
-      `Failed to load EchoMind conversation: ${res.status} ${errorText}`,
-    );
-  }
-  return res.json() as Promise<ConversationSnapshot>;
-}
-
-export async function getEchoMindProjectRequest(
-  conversationId: string,
-  options?: RequestOptions,
-): Promise<ProjectRequest | null> {
-  await prepareAuth(options);
-  const res = await fetch(
-    `${BACKEND_URL}${echomindProjectRequestPath(conversationId)}`,
-    {
-      headers: getHeaders(options),
-      credentials: 'include',
-    },
-  );
-  if (res.status === 404) return null;
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(
-      `Failed to load EchoMind project request: ${res.status} ${errorText}`,
-    );
-  }
-  return res.json();
-}
-
-export async function getEchoMindProject(
-  projectId: string,
-  options?: RequestOptions,
-): Promise<ProjectInfo | null> {
-  await prepareAuth(options);
-  const res = await fetch(`${BACKEND_URL}${PROJECTS_PATH}/${projectId}`, {
-    headers: getHeaders(options),
-    credentials: 'include',
-  });
-  if (res.status === 404) return null;
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Failed to load Project: ${res.status} ${errorText}`);
-  }
-  return res.json();
-}
-
-export async function createProject(
-  conversationId: string,
-  options?: RequestOptions,
-): Promise<ProjectInfo> {
-  await prepareAuth(options);
-  const res = await fetch(`${BACKEND_URL}${PROJECTS_PATH}`, {
-    method: 'POST',
-    headers: getHeaders(options),
-    credentials: 'include',
-    body: JSON.stringify(buildCreateProjectBody(conversationId)),
-  });
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Failed to create Project: ${res.status} ${errorText}`);
-  }
-  return res.json();
-}
-
-export async function runEchoMindProjectNode(
-  projectId: string,
-  nodeId: string,
-  options?: RequestOptions,
-): Promise<StageRun> {
-  await prepareAuth(options);
-  const res = await fetch(
-    `${BACKEND_URL}${echomindProjectNodeRunPath(projectId, nodeId)}`,
-    {
-      method: 'POST',
-      headers: getHeaders(options),
-      credentials: 'include',
-    },
-  );
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(
-      `Failed to run Project node: ${res.status} ${errorText}`,
-    );
-  }
-  return res.json();
-}
-
-export async function startEchoMindProjectNode(
-  projectId: string,
-  nodeId: string,
-  options?: RequestOptions,
-): Promise<ProjectNodeStart> {
-  await prepareAuth(options);
-  const res = await fetch(
-    `${BACKEND_URL}${echomindProjectNodeStartPath(projectId, nodeId)}`,
-    {
-      method: 'POST',
-      headers: getHeaders(options),
-      credentials: 'include',
-    },
-  );
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(
-      `Failed to start Project node: ${res.status} ${errorText}`,
-    );
-  }
-  return res.json();
-}
-
-export async function listEchoMindProjectRuns(
-  projectId: string,
-  options?: RequestOptions,
-): Promise<StageRun[]> {
-  await prepareAuth(options);
-  const res = await fetch(`${BACKEND_URL}${echomindProjectRunsPath(projectId)}`, {
-    headers: getHeaders(options),
-    credentials: 'include',
-  });
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(
-      `Failed to load Project runs: ${res.status} ${errorText}`,
-    );
-  }
-  return res.json();
-}
-
-export async function getEchoMindProjectArtifact(
-  projectId: string,
-  artifactId: string,
-  options?: RequestOptions,
-): Promise<ProjectArtifactDocument> {
-  await prepareAuth(options);
-  const res = await fetch(
-    `${BACKEND_URL}${echomindProjectArtifactPath(projectId, artifactId)}`,
-    {
-      headers: getHeaders(options),
-      credentials: 'include',
-    },
-  );
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(
-      `Failed to load Project artifact: ${res.status} ${errorText}`,
-    );
-  }
-  return res.json();
-}
-
 /**
  * Send a message to an existing conversation.
  * Setting run=true automatically triggers the agent to process the message.
@@ -596,86 +364,6 @@ export async function sendPyromindMessage(
     const errorText = await res.text();
     throw new Error(`Failed to send message: ${res.status} ${errorText}`);
   }
-}
-
-export async function sendEchoMindMessage(
-  conversationId: string,
-  text: string,
-  options?: RequestOptions,
-  commandId: string = crypto.randomUUID(),
-): Promise<CommandReceipt> {
-  return submitEchoMindCommand(
-    conversationId,
-    {
-      command_id: commandId,
-      type: 'user_message',
-      content: [{ type: 'text', text }],
-    },
-    options,
-  );
-}
-
-export async function cancelEchoMindConversation(
-  conversationId: string,
-  options?: RequestOptions,
-): Promise<CommandReceipt> {
-  return submitEchoMindCommand(
-    conversationId,
-    { command_id: crypto.randomUUID(), type: 'cancel' },
-    options,
-  );
-}
-
-export async function respondToEchoMindInput(
-  conversationId: string,
-  requestId: string,
-  status: 'answered' | 'cancelled',
-  answers: UserInputAnswer[],
-  options: RequestOptions,
-  commandId: string,
-): Promise<CommandReceipt> {
-  return submitEchoMindCommand(
-    conversationId,
-    {
-      command_id: commandId,
-      type: 'input_response',
-      request_id: requestId,
-      status,
-      answers,
-    },
-    options,
-  );
-}
-
-export async function respondToEchoMindPermission(
-  conversationId: string,
-  permissionId: string,
-  accept: boolean,
-  options?: RequestOptions,
-): Promise<CommandReceipt> {
-  return submitEchoMindCommand(
-    conversationId,
-    {
-      command_id: crypto.randomUUID(),
-      type: 'permission_response',
-      permission_id: permissionId,
-      decision: accept ? 'allow_once' : 'deny',
-      reason: accept ? undefined : 'User rejected the pending action.',
-    },
-    options,
-  );
-}
-
-async function submitEchoMindCommand(
-  conversationId: string,
-  command: Record<string, unknown>,
-  options?: RequestOptions,
-): Promise<CommandReceipt> {
-  return productRequest<CommandReceipt>(
-    `${BACKEND_URL}${echomindConversationCommandsPath(conversationId)}`,
-    { method: 'POST', body: JSON.stringify(command) },
-    options,
-  );
 }
 
 export async function interruptConversation(

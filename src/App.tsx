@@ -24,8 +24,11 @@ import { ChatPanel } from './components/ChatPanel';
 import { MessageInput } from './components/MessageInput';
 import { StatusBar } from './components/StatusBar';
 import { EchoMindChat } from './EchoMindChat';
-import { LegacyEchoMindChat } from './LegacyEchoMindChat';
 import { formatConversationUpdatedAt, sortConversations } from './conversationList';
+import {
+  loadRequestOverrides,
+  saveRequestOverrides,
+} from './requestOverrides';
 import {
   type ConversationSnapshot,
   type GuidanceStatus,
@@ -36,13 +39,7 @@ import {
 const DEFAULT_USER_IDS = ['42', '7', '1001'];
 const USER_IDS_STORAGE_KEY = 'minimal-chat.debugUserIds';
 const ACTIVE_USER_STORAGE_KEY = 'minimal-chat.activeUserId';
-const REQUEST_OVERRIDES_STORAGE_KEY = 'minimal-chat.requestOverrides';
 const SELECTED_CONVERSATION_KEY = 'minimal-chat.selectedConversation.';
-
-interface RequestOverrideFields {
-  cookie: string;
-  xCluster: string;
-}
 
 interface PendingInitialCommand {
   conversationId: string;
@@ -66,23 +63,6 @@ function loadUserIds(): string[] {
     return DEFAULT_USER_IDS;
   }
   return DEFAULT_USER_IDS;
-}
-
-function loadRequestOverrides(): RequestOverrideFields {
-  const empty = { cookie: '', xCluster: '' };
-  const saved = localStorage.getItem(REQUEST_OVERRIDES_STORAGE_KEY);
-  if (!saved) {
-    return empty;
-  }
-  try {
-    const parsed = JSON.parse(saved) as Partial<RequestOverrideFields>;
-    return {
-      cookie: typeof parsed.cookie === 'string' ? parsed.cookie : '',
-      xCluster: typeof parsed.xCluster === 'string' ? parsed.xCluster : '',
-    };
-  } catch {
-    return empty;
-  }
 }
 
 function conversationTitle(conversation: ConversationSnapshot): string {
@@ -153,7 +133,7 @@ function ChatApp() {
   }, [activeUserId]);
 
   useEffect(() => {
-    localStorage.setItem(REQUEST_OVERRIDES_STORAGE_KEY, JSON.stringify(requestOverrides));
+    saveRequestOverrides(requestOverrides);
   }, [requestOverrides]);
 
   useEffect(() => () => {
@@ -729,10 +709,10 @@ function ChatApp() {
             </div>
           </div>
           <a
-            href={`?chat=echomind-legacy&userId=${encodeURIComponent(activeUserId)}`}
+            href={`?chat=echomind&userId=${encodeURIComponent(activeUserId)}`}
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
           >
-            打开 EchoMind Agent
+            打开 EchoMind Manager
           </a>
         </div>
         <div className="flex items-center gap-2 overflow-x-auto pb-2">
@@ -1030,7 +1010,7 @@ function App() {
 
   return (
     <ChatProvider>
-      {isEchoMindChat ? <EchoMindChat /> : chatMode === 'echomind-legacy' ? <LegacyEchoMindChat /> : <ChatApp />}
+      {isEchoMindChat ? <EchoMindChat /> : <ChatApp />}
     </ChatProvider>
   );
 }

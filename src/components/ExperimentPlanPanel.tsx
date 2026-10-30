@@ -1,13 +1,15 @@
 import { useId } from 'react';
+import type { ReactNode } from 'react';
 import { layoutPlan, planDiff, type ExperimentPlanView, type PlanRevision, type WorkflowPlan } from '../experimentPlans';
 
-export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, onHistory, onRefresh }: {
+export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, onHistory, onRefresh, children }: {
   view: ExperimentPlanView | null | undefined;
   selectedRevision: PlanRevision | null;
   busy: boolean;
   onDecision: (accept: boolean) => void;
   onHistory: (revision: number | null) => void;
   onRefresh: () => void;
+  children?: ReactNode;
 }) {
   const pending = view?.pending_proposal;
   const displayed = selectedRevision?.plan ?? pending?.plan ?? view?.current?.plan;
@@ -17,7 +19,7 @@ export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, 
       <h2 className="font-semibold">实验计划</h2>
       <button type="button" onClick={onRefresh} disabled={busy} className="text-sm text-blue-700 disabled:opacity-40">刷新</button>
     </div>
-    <p className="mt-2 text-xs text-slate-500">通过对话设计与修改计划，确认后保存版本。</p>
+    <p className="mt-2 text-xs text-slate-500">通过对话设计与修改计划，确认后创建或更新 Project Graph。</p>
     {view?.project_id && <p className="mt-3 break-all text-xs text-slate-600">项目 {view.project_id} · 当前版本 {view.current_revision}</p>}
     {view && view.history.length > 0 && <label className="mt-3 block text-sm">查看版本
       <select aria-label="查看计划版本" value={selectedRevision?.revision ?? ''} onChange={event => onHistory(event.target.value ? Number(event.target.value) : null)} className="ml-2 rounded border bg-white px-2 py-1">
@@ -31,9 +33,9 @@ export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, 
       <h3 className="text-sm font-semibold">{view?.current ? '修改提案 · 待确认' : '计划草稿 · 待确认'}</h3>
       <p className="mt-2 whitespace-pre-wrap text-sm">{pending.summary}</p>
       {pending.changes.length > 0 && <ul className="mt-2 list-inside list-disc text-xs leading-6">{pending.changes.map((change, index) => <li key={index}>{change}</li>)}</ul>}
-      <p className="mt-2 text-xs text-slate-600">确认保存计划后，各阶段仍为尚未执行。</p>
+      <p className="mt-2 text-xs text-slate-600">确认后平台会创建 Project 和 Graph；各阶段不会自动执行。</p>
       <div className="mt-3 flex gap-2">
-        <button type="button" disabled={busy} onClick={() => onDecision(true)} className="rounded bg-blue-700 px-3 py-2 text-sm text-white disabled:opacity-40">{view?.current ? '确认保存新版本' : '确认创建项目和计划'}</button>
+        <button type="button" disabled={busy} onClick={() => onDecision(true)} className="rounded bg-blue-700 px-3 py-2 text-sm text-white disabled:opacity-40">{view?.current ? '确认更新 Graph' : '确认创建 Project/Graph'}</button>
         <button type="button" disabled={busy} onClick={() => onDecision(false)} className="rounded border bg-white px-3 py-2 text-sm disabled:opacity-40">拒绝提案</button>
       </div>
     </section>}
@@ -45,6 +47,7 @@ export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, 
     </details>}
     {displayed && <PlanDetails plan={displayed} />}
     {!selectedRevision && pending && view?.current && <details className="mt-5"><summary className="text-sm font-medium">当前已确认计划 · 版本 {view.current_revision}</summary><PlanDetails plan={view.current.plan} /></details>}
+    {children}
   </aside>;
 }
 
