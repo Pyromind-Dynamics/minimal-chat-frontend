@@ -1,8 +1,11 @@
+import { stageExecutionLabel, type ExperimentExecution } from '../experimentExecutions';
+import { ExperimentExecutionPanel } from './ExperimentExecutionPanel';
 import { useId } from 'react';
 import { layoutPlan, planDiff, type ExperimentPlanView, type PlanRevision, type WorkflowPlan } from '../experimentPlans';
 
-export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, onHistory, onRefresh }: {
+export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, onHistory, onRefresh, executions = [] }: {
   view: ExperimentPlanView | null | undefined;
+  executions?: readonly ExperimentExecution[];
   selectedRevision: PlanRevision | null;
   busy: boolean;
   onDecision: (accept: boolean) => void;
@@ -31,7 +34,7 @@ export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, 
       <h3 className="text-sm font-semibold">{view?.current ? '修改提案 · 待确认' : '计划草稿 · 待确认'}</h3>
       <p className="mt-2 whitespace-pre-wrap text-sm">{pending.summary}</p>
       {pending.changes.length > 0 && <ul className="mt-2 list-inside list-disc text-xs leading-6">{pending.changes.map((change, index) => <li key={index}>{change}</li>)}</ul>}
-      <p className="mt-2 text-xs text-slate-600">确认保存计划后，各阶段仍为尚未执行。</p>
+      <p className="mt-2 text-xs text-slate-600">确认保存计划不代表授权执行，已有执行记录继续关联原计划版本。</p>
       <div className="mt-3 flex gap-2">
         <button type="button" disabled={busy} onClick={() => onDecision(true)} className="rounded bg-blue-700 px-3 py-2 text-sm text-white disabled:opacity-40">{view?.current ? '确认保存新版本' : '确认创建项目和计划'}</button>
         <button type="button" disabled={busy} onClick={() => onDecision(false)} className="rounded border bg-white px-3 py-2 text-sm disabled:opacity-40">拒绝提案</button>
@@ -43,12 +46,13 @@ export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, 
         <tbody>{diff.map((row, index) => <tr key={index} className="border-t"><th className="break-words p-1 text-left align-top font-medium">{row.label}</th><td className="whitespace-pre-wrap break-words p-1 align-top">{row.before}</td><td className="whitespace-pre-wrap break-words p-1 align-top">{row.after}</td></tr>)}</tbody>
       </table>
     </details>}
-    {displayed && <PlanDetails plan={displayed} />}
-    {!selectedRevision && pending && view?.current && <details className="mt-5"><summary className="text-sm font-medium">当前已确认计划 · 版本 {view.current_revision}</summary><PlanDetails plan={view.current.plan} /></details>}
+    {displayed && <PlanDetails plan={displayed} executions={executions.filter(run => run.plan_revision === (selectedRevision?.revision ?? (pending ? -1 : view?.current_revision)))} />}
+    <ExperimentExecutionPanel executions={executions} revision={view?.current_revision ?? 0} />
+    {!selectedRevision && pending && view?.current && <details className="mt-5"><summary className="text-sm font-medium">当前已确认计划 · 版本 {view.current_revision}</summary><PlanDetails plan={view.current.plan} executions={executions.filter(run => run.plan_revision === view.current_revision)} /></details>}
   </aside>;
 }
 
-function PlanDetails({ plan }: { plan: WorkflowPlan }) {
+function PlanDetails({ plan, executions = [] }: { plan: WorkflowPlan; executions?: readonly ExperimentExecution[] }) {
   const arrowId = useId().replaceAll(':', '');
   const { nodes, width, height } = layoutPlan(plan);
   return <section className="mt-5 space-y-4">
@@ -64,12 +68,12 @@ function PlanDetails({ plan }: { plan: WorkflowPlan }) {
       {nodes.map(node => <g key={node.id}>
         <rect x={node.x} y={node.y} width="160" height="65" rx="8" fill={node.enabled ? '#eff6ff' : '#f1f5f9'} stroke={node.enabled ? '#93c5fd' : '#cbd5e1'} strokeDasharray={node.placeholder ? '4 3' : undefined} />
         <text x={node.x + 80} y={node.y + 25} textAnchor="middle" fontSize="14" fill="#0f172a">{node.name}</text>
-        <text x={node.x + 80} y={node.y + 47} textAnchor="middle" fontSize="11" fill="#64748b">{node.placeholder ? '占位 · 未启用' : node.enabled ? '尚未执行' : '未启用 · 尚未执行'}</text>
+        <text x={node.x + 80} y={node.y + 47} textAnchor="middle" fontSize="11" fill="#64748b">{node.placeholder ? '占位 · 未启用' : node.enabled ? stageExecutionLabel(executions, node.id) : '未启用 · 尚未执行'}</text>
       </g>)}
     </svg>
     {plan.resources.length > 0 && <div><h4 className="text-sm font-medium">已知资源</h4>{plan.resources.map(resource => <div key={resource.id} className="mt-2 break-all text-xs"><strong>{resource.name}</strong><p>{resource.uri || '地址待补充'}</p><p>{resource.description}</p></div>)}</div>}
     {plan.stages.map(stage => <details key={stage.id} className="rounded border border-slate-200 bg-white p-3">
-      <summary className="text-sm font-medium">{stage.name} · {stage.placeholder ? '占位' : stage.enabled ? '尚未执行' : '未启用'}</summary>
+      <summary className="text-sm font-medium">{stage.name} · {stage.placeholder ? '占位' : stage.enabled ? stageExecutionLabel(executions, stage.id) : '未启用'}</summary>
       <p className="mt-2 text-xs text-slate-600">{stage.description}</p>
       {plan.tasks.filter(task => task.stage_id === stage.id).map(task => <section key={task.id} className="mt-3 border-t pt-3 text-xs">
         <h5 className="font-semibold">{task.name}</h5><p className="mt-1 whitespace-pre-wrap">{task.description}</p>

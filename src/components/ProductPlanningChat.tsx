@@ -189,7 +189,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
           if (id) void client.command(id, { type: 'cancel', command_id: crypto.randomUUID() }, options).then(() => refresh()).catch(failure => setError(String(failure)));
         }} />
       </section>
-      <ExperimentPlanPanel view={state.snapshot?.experiment_plan} selectedRevision={history} busy={busy || loading} onDecision={accept => { void decide(accept); }} onHistory={revision => { void loadHistory(revision); }} onRefresh={() => { void refresh().catch(failure => setError(String(failure))); }} />
+      <ExperimentPlanPanel executions={state.snapshot?.experiment_executions ?? []} view={state.snapshot?.experiment_plan} selectedRevision={history} busy={busy || loading} onDecision={accept => { void decide(accept); }} onHistory={revision => { void loadHistory(revision); }} onRefresh={() => { void refresh().catch(failure => setError(String(failure))); }} />
     </main>
   </div>;
 }

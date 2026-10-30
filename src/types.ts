@@ -362,6 +362,7 @@ export interface ConversationSnapshot {
   current_workflow?: ProductWorkflowState | null;
   plan?: ProductPlanState | null;
   experiment_plan?: import('./experimentPlans').ExperimentPlanView | null;
+  experiment_executions?: import('./experimentExecutions').ExperimentExecution[] | null;
   pending_permissions: ProductPermission[];
   pending_inputs?: PendingUserInput[];
   automatic_turns_suspended?: boolean;
