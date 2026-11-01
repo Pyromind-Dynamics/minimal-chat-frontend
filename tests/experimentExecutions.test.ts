@@ -34,5 +34,13 @@ test('execution details show uncertain submissions and historical results withou
     assert.match(completed, /0.93/);
     assert.match(completed, /生成失败/);
     assert.match(completed, /已成功/);
+    const standalone = renderToStaticMarkup(createElement(ExperimentExecutionPanel, {
+      executions: [{ ...run, plan_revision: null, waiting_reason: '等待重新授权' }], revision: null,
+      onResolve: async () => {}, onControl: async () => {},
+    }));
+    assert.match(standalone, /核对并绑定/);
+    assert.match(standalone, /终止本次跟踪/);
+    assert.match(standalone, /等待重新授权/);
+    assert.ok(!standalone.includes('历史计划的执行结果'));
   } finally { await server.close(); }
 });

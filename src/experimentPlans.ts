@@ -11,6 +11,12 @@ export interface WorkflowPlan {
   unresolved: string[]; stages: ExperimentStage[]; tasks: ExperimentTask[];
   edges: { source: string; target: string }[];
 }
+export interface ExperimentContextView {
+  project_id: string | null; sequence: number;
+  context: { goal: string; constraints: string[]; resources: PlanResource[];
+    stages: ExperimentStage[]; edges: { source: string; target: string }[];
+    conclusions: string[]; next_steps: string[]; blockers: string[]; status: 'active' | 'completed' };
+}
 export interface PlanProposal {
   proposal_id: string; base_revision: number; plan: WorkflowPlan; summary: string;
   changes: string[]; status: 'pending' | 'superseded' | 'rejected' | 'confirmed'; created_at: string;

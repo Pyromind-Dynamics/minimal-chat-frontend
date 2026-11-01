@@ -5,7 +5,6 @@ import { useChatContext } from '../ChatContext';
 import { useProductEventStream } from '../hooks/useProductEventStream';
 import type { ProductClient } from '../productClient';
 import type { ConversationSnapshot, ProductEvent } from '../types';
-import type { PlanRevision } from '../experimentPlans';
 import {
   loadRequestOverrides,
   saveRequestOverrides,
@@ -15,7 +14,6 @@ import { ChatPanel } from './ChatPanel';
 import { MessageInput } from './MessageInput';
 import { StatusBar } from './StatusBar';
 import { ExperimentPlanPanel } from './ExperimentPlanPanel';
-import { ProjectGraphPanel } from './ProjectGraphPanel';
 
 export function ProductPlanningChat({ client, title, storageNamespace }: {
   client: ProductClient; title: string; storageNamespace: string;
@@ -32,13 +30,11 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
   const [notice, setNotice] = useState<string | null>(null);
   const [afterSeq, setAfterSeq] = useState(0);
   const [hasConnected, setHasConnected] = useState(false);
-  const [history, setHistory] = useState<PlanRevision | null>(null);
   const selectedKey = `${storageNamespace}.${userId}.selected`;
   const newKey = `${storageNamespace}.${userId}.new`;
   const activeId = useRef<string | null>(null);
   const generation = useRef(0);
   const refreshTimer = useRef<number | null>(null);
-  const decisionIds = useRef(new Map<string, string>());
 
   const apply = useCallback((snapshot: ConversationSnapshot) => {
     if (activeId.current !== snapshot.conversation_id) return;
@@ -59,7 +55,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
     const epoch = ++generation.current;
     activeId.current = id;
     dispatch({ type: 'SET_CONVERSATION_ID', id });
-    setHasConnected(false); setHistory(null); setError(null); setNotice(null); setLoading(true);
+    setHasConnected(false); setError(null); setNotice(null); setLoading(true);
     try {
       const snapshot = await client.snapshot(id, options);
       if (generation.current !== epoch) return;
@@ -134,30 +130,11 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
     } finally { setBusy(false); }
   };
 
-  const decide = async (accept: boolean) => {
-    const id = activeId.current, proposal = state.snapshot?.experiment_plan?.pending_proposal;
-    if (!id || !proposal || busy) return;
-    const hadProject = Boolean(state.snapshot?.experiment_plan?.project_id);
-    setBusy(true); setError(null); setNotice(null);
-    const key = `${id}:${proposal.proposal_id}:${accept}`;
-    let commandId = decisionIds.current.get(key);
-    if (!commandId) { commandId = crypto.randomUUID(); decisionIds.current.set(key, commandId); }
-    try {
-      const receipt = await client.command(id, {
-        type: accept ? 'confirm_experiment_plan' : 'reject_experiment_plan', command_id: commandId,
-        proposal_id: proposal.proposal_id, ...(accept ? { expected_revision: proposal.base_revision } : {}),
-      }, options);
-      setNotice(accept ? `已${hadProject ? '更新' : '创建'} Project Graph，计划版本 ${receipt.response.revision}。` : '已拒绝提案，当前计划保持原版本。');
-      await refresh();
-    } catch (failure) { setError(String(failure)); }
-    finally { setBusy(false); }
-  };
-
   const newConversation = () => {
     generation.current += 1; activeId.current = null;
     localStorage.removeItem(selectedKey); localStorage.setItem(newKey, '1');
     dispatch({ type: 'RESET_CONVERSATION' });
-    setHistory(null); setError(null); setNotice(null); setAfterSeq(0); setHasConnected(false);
+    setError(null); setNotice(null); setAfterSeq(0); setHasConnected(false);
   };
 
   const applyCredentials = () => {
@@ -170,15 +147,6 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
     saveRequestOverrides(next);
   };
 
-  const loadHistory = async (revision: number | null) => {
-    if (revision === null) { setHistory(null); return; }
-    const id = activeId.current, epoch = generation.current;
-    if (!id) return;
-    try {
-      const saved = await client.revision(id, revision, options);
-      if (generation.current === epoch && activeId.current === id) setHistory(saved);
-    } catch (failure) { setError(String(failure)); }
-  };
 
   return <div className="product-planning-chat flex h-screen flex-col bg-white text-left text-slate-900">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
@@ -231,7 +199,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
     <main className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[200px_minmax(0,1fr)_520px] lg:overflow-hidden 2xl:grid-cols-[240px_minmax(0,1fr)_600px]">
       <nav aria-label="会话列表" className="overflow-y-auto border-r bg-slate-50">
         {conversations.map(item => <button key={item.conversation_id} type="button" disabled={busy || loading} onClick={() => { void open(item.conversation_id); }} className={`block w-full border-b p-3 text-left text-sm disabled:opacity-50 ${item.conversation_id === state.conversationId ? 'bg-blue-50' : ''}`}>
-          <span className="block truncate">{item.experiment_plan?.current?.plan.name ?? item.conversation_id.slice(0, 12)}</span>
+          <span className="block truncate">{item.experiment_context?.context.goal || item.experiment_plan?.current?.plan.name || item.conversation_id.slice(0, 12)}</span>
           <span className="text-xs text-slate-500">{item.status} · {item.updated_at ? new Date(item.updated_at).toLocaleString() : '新会话'}</span>
         </button>)}
       </nav>
@@ -242,9 +210,27 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
           if (id) void client.command(id, { type: 'cancel', command_id: crypto.randomUUID() }, options).then(() => refresh()).catch(failure => setError(String(failure)));
         }} />
       </section>
-      <ExperimentPlanPanel executions={state.snapshot?.experiment_executions ?? []} view={state.snapshot?.experiment_plan} selectedRevision={history} busy={busy || loading} onDecision={accept => { void decide(accept); }} onHistory={revision => { void loadHistory(revision); }} onRefresh={() => { void refresh().catch(failure => setError(String(failure))); }}>
-        {state.snapshot?.experiment_plan?.project_id && state.snapshot.experiment_plan.current_revision > 0 && <ProjectGraphPanel client={client} projectId={state.snapshot.experiment_plan.project_id} revision={state.snapshot.experiment_plan.current_revision} requestOptions={options} />}
-      </ExperimentPlanPanel>
+      <ExperimentPlanPanel view={state.snapshot?.experiment_plan} contextView={state.snapshot?.experiment_context} exploration
+        executions={state.snapshot?.experiment_executions ?? []} selectedRevision={null} busy={busy || loading}
+        queue={state.snapshot?.experiment_queue ?? []}
+        onDecision={() => {}} onHistory={() => {}}
+        onRefresh={() => { void refresh().catch(failure => setError(String(failure))); }}
+        onControl={async (runId, action) => {
+          const id = activeId.current; if (!id) return;
+          setBusy(true); setError(null);
+          try { await client.command(id, { type: 'control_experiment_task', run_id: runId, action, command_id: crypto.randomUUID() }, options); await refresh(); }
+          catch (failure) { setError(String(failure)); } finally { setBusy(false); }
+        }}
+        onReadArtifact={async (runId, name) => {
+          const id = activeId.current; if (!id) throw new Error('会话未打开');
+          return client.executionArtifact(id, runId, name, options);
+        }}
+        onResolve={async (runId, action, taskId) => {
+          const id = activeId.current; if (!id) return;
+          setBusy(true); setError(null);
+          try { await client.command(id, { type: 'resolve_experiment_submission', run_id: runId, action, task_id: taskId, command_id: crypto.randomUUID() }, options); await refresh(); }
+          catch (failure) { setError(String(failure)); } finally { setBusy(false); }
+        }} />
     </main>
   </div>;
 }

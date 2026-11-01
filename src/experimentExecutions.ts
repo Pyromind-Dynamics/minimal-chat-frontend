@@ -1,10 +1,15 @@
 export interface ExperimentExecution {
   run_id: string;
   project_id: string;
-  plan_revision: number;
+  plan_revision: number | null;
   task_id: string;
-  stage_id: string;
+  stage_id: string | null;
   task_name: string;
+  intent?: string;
+  summary?: string | null;
+  report_uri?: string | null;
+  blockers?: string[];
+  waiting_reason?: string | null;
   role_id: string;
   state: string;
   report_state: string;
@@ -16,6 +21,7 @@ export interface ExperimentExecution {
 }
 
 const labels: Record<string, string> = {
+  prepared: '方案已准备 · 未提交平台',
   needs_input: '等待补充输入', queued: '排队中', preparing: '准备评测方案', awaiting_confirmation: '等待执行确认',
   queued_submission: '等待提交平台', submitting: '正在提交平台', waiting_platform: '等待平台',
   waiting_artifacts: '等待产物校验', succeeded: '已成功', failed: '已失败', rejected: '已拒绝',

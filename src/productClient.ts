@@ -29,6 +29,7 @@ export function createProductClient(path: string) {
     runProjectNode: (projectId: string, nodeId: string, options: RequestOptions) => productRequest<StageRun>(`${BACKEND_URL}${echomindProjectNodeRunPath(projectId, nodeId)}`, { method: 'POST' }, options),
     startProjectNode: (projectId: string, nodeId: string, options: RequestOptions) => productRequest<ProjectNodeStart>(`${BACKEND_URL}${echomindProjectNodeStartPath(projectId, nodeId)}`, { method: 'POST' }, options),
     projectArtifact: (projectId: string, artifactId: string, options: RequestOptions) => productRequest<ProjectArtifactDocument>(`${BACKEND_URL}${echomindProjectArtifactPath(projectId, artifactId)}`, {}, options),
+    executionArtifact: (id: string, runId: string, name: string, options: RequestOptions) => productRequest<{content: string}>(`${base}/${encodeURIComponent(id)}/experiment-executions/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(name)}`, {}, options),
     eventsUrl: (id: string, afterSeq: number) => `${base}/${encodeURIComponent(id)}/events?afterSeq=${afterSeq}`,
   };
 }

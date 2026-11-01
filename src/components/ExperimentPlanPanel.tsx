@@ -2,11 +2,17 @@ import { stageExecutionLabel, type ExperimentExecution } from '../experimentExec
 import { ExperimentExecutionPanel } from './ExperimentExecutionPanel';
 import { useId } from 'react';
 import type { ReactNode } from 'react';
-import { layoutPlan, planDiff, type ExperimentPlanView, type PlanRevision, type WorkflowPlan } from '../experimentPlans';
+import { layoutPlan, planDiff, type ExperimentPlanView, type PlanRevision, type WorkflowPlan, type ExperimentContextView } from '../experimentPlans';
 
-export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, onHistory, onRefresh, executions = [], children }: {
+export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, onHistory, onRefresh, executions = [], queue = [], children, contextView, exploration, onControl, onResolve, onReadArtifact }: {
+  contextView?: ExperimentContextView | null;
+  exploration?: boolean;
+  onControl?: (runId: string, action: 'cancel' | 'retry_report') => Promise<void>;
+  onResolve?: (runId: string, action: 'bind' | 'abandon', taskId?: string) => Promise<void>;
+  onReadArtifact?: (runId: string, name: string) => Promise<{content: string}>;
   view: ExperimentPlanView | null | undefined;
   executions?: readonly ExperimentExecution[];
+  queue?: readonly {id: string; kind: string; state: string; attempts: number; waiting_reason?: string | null}[];
   selectedRevision: PlanRevision | null;
   busy: boolean;
   onDecision: (accept: boolean) => void;
@@ -14,6 +20,28 @@ export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, 
   onRefresh: () => void;
   children?: ReactNode;
 }) {
+  if (exploration) {
+    const context = contextView?.context;
+    const stages = context?.stages ?? view?.current?.plan.stages ?? [];
+    const edges = context?.edges ?? view?.current?.plan.edges ?? [];
+    return <aside className="experiment-plan-panel min-w-0 overflow-y-auto border-l border-slate-200 bg-slate-50 p-4" aria-label="实验任务与结果">
+      <div className="flex items-center justify-between"><h2 className="font-semibold">实验任务与结果</h2><button disabled={busy} onClick={onRefresh} className="text-sm text-blue-700">刷新</button></div>
+      <p className="mt-3 whitespace-pre-wrap text-sm">{context?.goal || view?.current?.plan.goal || '说明目标后，Manager 将委派子 Agent 完成具体任务。无需确认 Graph。'}</p>
+      <ExperimentExecutionPanel executions={executions} revision={null} onControl={onControl} onResolve={onResolve} onReadArtifact={onReadArtifact} busy={busy} />
+      {queue.length > 0 && <details className="mt-4 rounded border p-3"><summary className="text-sm">后台工作队列 · {queue.filter(item => !['completed', 'cancelled'].includes(item.state)).length} 项待处理</summary>
+        <ul className="mt-2 space-y-2 text-xs">{queue.map(item => <li key={item.id}>
+          {({manager_turn: '对话与结果处理', execute_task: '子任务执行', generate_report: '结果分析与报告', cancel_execution: '停止任务'} as Record<string, string>)[item.kind] ?? item.kind}
+          {' · '}{({queued: '排队中', running: '执行中', completed: '已完成', waiting_authorization: '等待重新授权', reconciliation_required: '需要核对执行状态', cancelled: '已取消', failed: '失败'} as Record<string, string>)[item.state] ?? item.state}
+          {item.waiting_reason && <p className="mt-1 text-amber-800">{item.waiting_reason === 'reauthorization required' ? '重新登录后打开此会话继续。' : item.waiting_reason}</p>}
+        </li>)}</ul>
+      </details>}
+      {stages.length > 0 && <details className="mt-5 rounded border p-3"><summary className="text-sm">实验参考，可随探索调整</summary>
+        <div className="mt-3 flex flex-wrap gap-2">{stages.map(stage => <span key={stage.id} className="rounded border bg-white px-2 py-1 text-xs">{stage.name}{stage.placeholder ? ' · 未启用占位' : !stage.enabled ? ' · 未启用' : ''}</span>)}</div>
+        <ul className="mt-2 text-xs text-slate-500">{edges.map((edge, index) => <li key={index}>{stages.find(stage => stage.id === edge.source)?.name} → {stages.find(stage => stage.id === edge.target)?.name}</li>)}</ul>
+      </details>}
+      {!!context?.conclusions.length && <details className="mt-4"><summary className="text-sm">已知结论</summary><ul className="mt-2 list-inside list-disc text-sm">{context.conclusions.map((text, index) => <li key={index}>{text}</li>)}</ul></details>}
+    </aside>;
+  }
   const pending = view?.pending_proposal;
   const displayed = selectedRevision?.plan ?? pending?.plan ?? view?.current?.plan;
   const diff = pending && view?.current ? planDiff(view.current.plan, pending.plan) : [];

@@ -61,3 +61,22 @@ test('draft, confirmed, revision and historical views render real plan data and 
     assert.ok(!history.includes('确认更新 Graph'));
   } finally { await server.close(); }
 });
+
+test('exploration shows tasks without graph approval and permits a cyclic advisory graph', async () => {
+  const server = await createServer({ server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom' });
+  try {
+    const { ExperimentPlanPanel } = await server.ssrLoadModule('/src/components/ExperimentPlanPanel.tsx');
+    const contextView = { project_id: 'experiment', sequence: 9, context: { goal: '完成一次真实 baseline', stages: plan.stages, edges: [{source: 'init', target: 'data'}, {source: 'data', target: 'init'}], conclusions: [] } };
+    const props = { view: null, contextView, exploration: true, selectedRevision: null, busy: false, onDecision: () => {}, onHistory: () => {}, onRefresh: () => {}, executions: [{run_id: 'task', task_name: '自由探索', role_id: 'eval', plan_revision: null, state: 'succeeded', report_state: 'failed', metrics: { evaluated_cases: 3 }, artifacts: []}], onControl: async () => {} };
+    const html = renderToStaticMarkup(createElement(ExperimentPlanPanel, props));
+    assert.match(html, /实验任务与结果/);
+    assert.match(html, /实验参考，可随探索调整/);
+    assert.match(html, /Data → Init/);
+    assert.match(html, /仅重试报告/);
+    assert.match(html, /evaluated_cases/);
+    assert.ok(!html.includes('确认创建') && !html.includes('查看版本') && !html.includes('确认更新') && !html.includes('当前版本'));
+    assert.ok(!html.includes('<details open'));
+    const withoutGraph = renderToStaticMarkup(createElement(ExperimentPlanPanel, {...props, contextView: null}));
+    assert.match(withoutGraph, /自由探索/);
+  } finally { await server.close(); }
+});
