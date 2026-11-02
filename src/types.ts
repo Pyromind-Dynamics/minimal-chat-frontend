@@ -37,6 +37,7 @@ export interface ActionEvent {
   category?: TimelineOperation['category'];
   details?: unknown;
   related_operations?: TimelineOperation[];
+  subagent_runs?: TimelineOperation[];
   id: string;
   timestamp: string;
   source: 'agent';

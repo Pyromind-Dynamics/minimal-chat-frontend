@@ -15,7 +15,7 @@ export function snapshotToChatEvents(
   snapshot: ConversationSnapshot,
 ): ChatEvent[] {
   const events: ChatEvent[] = [];
-  const { hidden, related } = groupSubagentOperations(snapshot.timeline.filter((item): item is TimelineOperation => item.kind === 'operation'));
+  const { hidden, related, runs } = groupSubagentOperations(snapshot.timeline.filter((item): item is TimelineOperation => item.kind === 'operation'));
   for (const item of snapshot.timeline) {
     if (item.kind === 'message') {
       events.push({
@@ -33,8 +33,12 @@ export function snapshotToChatEvents(
     }
     if (item.kind === 'operation') {
       if (hidden.has(item.item_id)) continue;
-      events.push({ ...toAction(item), related_operations: related.get(item.item_id) });
-      const observation = toObservation(item);
+      const history = runs.get(item.item_id);
+      const current = history?.at(-1) ?? item;
+      events.push({ ...toAction(current), id: item.item_id, subagent_runs: history,
+        related_operations: (history ?? [item]).flatMap(run => related.get(run.item_id) ?? []) });
+      const observation = { ...toObservation(current), id: `${item.item_id}:observation`,
+        action_id: item.item_id, tool_call_id: item.item_id };
       events.push(observation);
       continue;
     }
