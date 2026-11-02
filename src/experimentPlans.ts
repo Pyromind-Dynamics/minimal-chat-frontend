@@ -14,7 +14,7 @@ export interface WorkflowPlan {
 export interface ExperimentContextView {
   project_id: string | null; sequence: number;
   context: { goal: string; constraints: string[]; resources: PlanResource[];
-    stages: ExperimentStage[]; edges: { source: string; target: string }[];
+    stages: ExperimentStage[]; tasks?: ExperimentTask[]; edges: { source: string; target: string }[];
     conclusions: string[]; next_steps: string[]; blockers: string[]; status: 'active' | 'completed' };
 }
 export interface PlanProposal {
@@ -30,7 +30,8 @@ export interface ExperimentPlanView {
   history: { revision: number; name: string; confirmed_at: string }[];
 }
 
-export function layoutPlan(plan: WorkflowPlan) {
+export function layoutPlan(plan: Pick<WorkflowPlan, 'stages' | 'edges'>) {
+  if (plan.stages.length === 0) return { nodes: [], width: 190, height: 100 };
   const levels = new Map(plan.stages.map(stage => [stage.id, 0]));
   for (let pass = 0; pass < plan.stages.length; pass += 1) {
     let changed = false;
