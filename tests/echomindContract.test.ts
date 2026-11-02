@@ -14,6 +14,7 @@ import {
   echomindProjectNodeStartPath,
   echomindProjectPath,
   echomindProjectRunsPath,
+  nodeConfigDigest,
 } from '../src/echomindContract.ts';
 
 test('EchoMind endpoints stay separate from the Workbench conversation API', () => {
@@ -80,4 +81,26 @@ test('EchoMind conversation creation contains only intent and LLM config', () =>
 
 test('Project API only exposes persisted project resources', () => {
   assert.equal(PROJECTS_PATH, '/api/echomind/projects');
+});
+
+test('node config digest matches node validation identity', async () => {
+  const digest = await nodeConfigDigest({
+    type: 'train',
+    executor: 'contract_probe',
+    config: { z: 2, nested: { b: true, a: ['x'] }, a: 1 },
+  });
+  const reorderedDigest = await nodeConfigDigest({
+    type: 'train',
+    executor: 'contract_probe',
+    config: { a: 1, nested: { a: ['x'], b: true }, z: 2 },
+  });
+  const changedDigest = await nodeConfigDigest({
+    type: 'train',
+    executor: 'contract_probe',
+    config: { a: 1, nested: { a: ['x'], b: true }, z: 3 },
+  });
+
+  assert.match(digest, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(reorderedDigest, digest);
+  assert.notEqual(changedDigest, digest);
 });

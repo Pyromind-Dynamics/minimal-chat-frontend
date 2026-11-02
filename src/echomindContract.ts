@@ -107,11 +107,14 @@ export interface ProjectArtifact {
 
 export interface StageRun {
   schema_version: 1;
+  mode: 'node_validation';
+  request_id: string | null;
   run_id: string;
   project_id: string;
   node_id: string;
   node_type: ProjectNodeType;
   executor: string;
+  node_config_digest: string;
   status: StageRunStatus;
   message: string;
   input_refs: string[];
@@ -191,6 +194,39 @@ export function echomindProjectArtifactPath(
   artifactId: string,
 ): string {
   return `${PROJECTS_PATH}/${projectId}/artifacts/${artifactId}`;
+}
+
+export async function nodeConfigDigest(
+  node: Pick<ProjectNode, 'type' | 'executor' | 'config'>,
+): Promise<string> {
+  const payload = JSON.stringify(stableJsonValue({
+    type: node.type,
+    executor: node.executor,
+    config: node.config,
+  }));
+  const digest = await globalThis.crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(payload),
+  );
+  const hash = Array.from(
+    new Uint8Array(digest),
+    byte => byte.toString(16).padStart(2, '0'),
+  ).join('');
+  return `sha256:${hash}`;
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stableJsonValue);
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+        .map(([key, item]) => [key, stableJsonValue(item)]),
+    );
+  }
+  return value;
 }
 
 export function buildEchoMindConversationBody(
