@@ -14,7 +14,7 @@ export interface WorkflowPlan {
 export interface ExperimentContextView {
   project_id: string | null; sequence: number;
   context: { goal: string; constraints: string[]; resources: PlanResource[];
-    stages: ExperimentStage[]; tasks?: ExperimentTask[]; edges: { source: string; target: string }[];
+    stages: ExperimentStage[]; stage_executions?: Record<string, string[]>; tasks?: ExperimentTask[]; edges: { source: string; target: string }[];
     conclusions: string[]; next_steps: string[]; blockers: string[]; status: 'active' | 'completed' };
 }
 export interface PlanProposal {

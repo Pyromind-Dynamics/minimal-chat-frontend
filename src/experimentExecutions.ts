@@ -30,7 +30,7 @@ const labels: Record<string, string> = {
 };
 export function executionLabel(state: string): string { return labels[state] ?? `状态：${state}`; }
 
-export function stageExecutionLabel(executions: readonly ExperimentExecution[], stageId: string): string {
-  const matching = executions.filter(run => run.stage_id === stageId);
-  return matching.length ? executionLabel(matching[matching.length - 1].state) : '尚未执行';
+export function stageExecutionLabel(executions: readonly ExperimentExecution[], stageId: string, runIds: readonly string[] = [], unassociatedLabel = '尚未执行'): string {
+  const matching = executions.filter(run => run.stage_id === stageId || runIds.includes(run.run_id));
+  return matching.length ? executionLabel(matching[matching.length - 1].state) : unassociatedLabel;
 }
