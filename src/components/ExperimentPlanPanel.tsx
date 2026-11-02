@@ -27,6 +27,7 @@ export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, 
     return <aside className="experiment-plan-panel min-w-0 overflow-y-auto border-l border-slate-200 bg-slate-50 p-4" aria-label="实验任务与结果">
       <div className="flex items-center justify-between"><h2 className="font-semibold">实验任务与结果</h2><button disabled={busy} onClick={onRefresh} className="text-sm text-blue-700">刷新</button></div>
       <p className="mt-3 whitespace-pre-wrap text-sm">{context?.goal || view?.current?.plan.goal || '说明目标后，Manager 将委派子 Agent 完成具体任务。无需确认 Graph。'}</p>
+      {children}
       <ExperimentExecutionPanel executions={executions} revision={null} onControl={onControl} onResolve={onResolve} onReadArtifact={onReadArtifact} busy={busy} />
       {queue.length > 0 && <details className="mt-4 rounded border p-3"><summary className="text-sm">后台工作队列 · {queue.filter(item => !['completed', 'cancelled'].includes(item.state)).length} 项待处理</summary>
         <ul className="mt-2 space-y-2 text-xs">{queue.map(item => <li key={item.id}>

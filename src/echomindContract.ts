@@ -76,6 +76,19 @@ export interface ProjectInfo {
   graph: PersistedProjectGraph;
 }
 
+export interface ProjectGraphView {
+  schema_version: 1;
+  project_id: string;
+  graph_id: string;
+  name: string;
+  description: string;
+  lifecycle: ProjectLifecycle;
+  template: string | null;
+  requirements: ProjectRequirement[];
+  nodes: ProjectNode[];
+  edges: ProjectEdge[];
+}
+
 export type StageRunStatus = 'running' | 'succeeded' | 'failed';
 
 export interface ProjectArtifact {
@@ -149,6 +162,10 @@ export function echomindConversationEventsPath(
 
 export function echomindProjectPath(projectId: string): string {
   return `${PROJECTS_PATH}/${projectId}`;
+}
+
+export function echomindProjectGraphPath(projectId: string): string {
+  return `${PROJECTS_PATH}/${projectId}/graph`;
 }
 
 export function echomindProjectNodeRunPath(

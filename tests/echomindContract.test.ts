@@ -9,6 +9,7 @@ import {
   echomindConversationEventsPath,
   echomindConversationSnapshotPath,
   echomindProjectArtifactPath,
+  echomindProjectGraphPath,
   echomindProjectNodeRunPath,
   echomindProjectNodeStartPath,
   echomindProjectPath,
@@ -43,6 +44,10 @@ test('EchoMind endpoints stay separate from the Workbench conversation API', () 
   assert.equal(
     echomindProjectNodeRunPath('project-1', 'dataset'),
     '/api/echomind/projects/project-1/nodes/dataset/run',
+  );
+  assert.equal(
+    echomindProjectGraphPath('project-1'),
+    '/api/echomind/projects/project-1/graph',
   );
   assert.equal(
     echomindProjectNodeStartPath('project-1', 'dataset'),

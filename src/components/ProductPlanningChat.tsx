@@ -14,6 +14,7 @@ import { ChatPanel } from './ChatPanel';
 import { MessageInput } from './MessageInput';
 import { StatusBar } from './StatusBar';
 import { ExperimentPlanPanel } from './ExperimentPlanPanel';
+import { ProjectGraphPanel } from './ProjectGraphPanel';
 
 export function ProductPlanningChat({ client, title, storageNamespace }: {
   client: ProductClient; title: string; storageNamespace: string;
@@ -30,6 +31,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
   const [notice, setNotice] = useState<string | null>(null);
   const [afterSeq, setAfterSeq] = useState(0);
   const [hasConnected, setHasConnected] = useState(false);
+  const [projectGraphRevision, setProjectGraphRevision] = useState(0);
   const selectedKey = `${storageNamespace}.${userId}.selected`;
   const newKey = `${storageNamespace}.${userId}.new`;
   const activeId = useRef<string | null>(null);
@@ -55,7 +57,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
     const epoch = ++generation.current;
     activeId.current = id;
     dispatch({ type: 'SET_CONVERSATION_ID', id });
-    setHasConnected(false); setError(null); setNotice(null); setLoading(true);
+    setHasConnected(false); setProjectGraphRevision(0); setError(null); setNotice(null); setLoading(true);
     try {
       const snapshot = await client.snapshot(id, options);
       if (generation.current !== epoch) return;
@@ -88,6 +90,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
   const onEvent = useCallback((event: ProductEvent) => {
     if (event.conversation_id !== activeId.current) return;
     if (event.type.startsWith('message.')) dispatch({ type: 'APPLY_MESSAGE_EVENTS', events: [event] });
+    if (event.type === 'project_graph.changed') setProjectGraphRevision(value => value + 1);
     if (refreshTimer.current === null) refreshTimer.current = window.setTimeout(() => {
       refreshTimer.current = null;
       void refresh().catch(failure => setError(String(failure)));
@@ -130,11 +133,35 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
     } finally { setBusy(false); }
   };
 
+  const decidePlan = async (accept: boolean) => {
+    if (busy || loading) return;
+    const id = activeId.current;
+    const proposal = state.snapshot?.experiment_plan?.pending_proposal;
+    if (!id || !proposal) return;
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      await client.command(id, accept ? {
+        type: 'confirm_experiment_plan',
+        command_id: crypto.randomUUID(),
+        proposal_id: proposal.proposal_id,
+        expected_revision: proposal.base_revision,
+      } : {
+        type: 'reject_experiment_plan',
+        command_id: crypto.randomUUID(),
+        proposal_id: proposal.proposal_id,
+      }, options);
+      await refresh();
+      setNotice(accept ? 'Project 与 Working Graph 已创建，可以继续修改 Graph。' : '计划提案已拒绝。');
+    } catch (failure) {
+      setError(String(failure));
+    } finally { setBusy(false); }
+  };
+
   const newConversation = () => {
     generation.current += 1; activeId.current = null;
     localStorage.removeItem(selectedKey); localStorage.setItem(newKey, '1');
     dispatch({ type: 'RESET_CONVERSATION' });
-    setError(null); setNotice(null); setAfterSeq(0); setHasConnected(false);
+    setError(null); setNotice(null); setAfterSeq(0); setHasConnected(false); setProjectGraphRevision(0);
   };
 
   const applyCredentials = () => {
@@ -196,7 +223,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
     <StatusBar wsState={connection} status={state.status} conversationId={state.conversationId} isCreating={busy && !state.conversationId} hasConnected={hasConnected} />
     {error && <div role="alert" className="border-b bg-red-50 p-3 text-sm text-red-700">{error}<button type="button" className="ml-3 underline" onClick={() => setError(null)}>关闭</button></div>}
     {notice && <div role="status" className="border-b bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</div>}
-    <main className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[200px_minmax(0,1fr)_520px] lg:overflow-hidden 2xl:grid-cols-[240px_minmax(0,1fr)_600px]">
+    <main className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[220px_minmax(0,1fr)_620px] lg:overflow-hidden 2xl:grid-cols-[260px_minmax(0,1fr)_760px]">
       <nav aria-label="会话列表" className="overflow-y-auto border-r bg-slate-50">
         {conversations.map(item => <button key={item.conversation_id} type="button" disabled={busy || loading} onClick={() => { void open(item.conversation_id); }} className={`block w-full border-b p-3 text-left text-sm disabled:opacity-50 ${item.conversation_id === state.conversationId ? 'bg-blue-50' : ''}`}>
           <span className="block truncate">{item.experiment_context?.context.goal || item.experiment_plan?.current?.plan.name || item.conversation_id.slice(0, 12)}</span>
@@ -210,10 +237,10 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
           if (id) void client.command(id, { type: 'cancel', command_id: crypto.randomUUID() }, options).then(() => refresh()).catch(failure => setError(String(failure)));
         }} />
       </section>
-      <ExperimentPlanPanel view={state.snapshot?.experiment_plan} contextView={state.snapshot?.experiment_context} exploration
+      <ExperimentPlanPanel view={state.snapshot?.experiment_plan} contextView={state.snapshot?.experiment_context}
         executions={state.snapshot?.experiment_executions ?? []} selectedRevision={null} busy={busy || loading}
         queue={state.snapshot?.experiment_queue ?? []}
-        onDecision={() => {}} onHistory={() => {}}
+        onDecision={accept => { void decidePlan(accept); }} onHistory={() => {}}
         onRefresh={() => { void refresh().catch(failure => setError(String(failure))); }}
         onControl={async (runId, action) => {
           const id = activeId.current; if (!id) return;
@@ -230,7 +257,14 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
           setBusy(true); setError(null);
           try { await client.command(id, { type: 'resolve_experiment_submission', run_id: runId, action, task_id: taskId, command_id: crypto.randomUUID() }, options); await refresh(); }
           catch (failure) { setError(String(failure)); } finally { setBusy(false); }
-        }} />
+        }}>
+        {state.snapshot?.experiment_plan?.project_id && <ProjectGraphPanel
+          client={client}
+          projectId={state.snapshot.experiment_plan.project_id}
+          graphRevision={projectGraphRevision}
+          requestOptions={options}
+        />}
+      </ExperimentPlanPanel>
     </main>
   </div>;
 }
