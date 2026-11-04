@@ -1,5 +1,7 @@
 export interface ExperimentExecution {
   run_id: string;
+  plan_sequence?: number | null;
+  stage_snapshot?: {id: string; kind?: string | null; name: string; description?: string} | null;
   project_id: string;
   plan_revision: number | null;
   task_id: string;

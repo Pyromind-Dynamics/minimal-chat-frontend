@@ -56,7 +56,7 @@ export interface BaseObservation {
   verdict?: string | null;
   user_input?: { status: string; request_id?: string };
   kind?: string;
-  content?: ContentItem[];
+  content?: ContentItem[] | string;
   is_error?: boolean;
   error_code?: string | null;
   error_message?: string | null;
@@ -257,6 +257,8 @@ export interface TimelineMessage {
 }
 
 export interface TimelineOperation {
+  activity?: {items: (TimelineMessage | TimelineOperation)[]; truncated: boolean} | null;
+  execution?: import('./preparation').ExecutionBinding | null;
   kind: 'operation';
   item_id: string;
   started_seq: number;
@@ -353,6 +355,8 @@ export type RespondToUserInput = (
 ) => Promise<void>;
 
 export interface ConversationSnapshot {
+  preparation?: import('./preparation').PreparationView | null;
+  project?: import('./preparation').ProjectView | null;
   schema_version: number;
   conversation_id: string;
   through_seq: number;

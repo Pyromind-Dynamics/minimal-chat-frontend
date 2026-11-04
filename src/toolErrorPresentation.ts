@@ -50,8 +50,15 @@ export function getObservationDisplayText(observation: BaseObservation): string 
   return JSON.stringify(observation.result ?? observation, null, 2);
 }
 
+export function getObservationContent(observation: BaseObservation): ContentItem[] {
+  if (Array.isArray(observation.content)) return observation.content;
+  return Array.isArray(observation.to_llm_content) ? observation.to_llm_content : [];
+}
+
 function meaningfulText(observation: BaseObservation): string {
-  const preferred = observation.to_llm_content ?? observation.content ?? [];
+  const preferred = Array.isArray(observation.to_llm_content)
+    ? observation.to_llm_content : getObservationContent(observation);
+  if (!preferred.length && typeof observation.content === 'string') return observation.content.trim();
   return preferred
     .filter(isTextContent)
     .map((item) => item.text.trim())

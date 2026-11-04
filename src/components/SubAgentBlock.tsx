@@ -3,10 +3,10 @@ import type { ActionEvent, ObservationEvent } from '../types';
 import { object, readableResult, subagentDisplay } from '../subagentPresentation';
 import { ContentList } from './ContentList';
 
-export function SubAgentBlock({ action, observation }: {
-  action: ActionEvent; observation?: ObservationEvent;
+export function SubAgentBlock({ action, observation, initiallyExpanded = false }: {
+  action: ActionEvent; observation?: ObservationEvent; initiallyExpanded?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const [now, setNow] = useState(() => Date.now());
   const scroll = useRef<HTMLDivElement>(null);
   const follow = useRef(true);

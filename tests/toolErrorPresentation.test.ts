@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   getObservationDisplayText,
+  getObservationContent,
   getToolErrorPresentation,
   getUserInputInterruption,
 } from '../src/toolErrorPresentation.ts';
@@ -53,6 +54,16 @@ test('successful observations retain their text', () => {
     is_error: false,
     to_llm_content: [{ type: 'text', text: 'workflow valid' }],
   }), 'workflow valid');
+});
+
+test('resource preview text is not mistaken for a media content array', () => {
+  const observation = {
+    content: '{"input":"sample","label":"defect"}',
+    to_llm_content: [{type: 'text' as const, text: 'Preview: first 4 rows; truncated.'}],
+  };
+  assert.equal(getObservationDisplayText(observation), 'Preview: first 4 rows; truncated.');
+  assert.deepEqual(getObservationContent(observation).filter(item => item.type !== 'text'), []);
+  assert.equal(getObservationDisplayText({content: 'bounded text preview'}), 'bounded text preview');
 });
 
 test('confirmed user-input resolutions display cancellation or interruption', () => {
