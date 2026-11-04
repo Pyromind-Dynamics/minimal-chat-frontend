@@ -3,14 +3,18 @@ import type { ActionEvent, ObservationEvent } from '../types';
 import { object, readableResult, subagentDisplay } from '../subagentPresentation';
 import { ContentList } from './ContentList';
 
-export function SubAgentBlock({ action, observation }: {
-  action: ActionEvent; observation?: ObservationEvent;
+export function SubAgentBlock({ action, observation, initiallyExpanded = false }: {
+  action: ActionEvent; observation?: ObservationEvent; initiallyExpanded?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const [now, setNow] = useState(() => Date.now());
   const scroll = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const display = subagentDisplay(action.details);
+  const runs = action.subagent_runs ?? [];
+  const previousRuns = runs.slice(0, -1);
+  const phaseLabels: Record<string, string> = { execute: '执行任务', report: '整理结果' };
+  const phase = display?.phase ? phaseLabels[display.phase] ?? display.phase : undefined;
   const args = object(action.tool_call.arguments);
   const role = display?.role ?? (typeof args.agent === 'string' ? args.agent : action.tool_call.name);
   const task = display?.task ?? (typeof args.task === 'string' ? args.task : '未记录任务说明');
@@ -45,12 +49,26 @@ export function SubAgentBlock({ action, observation }: {
       <span aria-hidden="true" className="mt-0.5 text-slate-400">{expanded ? '▾' : '▸'}</span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 text-xs"><span className="font-semibold text-slate-800">子 Agent · {role}</span>
+          {phase && <span className="text-slate-500">{phase}</span>}
+          {runs.length > 1 && <span className="text-slate-400">第 {runs.length} 轮</span>}
           <span className={failed ? 'text-red-600' : running ? 'text-blue-600' : 'text-slate-500'}>{statusLabel}</span>
           <span className="ml-auto text-slate-400">{duration}</span></div>
         <p className="mt-1 line-clamp-2 break-words text-sm text-slate-700">{task}</p>
       </div>
     </button>
     {expanded && <div className="space-y-4 border-t border-slate-200 bg-white px-4 py-3 text-xs leading-5 text-slate-700">
+      {previousRuns.length > 0 && <div><h4 className="mb-1 font-semibold">此前运行</h4>
+        {previousRuns.map((run, index) => {
+          const prior = subagentDisplay(run.details);
+          const state = run.status === 'failed' ? run.error_code?.replace(/^subagent_/, '') ?? 'failed' : run.status;
+          return <details key={run.item_id} className="mb-2 rounded-lg border border-slate-200 p-2">
+            <summary className="cursor-pointer">第 {index + 1} 轮 · {phaseLabels[prior?.phase ?? ''] ?? '执行任务'} · {labels[state] ?? state}</summary>
+            {prior?.trace?.text && <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words">{prior.trace.text}</pre>}
+            <ContentList content={[{ type: 'text', text: readableResult(run.output.filter(block => block.type === 'text').map(block => block.text).join('\n')) || '未记录最终文本结果。' }]} markdown />
+            <p className="mt-1 break-all font-mono text-[10px] text-slate-400">run {prior?.run_id ?? run.run_id ?? run.item_id}</p>
+          </details>;
+        })}
+      </div>}
       {display?.previous_run_id && <p className="break-all text-slate-500">继续自运行 {display.previous_run_id}</p>}
       <div><h4 className="mb-1 font-semibold">执行过程 <span className="font-normal text-slate-400">· 最近轨迹窗口</span></h4>
         {trace?.truncated && <p className="mb-1 text-amber-700">轨迹已截断，仅展示最近的有界窗口。</p>}

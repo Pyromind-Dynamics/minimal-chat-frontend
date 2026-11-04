@@ -2,7 +2,7 @@ import { stageExecutionLabel, type ExperimentExecution } from '../experimentExec
 import { ExperimentExecutionPanel } from './ExperimentExecutionPanel';
 import { useId } from 'react';
 import type { ReactNode } from 'react';
-import { layoutPlan, planDiff, type ExperimentPlanView, type PlanRevision, type WorkflowPlan, type ExperimentContextView } from '../experimentPlans';
+import { layoutPlan, planDiff, type ExperimentPlanView, type PlanRevision, type WorkflowPlan, type ExperimentContextView, type ExperimentTask, type PlanResource } from '../experimentPlans';
 
 export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, onHistory, onRefresh, executions = [], queue = [], children, contextView, exploration, onControl, onResolve, onReadArtifact }: {
   contextView?: ExperimentContextView | null;
@@ -22,12 +22,11 @@ export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, 
 }) {
   if (exploration) {
     const context = contextView?.context;
-    const stages = context?.stages ?? view?.current?.plan.stages ?? [];
-    const edges = context?.edges ?? view?.current?.plan.edges ?? [];
+    const hasReferencePlan = context && (context.stages.length > 0 || (context.tasks?.length ?? 0) > 0 || (context.resources?.length ?? 0) > 0);
+    const displayed = selectedRevision?.plan ?? (hasReferencePlan ? context : view?.pending_proposal?.plan ?? view?.current?.plan);
     return <aside className="experiment-plan-panel min-w-0 overflow-y-auto border-l border-slate-200 bg-slate-50 p-4" aria-label="实验任务与结果">
       <div className="flex items-center justify-between"><h2 className="font-semibold">实验任务与结果</h2><button disabled={busy} onClick={onRefresh} className="text-sm text-blue-700">刷新</button></div>
-      <p className="mt-3 whitespace-pre-wrap text-sm">{context?.goal || view?.current?.plan.goal || '说明目标后，Manager 将委派子 Agent 完成具体任务。无需确认 Graph。'}</p>
-      {children}
+      {displayed ? <PlanDetails plan={displayed} executions={executions} advisory /> : <p className="mt-3 whitespace-pre-wrap text-sm">{context?.goal || '说明目标后，Manager 可直接处理任务或按需委派 Eval。无需确认 Graph。'}</p>}
       <ExperimentExecutionPanel executions={executions} revision={null} onControl={onControl} onResolve={onResolve} onReadArtifact={onReadArtifact} busy={busy} />
       {queue.length > 0 && <details className="mt-4 rounded border p-3"><summary className="text-sm">后台工作队列 · {queue.filter(item => !['completed', 'cancelled'].includes(item.state)).length} 项待处理</summary>
         <ul className="mt-2 space-y-2 text-xs">{queue.map(item => <li key={item.id}>
@@ -35,10 +34,6 @@ export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, 
           {' · '}{({queued: '排队中', running: '执行中', completed: '已完成', waiting_authorization: '等待重新授权', reconciliation_required: '需要核对执行状态', cancelled: '已取消', failed: '失败'} as Record<string, string>)[item.state] ?? item.state}
           {item.waiting_reason && <p className="mt-1 text-amber-800">{item.waiting_reason === 'reauthorization required' ? '重新登录后打开此会话继续。' : item.waiting_reason}</p>}
         </li>)}</ul>
-      </details>}
-      {stages.length > 0 && <details className="mt-5 rounded border p-3"><summary className="text-sm">实验参考，可随探索调整</summary>
-        <div className="mt-3 flex flex-wrap gap-2">{stages.map(stage => <span key={stage.id} className="rounded border bg-white px-2 py-1 text-xs">{stage.name}{stage.placeholder ? ' · 未启用占位' : !stage.enabled ? ' · 未启用' : ''}</span>)}</div>
-        <ul className="mt-2 text-xs text-slate-500">{edges.map((edge, index) => <li key={index}>{stages.find(stage => stage.id === edge.source)?.name} → {stages.find(stage => stage.id === edge.target)?.name}</li>)}</ul>
       </details>}
       {!!context?.conclusions.length && <details className="mt-4"><summary className="text-sm">已知结论</summary><ul className="mt-2 list-inside list-disc text-sm">{context.conclusions.map((text, index) => <li key={index}>{text}</li>)}</ul></details>}
     </aside>;
@@ -84,13 +79,19 @@ export function ExperimentPlanPanel({ view, selectedRevision, busy, onDecision, 
   </aside>;
 }
 
-function PlanDetails({ plan, executions = [] }: { plan: WorkflowPlan; executions?: readonly ExperimentExecution[] }) {
+function PlanDetails({ plan, executions = [], advisory = false }: { plan: WorkflowPlan | ExperimentContextView["context"]; executions?: readonly ExperimentExecution[]; advisory?: boolean }) {
   const arrowId = useId().replaceAll(':', '');
   const { nodes, width, height } = layoutPlan(plan);
-  return <section className="mt-5 space-y-4">
-    <div><h3 className="font-semibold">{plan.name}</h3><p className="mt-1 whitespace-pre-wrap text-sm leading-6">{plan.goal}</p></div>
-    {plan.unresolved.length > 0 && <div className="rounded border border-amber-200 p-3 text-sm"><h4 className="font-medium">待补充</h4><ul className="mt-1 list-inside list-disc">{plan.unresolved.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}
-    <svg role="img" aria-label="实验阶段关系图" viewBox={`0 0 ${width} ${height}`} className="w-full rounded border border-slate-200 bg-white">
+  const resources = plan.resources ?? [];
+  const tasks = plan.tasks ?? [];
+  const unresolved = ('unresolved' in plan ? plan.unresolved : plan.blockers) ?? [];
+  const associations = 'stage_executions' in plan ? plan.stage_executions : undefined;
+  const stageStatus = (stageId: string) => stageExecutionLabel(executions, stageId, associations?.[stageId], advisory ? '未关联执行' : '尚未执行');
+  return <section aria-label="工作流计划" className="mt-5 space-y-4">
+    <div><h3 className="font-semibold">{'name' in plan ? plan.name : '工作流计划'}</h3><p className="mt-1 whitespace-pre-wrap text-sm leading-6">{plan.goal}</p></div>
+    {advisory && <p className="text-xs text-slate-500">实验参考，可随探索调整；阶段状态来自明确关联的执行记录。</p>}
+    {unresolved.length > 0 && <div className="rounded border border-amber-200 p-3 text-sm"><h4 className="font-medium">待补充</h4><ul className="mt-1 list-inside list-disc">{unresolved.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}
+    {plan.stages.length > 0 && <svg role="img" aria-label="实验阶段关系图" viewBox={`0 0 ${width} ${height}`} className="w-full rounded border border-slate-200 bg-white">
       <defs><marker id={arrowId} markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="#64748b" /></marker></defs>
       {plan.edges.map(edge => {
         const source = nodes.find(node => node.id === edge.source), target = nodes.find(node => node.id === edge.target);
@@ -100,19 +101,23 @@ function PlanDetails({ plan, executions = [] }: { plan: WorkflowPlan; executions
       {nodes.map(node => <g key={node.id}>
         <rect x={node.x} y={node.y} width="160" height="65" rx="8" fill={node.enabled ? '#eff6ff' : '#f1f5f9'} stroke={node.enabled ? '#93c5fd' : '#cbd5e1'} strokeDasharray={node.placeholder ? '4 3' : undefined} />
         <text x={node.x + 80} y={node.y + 25} textAnchor="middle" fontSize="14" fill="#0f172a">{node.name}</text>
-        <text x={node.x + 80} y={node.y + 47} textAnchor="middle" fontSize="11" fill="#64748b">{node.placeholder ? '占位 · 未启用' : node.enabled ? stageExecutionLabel(executions, node.id) : '未启用 · 尚未执行'}</text>
+        <text x={node.x + 80} y={node.y + 47} textAnchor="middle" fontSize="11" fill="#64748b">{node.placeholder ? '占位 · 未启用' : node.enabled ? stageStatus(node.id) : '未启用'}</text>
       </g>)}
-    </svg>
-    {plan.resources.length > 0 && <div><h4 className="text-sm font-medium">已知资源</h4>{plan.resources.map(resource => <div key={resource.id} className="mt-2 break-all text-xs"><strong>{resource.name}</strong><p>{resource.uri || '地址待补充'}</p><p>{resource.description}</p></div>)}</div>}
+    </svg>}
+    {resources.length > 0 && <div><h4 className="text-sm font-medium">已知资源</h4>{resources.map(resource => <div key={resource.id} className="mt-2 break-all text-xs"><strong>{resource.name}</strong><p>{resource.uri || '地址待补充'}</p><p>{resource.description}</p></div>)}</div>}
     {plan.stages.map(stage => <details key={stage.id} className="rounded border border-slate-200 bg-white p-3">
-      <summary className="text-sm font-medium">{stage.name} · {stage.placeholder ? '占位' : stage.enabled ? stageExecutionLabel(executions, stage.id) : '未启用'}</summary>
+      <summary className="text-sm font-medium">{stage.name} · {stage.placeholder ? '占位' : stage.enabled ? stageStatus(stage.id) : '未启用'}</summary>
       <p className="mt-2 text-xs text-slate-600">{stage.description}</p>
-      {plan.tasks.filter(task => task.stage_id === stage.id).map(task => <section key={task.id} className="mt-3 border-t pt-3 text-xs">
-        <h5 className="font-semibold">{task.name}</h5><p className="mt-1 whitespace-pre-wrap">{task.description}</p>
-        {task.inputs.length > 0 && <div className="mt-2"><strong>输入</strong>{task.inputs.map(input => <p key={input.name}>{input.name} ← {input.resource_id ? plan.resources.find(resource => resource.id === input.resource_id)?.name : plan.tasks.find(upstream => upstream.id === input.task_id)?.name}{input.output_name ? ` / ${input.output_name}` : ''}</p>)}</div>}
-        {task.outputs.length > 0 && <div className="mt-2"><strong>预期产物</strong>{task.outputs.map(output => <p key={output.name}>{output.name}：{output.description}</p>)}</div>}
-        {task.completion_conditions.length > 0 && <div className="mt-2"><strong>完成条件声明</strong>{task.completion_conditions.map((condition, index) => <p key={index}>{condition.description}</p>)}</div>}
-      </section>)}
+      {tasks.filter(task => task.stage_id === stage.id).map(task => <TaskDetails key={task.id} task={task} tasks={tasks} resources={resources} />)}
     </details>)}
+  </section>;
+}
+
+function TaskDetails({ task, tasks, resources }: { task: ExperimentTask; tasks: readonly ExperimentTask[]; resources: readonly PlanResource[] }) {
+  return <section className="mt-3 border-t pt-3 text-xs">
+    <h5 className="font-semibold">{task.name}</h5><p className="mt-1 whitespace-pre-wrap">{task.description}</p>
+    {task.inputs.length > 0 && <div className="mt-2"><strong>输入</strong>{task.inputs.map(input => <p key={input.name}>{input.name} ← {input.resource_id ? resources.find(resource => resource.id === input.resource_id)?.name : tasks.find(upstream => upstream.id === input.task_id)?.name}{input.output_name ? ` / ${input.output_name}` : ''}</p>)}</div>}
+    {task.outputs.length > 0 && <div className="mt-2"><strong>预期产物</strong>{task.outputs.map(output => <p key={output.name}>{output.name}：{output.description}</p>)}</div>}
+    {task.completion_conditions.length > 0 && <div className="mt-2"><strong>完成条件声明</strong>{task.completion_conditions.map((condition, index) => <p key={index}>{condition.description}</p>)}</div>}
   </section>;
 }

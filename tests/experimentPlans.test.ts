@@ -23,6 +23,8 @@ test('graph layout follows actual edges, including branches, and places placehol
   assert.ok(node('eval').y < node('inference').y);
   const branched = layoutPlan({ ...plan, edges: [{ source: 'init', target: 'data' }, { source: 'init', target: 'train' }] });
   assert.equal(branched.nodes.find(stage => stage.id === 'data')!.y, branched.nodes.find(stage => stage.id === 'train')!.y);
+  const empty = layoutPlan({ stages: [], edges: [] });
+  assert.ok(Number.isFinite(empty.width) && Number.isFinite(empty.height));
 });
 
 test('proposal differences include task parameters and removed connections', () => {
@@ -70,7 +72,11 @@ test('exploration shows tasks without graph approval and permits a cyclic adviso
     const props = { view: null, contextView, exploration: true, selectedRevision: null, busy: false, onDecision: () => {}, onHistory: () => {}, onRefresh: () => {}, executions: [{run_id: 'task', task_name: '自由探索', role_id: 'eval', plan_revision: null, state: 'succeeded', report_state: 'failed', metrics: { evaluated_cases: 3 }, artifacts: []}], onControl: async () => {} };
     const html = renderToStaticMarkup(createElement(ExperimentPlanPanel, props));
     assert.match(html, /实验任务与结果/);
-    assert.match(html, /实验参考，可随探索调整/);
+    assert.match(html, /工作流计划/);
+    assert.match(html, /aria-label="实验阶段关系图"/);
+    assert.match(html, /<title>Data → Init<\/title>/);
+    assert.ok(!/NaN|Infinity/.test(html));
+    assert.ok(html.indexOf('aria-label="实验阶段关系图"') < html.indexOf('自由探索'));
     assert.match(html, /Data → Init/);
     assert.match(html, /仅重试报告/);
     assert.match(html, /evaluated_cases/);
@@ -78,5 +84,29 @@ test('exploration shows tasks without graph approval and permits a cyclic adviso
     assert.ok(!html.includes('<details open'));
     const withoutGraph = renderToStaticMarkup(createElement(ExperimentPlanPanel, {...props, contextView: null}));
     assert.match(withoutGraph, /自由探索/);
+    assert.match(withoutGraph, /可直接处理任务或按需委派 Eval/);
+    const withTasks = renderToStaticMarkup(createElement(ExperimentPlanPanel, { ...props, contextView: { ...contextView, context: { ...contextView.context, resources: [{ id: 'bench', name: '固定评测集', uri: '/datasets/val.jsonl', description: '验证数据' }], tasks: [{ ...plan.tasks[0], inputs: [{ name: '评测输入', resource_id: 'bench' }] }] } } }));
+    assert.match(withTasks, /固定评测集/);
+    assert.match(withTasks, /评测输入 ← 固定评测集/);
+    assert.match(withTasks, /基模自由命名评测/);
+    assert.match(withTasks, /预期基线报告/);
+    assert.ok(!withTasks.includes('确认创建') && !withTasks.includes('确认更新'));
+    assert.match(withTasks, /aria-label="实验阶段关系图"/);
+    const revision = { project_id: 'project', revision: 1, plan, confirmed_by: '42', confirmed_at: '2026-10-29T00:00:00Z' };
+    const savedView = { project_id: 'project', current_revision: 1, current: revision, pending_proposal: null, history: [] };
+    const emptyContext = { ...contextView, context: { ...contextView.context, goal: '', stages: [], edges: [], resources: [], tasks: [] } };
+    const saved = renderToStaticMarkup(createElement(ExperimentPlanPanel, { ...props, view: savedView, contextView: emptyContext }));
+    assert.match(saved, /图片质检实验/);
+    assert.match(saved, /<title>Init → Data<\/title>/);
+    const proposal = { proposal_id: 'draft', base_revision: 0, plan, summary: '草案', changes: [], status: 'pending', created_at: revision.confirmed_at };
+    const draft = renderToStaticMarkup(createElement(ExperimentPlanPanel, { ...props, contextView: null, view: { ...savedView, current: null, current_revision: 0, pending_proposal: proposal } }));
+    assert.match(draft, /图片质检实验/);
+    assert.match(draft, /aria-label="实验阶段关系图"/);
+    assert.ok(!draft.includes('确认创建') && !saved.includes('确认更新'));
+    const noPlan = renderToStaticMarkup(createElement(ExperimentPlanPanel, { ...props, contextView: emptyContext }));
+    assert.ok(!noPlan.includes('aria-label="工作流计划"'));
+    const resourcesOnly = renderToStaticMarkup(createElement(ExperimentPlanPanel, { ...props, contextView: { ...emptyContext, context: { ...emptyContext.context, resources: [{ id: 'dataset', name: '评测数据', uri: '/val.jsonl', description: '' }] } } }));
+    assert.match(resourcesOnly, /评测数据/);
+    assert.ok(!resourcesOnly.includes('<svg') && !/NaN|Infinity/.test(resourcesOnly));
   } finally { await server.close(); }
 });

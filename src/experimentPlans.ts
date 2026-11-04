@@ -1,7 +1,8 @@
 export interface PlanResource { id: string; name: string; uri: string | null; description: string }
-export interface ExperimentStage { id: string; name: string; description: string; enabled: boolean; placeholder: boolean }
+export interface ExperimentStage { id: string; kind?: string | null; name: string; description: string; enabled: boolean; placeholder: boolean }
 export interface PlanInput { name: string; resource_id: string | null; task_id: string | null; output_name: string | null }
 export interface ExperimentTask {
+  kind?: string | null;
   id: string; stage_id: string; name: string; description: string;
   inputs: PlanInput[]; outputs: { name: string; description: string }[];
   completion_conditions: { kind: string; description: string }[];
@@ -14,7 +15,7 @@ export interface WorkflowPlan {
 export interface ExperimentContextView {
   project_id: string | null; sequence: number;
   context: { goal: string; constraints: string[]; resources: PlanResource[];
-    stages: ExperimentStage[]; edges: { source: string; target: string }[];
+    stages: ExperimentStage[]; stage_executions?: Record<string, string[]>; tasks?: ExperimentTask[]; edges: { source: string; target: string }[];
     conclusions: string[]; next_steps: string[]; blockers: string[]; status: 'active' | 'completed' };
 }
 export interface PlanProposal {
@@ -30,7 +31,8 @@ export interface ExperimentPlanView {
   history: { revision: number; name: string; confirmed_at: string }[];
 }
 
-export function layoutPlan(plan: WorkflowPlan) {
+export function layoutPlan(plan: Pick<WorkflowPlan, 'stages' | 'edges'>) {
+  if (plan.stages.length === 0) return { nodes: [], width: 190, height: 100 };
   const levels = new Map(plan.stages.map(stage => [stage.id, 0]));
   for (let pass = 0; pass < plan.stages.length; pass += 1) {
     let changed = false;

@@ -34,3 +34,40 @@ test('legacy results extract text without leaking arbitrary JSON fields', () => 
   assert.equal(readableResult('{"content":[{"type":"text","text":"Evidence"}],"private":"hidden"}'), 'Evidence');
   assert.equal(readableResult('ordinary text'), 'ordinary text');
 });
+
+test('resumed runs share one stable card with the latest status and retained history', () => {
+  const first = { ...operation('subagent:first', 'subagent', { subagent: {
+    version: 1, run_id: 'first', task: 'Inspect the dataset', phase: 'execute', status: 'complete',
+  } }), name: 'search', status: 'completed', completed_seq: 2,
+    output: [{ type: 'text', text: 'Submission evidence' }] } as TimelineOperation;
+  const second = { ...operation('subagent:second', 'subagent', { subagent: {
+    version: 1, run_id: 'second', previous_run_id: 'first', task: 'Inspect the dataset', phase: 'report', status: 'running',
+  } }), name: 'search', started_seq: 4 };
+  const unrelated = { ...operation('subagent:other', 'subagent'), name: 'search', started_seq: 3 };
+  const snapshot = { timeline: [first, unrelated, second] } as ConversationSnapshot;
+  const events = snapshotToChatEvents(snapshot);
+  const actions = events.filter(event => event.kind === 'ActionEvent');
+  assert.equal(actions.length, 2);
+  assert.equal(actions[0].id, first.item_id);
+  assert.deepEqual(actions[0].subagent_runs, [first, second]);
+  const observation = events[1];
+  assert.ok(observation.kind === 'ObservationEvent');
+  assert.equal(observation.action_id, first.item_id);
+  assert.equal(observation.observation.operation_status, 'running');
+  second.status = 'completed';
+  const refreshed = snapshotToChatEvents(snapshot);
+  assert.ok(refreshed[0].kind === 'ActionEvent' && refreshed[1].kind === 'ObservationEvent');
+  assert.equal(refreshed[0].id, first.item_id);
+  assert.equal(refreshed[1].observation.operation_status, 'completed');
+  assert.equal(first.output[0].type === 'text' && first.output[0].text, 'Submission evidence');
+});
+
+test('unproven, cyclic or different-role links never hide independent runs', () => {
+  const make = (id: string, previous: string, seq: number, name = 'search') => ({
+    ...operation(id, 'subagent', { subagent: { version: 1, run_id: id, previous_run_id: previous } }),
+    name, started_seq: seq,
+  });
+  const ops = [make('self', 'self', 1), make('earlier', 'later', 2),
+    make('later', 'earlier', 3, 'general_purpose'), make('missing', 'absent', 4)];
+  assert.equal(groupSubagentOperations(ops).hidden.size, 0);
+});

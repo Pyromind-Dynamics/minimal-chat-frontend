@@ -20,6 +20,29 @@ test('stage state comes from executions and cancellation requests stay pending',
   assert.equal(executionLabel('cancelled'), '已取消');
 });
 
+test('advisory stages can link earlier executions without guessing from names', () => {
+  const completed = { ...run, plan_revision: null, stage_id: null, state: 'succeeded', report_state: 'ready' };
+  assert.equal(stageExecutionLabel([completed], 'later-stage', ['run1'], '未关联执行'), '已成功');
+  assert.equal(stageExecutionLabel([completed], 'later-stage', [], '未关联执行'), '未关联执行');
+  assert.equal(stageExecutionLabel([completed], 'later-stage', ['another-run'], '未关联执行'), '未关联执行');
+});
+
+test('a reference graph created after a report shows its explicitly linked execution', async () => {
+  const server = await createServer({ server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom' });
+  try {
+    const { ExperimentPlanPanel } = await server.ssrLoadModule('/src/components/ExperimentPlanPanel.tsx');
+    const context = { goal: '先执行、事后整理', stages: [{id: 'later-stage', name: '小样评测', description: '', enabled: true, placeholder: false}], edges: [], conclusions: [], status: 'completed' };
+    const props = { view: null, contextView: {project_id: 'project', sequence: 1, context}, exploration: true, selectedRevision: null, busy: false, onDecision: () => {}, onHistory: () => {}, onRefresh: () => {}, executions: [{...run, stage_id: null, plan_revision: null, state: 'succeeded', report_state: 'ready'}] };
+    const unlinked = renderToStaticMarkup(createElement(ExperimentPlanPanel, props));
+    assert.match(unlinked, /未关联执行/);
+    assert.ok(!unlinked.includes('尚未执行'));
+    const linked = renderToStaticMarkup(createElement(ExperimentPlanPanel, {...props, contextView: {...props.contextView, context: {...context, stage_executions: {'later-stage': ['run1']}}}}));
+    assert.match(linked, /小样评测 · 已成功/);
+    assert.ok(!linked.includes('未关联执行') && !linked.includes('尚未执行'));
+    assert.ok(!linked.includes('确认创建') && !linked.includes('确认更新'));
+  } finally { await server.close(); }
+});
+
 test('execution details show uncertain submissions and historical results without invented metrics', async () => {
   const server = await createServer({ server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom' });
   try {

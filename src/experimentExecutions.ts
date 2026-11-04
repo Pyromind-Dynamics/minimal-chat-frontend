@@ -1,5 +1,7 @@
 export interface ExperimentExecution {
   run_id: string;
+  plan_sequence?: number | null;
+  stage_snapshot?: {id: string; kind?: string | null; name: string; description?: string} | null;
   project_id: string;
   plan_revision: number | null;
   task_id: string;
@@ -30,7 +32,7 @@ const labels: Record<string, string> = {
 };
 export function executionLabel(state: string): string { return labels[state] ?? `状态：${state}`; }
 
-export function stageExecutionLabel(executions: readonly ExperimentExecution[], stageId: string): string {
-  const matching = executions.filter(run => run.stage_id === stageId);
-  return matching.length ? executionLabel(matching[matching.length - 1].state) : '尚未执行';
+export function stageExecutionLabel(executions: readonly ExperimentExecution[], stageId: string, runIds: readonly string[] = [], unassociatedLabel = '尚未执行'): string {
+  const matching = executions.filter(run => run.stage_id === stageId || runIds.includes(run.run_id));
+  return matching.length ? executionLabel(matching[matching.length - 1].state) : unassociatedLabel;
 }

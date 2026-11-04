@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { RequestOptions } from '../api';
 import {
   getLatestPlan,
@@ -23,8 +24,14 @@ import { SubAgentBlock } from './SubAgentBlock';
 import { ToolCallBlock } from './ToolCallBlock';
 import { WorkflowBlock } from './WorkflowBlock';
 import { UserInputCard } from './UserInputCard';
+import { getObservationContent, getObservationDisplayText } from '../toolErrorPresentation';
 
 interface ChatPanelProps {
+  autoScroll?: 'always' | 'follow';
+  logLabel?: string;
+  emptyText?: string;
+  children?: ReactNode;
+  contentKey?: string | number;
   events: ChatEvent[];
   isCondensing?: boolean;
   requestOptions: RequestOptions;
@@ -42,6 +49,11 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({
+  autoScroll = 'always',
+  logLabel,
+  emptyText = 'Start a conversation by sending a message below.',
+  children,
+  contentKey,
   events,
   isCondensing = false,
   requestOptions,
@@ -57,7 +69,12 @@ export function ChatPanel({
   onRespondToUserInput,
   conversationId,
 }: ChatPanelProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const followRef = useRef(true);
+  const [following, setFollowing] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const previousContentKey = useRef<string | number | undefined>(undefined);
   const inputRef = useRef<HTMLDivElement>(null);
   const visibleEvents = events;
   const latestPlan = getLatestPlan(visibleEvents);
@@ -69,8 +86,16 @@ export function ChatPanel({
 
   // Auto-scroll to bottom on new events
   useEffect(() => {
-    if (!pendingInputIds) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [visibleEvents.length, isCondensing, pendingOutboundMessages.length, textLength, pendingInputIds]);
+    if (pendingInputIds) return;
+    if (autoScroll === 'follow') {
+      if (followRef.current && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      return;
+    }
+    const changed = previousContentKey.current !== contentKey;
+    previousContentKey.current = contentKey;
+    if (changed && contentKey !== undefined) contentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    else bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [visibleEvents, isCondensing, pendingOutboundMessages.length, textLength, pendingInputIds, contentKey, autoScroll]);
 
   useEffect(() => {
     if (pendingInputIds) inputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -82,10 +107,11 @@ export function ChatPanel({
     && pendingInputs.length === 0
     && !isCondensing
     && !pendingPermission
+    && !children
   ) {
     return (
       <div className="flex flex-1 items-center justify-center px-4 text-center text-gray-400 text-sm">
-        Start a conversation by sending a message below.
+        {emptyText}
       </div>
     );
   }
@@ -195,7 +221,14 @@ export function ChatPanel({
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-4">
+    <>
+    <div ref={scrollRef} role={logLabel ? 'log' : undefined} aria-label={logLabel} tabIndex={logLabel ? 0 : undefined} onScroll={autoScroll === 'follow' ? () => {
+      const element = scrollRef.current;
+      if (!element) return;
+      const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 40;
+      followRef.current = atBottom;
+      setFollowing(atBottom);
+    } : undefined} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
       {rendered}
       {pendingOutboundMessages.map((message) => (
         <MessageBubble
@@ -215,6 +248,7 @@ export function ChatPanel({
         />
       ))}
       {latestPlan && <PlanBlock plan={latestPlan.plan} />}
+      {children && <div ref={contentRef}>{children}</div>}
       {isCondensing && (
         <div
           role="status"
@@ -245,26 +279,19 @@ export function ChatPanel({
       )}
       <div ref={bottomRef} />
     </div>
+    {autoScroll === 'follow' && !following && <button type="button" className="shrink-0 border-t bg-violet-50 py-2 text-xs text-violet-700" onClick={() => {
+      followRef.current = true; setFollowing(true);
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }}>查看最新消息 ↓</button>}
+    </>
   );
 }
 
 function getObsText(obs: ObservationEvent): string {
-  if (obs.observation.to_llm_content) {
-    return obs.observation.to_llm_content
-      .filter((c) => c.type === 'text')
-      .map((c) => (c as { type: 'text'; text: string }).text)
-      .join('\n');
-  }
-  if (obs.observation.content) {
-    return obs.observation.content
-      .filter((c) => c.type === 'text')
-      .map((c) => (c as { type: 'text'; text: string }).text)
-      .join('\n');
-  }
-  return JSON.stringify(obs.observation.result ?? obs.observation, null, 2);
+  return getObservationDisplayText(obs.observation);
 }
 
 function getObsImages(obs: ObservationEvent): ContentItem[] {
-  const content = obs.observation.content ?? [];
+  const content = getObservationContent(obs.observation);
   return content.filter((item) => item.type !== 'text');
 }

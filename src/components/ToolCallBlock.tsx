@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import type { RequestOptions } from '../api';
-import type { ActionEvent, ContentItem, ObservationEvent } from '../types';
+import type { ActionEvent, ObservationEvent } from '../types';
 import { ContentList } from './ContentList';
 import { ProgressBlock } from './ProgressBlock';
 import { SampleRecordsBlock } from './SampleRecordsBlock';
 import {
   getObservationDisplayText,
+  getObservationContent,
   getToolErrorPresentation,
   getUserInputInterruption,
 } from '../toolErrorPresentation';
@@ -55,7 +56,7 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
     ? getObservationDisplayText(observation.observation)
     : null);
   const obsImages = observation
-    ? getObservationContent(observation).filter((item) => item.type !== 'text')
+    ? getObservationContent(observation.observation).filter((item) => item.type !== 'text')
     : [];
 
   // DataFlow pipeline submissions get a live progress panel
@@ -205,8 +206,4 @@ function extractSampleRecords(obs: ObservationEvent | undefined): {
   const recordCount =
     typeof structured.record_count === 'number' ? structured.record_count : null;
   return { records, recordCount };
-}
-
-function getObservationContent(obs: ObservationEvent): ContentItem[] {
-  return obs.observation.content ?? obs.observation.to_llm_content ?? [];
 }

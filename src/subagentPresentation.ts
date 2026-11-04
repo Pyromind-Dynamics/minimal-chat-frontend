@@ -5,6 +5,7 @@ export interface SubagentDisplay {
   run_id?: string;
   role?: string;
   task?: string;
+  phase?: string;
   tool_call_id?: string;
   previous_run_id?: string;
   status?: string;
@@ -40,6 +41,22 @@ export function groupSubagentOperations(operations: TimelineOperation[]) {
   const hidden = new Set<string>();
   const related = new Map<string, TimelineOperation[]>();
   const children = operations.filter(item => item.category === 'subagent');
+  const runs = new Map<string, TimelineOperation[]>();
+  const roots = new Map<string, string>();
+  const byRunId = new Map(children.flatMap(item => {
+    const id = subagentDisplay(item.details)?.run_id;
+    return id ? [[id, item] as const] : [];
+  }));
+  for (const child of [...children].sort((a, b) => a.started_seq - b.started_seq)) {
+    const display = subagentDisplay(child.details);
+    const previous = display?.previous_run_id ? byRunId.get(display.previous_run_id) : undefined;
+    const linked = previous && previous.started_seq < child.started_seq
+      && previous.name === child.name;
+    const root = linked ? roots.get(previous.item_id) ?? previous.item_id : child.item_id;
+    roots.set(child.item_id, root);
+    runs.set(root, [...runs.get(root) ?? [], child]);
+    if (root !== child.item_id) hidden.add(child.item_id);
+  }
   for (const child of children) {
     const display = subagentDisplay(child.details);
     if (!display) continue;
@@ -53,5 +70,5 @@ export function groupSubagentOperations(operations: TimelineOperation[]) {
     matches.forEach(item => hidden.add(item.item_id));
     related.set(child.item_id, matches);
   }
-  return { hidden, related };
+  return { hidden, related, runs };
 }
