@@ -337,7 +337,17 @@ export interface UserInputQuestion {
   options: { id: string; label: string; description?: string | null }[];
 }
 
+export interface UserInputPresentation {
+  title?: string | null;
+  content: ProductContent[];
+}
+
+export type ReadInputMedia = (requestId: string, contentIndex: number, imageIndex: number) => Promise<{url: string}>;
+
 export interface PendingUserInput {
+  task_run_id?: string | null;
+  presentation?: UserInputPresentation | null;
+  checkpoint?: { run_id: string; checkpoint_id: string } | null;
   request_id: string;
   run_id?: string | null;
   questions: UserInputQuestion[];

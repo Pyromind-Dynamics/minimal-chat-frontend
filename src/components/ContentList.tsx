@@ -20,7 +20,7 @@ export function ContentList({
             <img
               key={`image-${index}-${imageIndex}`}
               src={url}
-              alt={`Sample preview ${index + imageIndex + 1}`}
+              alt={`图片 ${index + imageIndex + 1}`}
               className={imageClassName}
               loading="lazy"
             />
@@ -31,7 +31,7 @@ export function ContentList({
             <img
               key={`image-${index}`}
               src={item.image_url.url}
-              alt={`Sample preview ${index + 1}`}
+              alt={`图片 ${index + 1}`}
               className={imageClassName}
               loading="lazy"
             />

@@ -30,6 +30,8 @@ export function createProductClient(path: string) {
     startProjectNode: (projectId: string, nodeId: string, options: RequestOptions) => productRequest<ProjectNodeStart>(`${BACKEND_URL}${echomindProjectNodeStartPath(projectId, nodeId)}`, { method: 'POST' }, options),
     projectArtifact: (projectId: string, artifactId: string, options: RequestOptions) => productRequest<ProjectArtifactDocument>(`${BACKEND_URL}${echomindProjectArtifactPath(projectId, artifactId)}`, {}, options),
     executionArtifact: (id: string, runId: string, name: string, options: RequestOptions) => productRequest<{content: string}>(`${base}/${encodeURIComponent(id)}/experiment-executions/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(name)}`, {}, options),
+    inputMedia: (id: string, requestId: string, contentIndex: number, imageIndex: number, options: RequestOptions) => productRequest<{url: string}>(`${base}/${encodeURIComponent(id)}/pending-inputs/${encodeURIComponent(requestId)}/media/${contentIndex}/${imageIndex}`, {}, options),
+    checkpointMedia: (id: string, runId: string, checkpointId: string, sample: number, media: number, options: RequestOptions) => productRequest<{url: string}>(`${base}/${encodeURIComponent(id)}/experiment-executions/${encodeURIComponent(runId)}/checkpoints/${encodeURIComponent(checkpointId)}/media/${sample}/${media}`, {}, options),
     eventsUrl: (id: string, afterSeq: number) => `${base}/${encodeURIComponent(id)}/events?afterSeq=${afterSeq}`,
   };
 }

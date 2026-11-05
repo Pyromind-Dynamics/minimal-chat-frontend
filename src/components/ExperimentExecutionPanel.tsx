@@ -1,4 +1,4 @@
-import { executionLabel, type ExperimentExecution } from '../experimentExecutions';
+import { executionProgressLabel, type ExperimentExecution } from '../experimentExecutions';
 import { useState } from 'react';
 
 export function ExperimentExecutionPanel({ executions, revision, onControl, onResolve, onReadArtifact, busy }: {
@@ -14,7 +14,7 @@ export function ExperimentExecutionPanel({ executions, revision, onControl, onRe
   return <section aria-label="实验执行记录" className="mt-5 space-y-3">
     <h3 className="font-semibold">执行记录</h3>
     {executions.map(run => <details key={run.run_id} className="rounded border bg-white p-3">
-      <summary className="text-sm font-medium">{run.task_name} · {executionLabel(run.state)}</summary>
+      <summary className="text-sm font-medium">{run.task_name} · {executionProgressLabel(run)}</summary>
       <p className="mt-2 break-all text-xs text-slate-600">执行 {run.run_id}{run.plan_revision != null ? ` · 历史计划版本 ${run.plan_revision}` : ` · ${run.role_id}`}</p>
       {revision != null && run.plan_revision !== revision && <p className="mt-2 text-xs text-amber-800">历史计划的执行结果，不自动用于当前版本。</p>}
       {run.platform_task_id && <p className="mt-2 text-xs">平台任务 {run.platform_task_id}</p>}

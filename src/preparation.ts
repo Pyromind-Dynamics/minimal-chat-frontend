@@ -3,7 +3,7 @@ import type { ChatEvent, ConversationSnapshot, TimelineOperation } from './types
 
 export type WorkflowContext = ExperimentContextView['context'];
 export interface WorkflowNodeDefinition {
-  id: string; name: string; description: string; roles: string[];
+  id: string; name: string; description: string; roles: string[]; required_fields?: string[];
   tasks: {id: string; description: string; display_name?: string | null}[];
 }
 export interface PreparationView {
