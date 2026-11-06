@@ -4,13 +4,11 @@ import {
   echomindProjectArtifactPath,
   echomindProjectGraphPath,
   echomindProjectNodeRunPath,
-  echomindProjectNodeStartPath,
   echomindProjectPath,
   echomindProjectRunsPath,
   type ProjectArtifactDocument,
   type ProjectGraphView,
   type ProjectInfo,
-  type ProjectNodeStart,
   type StageRun,
 } from './echomindContract';
 import type { CommandReceipt, ConversationSnapshot } from './types';
@@ -30,7 +28,6 @@ export function createProductClient(path: string) {
     projectGraph: (id: string, options: RequestOptions) => productRequest<ProjectGraphView>(`${BACKEND_URL}${echomindProjectGraphPath(id)}`, {}, options),
     projectRuns: (id: string, options: RequestOptions) => productRequest<StageRun[]>(`${BACKEND_URL}${echomindProjectRunsPath(id)}`, {}, options),
     runProjectNode: (projectId: string, nodeId: string, options: RequestOptions, requestId: string = crypto.randomUUID()) => productRequest<StageRun>(`${BACKEND_URL}${echomindProjectNodeRunPath(projectId, nodeId)}`, { method: 'POST', body: JSON.stringify({ request_id: requestId }) }, options),
-    startProjectNode: (projectId: string, nodeId: string, options: RequestOptions) => productRequest<ProjectNodeStart>(`${BACKEND_URL}${echomindProjectNodeStartPath(projectId, nodeId)}`, { method: 'POST' }, options),
     projectArtifact: (projectId: string, artifactId: string, options: RequestOptions) => productRequest<ProjectArtifactDocument>(`${BACKEND_URL}${echomindProjectArtifactPath(projectId, artifactId)}`, {}, options),
     executionArtifact: (id: string, runId: string, name: string, options: RequestOptions) => productRequest<{content: string}>(`${base}/${encodeURIComponent(id)}/experiment-executions/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(name)}`, {}, options),
     inputMedia: (id: string, requestId: string, contentIndex: number, imageIndex: number, options: RequestOptions) => productRequest<{url: string}>(`${base}/${encodeURIComponent(id)}/pending-inputs/${encodeURIComponent(requestId)}/media/${contentIndex}/${imageIndex}`, {}, options),

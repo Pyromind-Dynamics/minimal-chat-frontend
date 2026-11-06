@@ -47,7 +47,17 @@ test('preparation card and workspace render checklist, plan, creation and stage 
     const state = {...snapshot, project: {project_id: 'project', plan: {goal: 'Evaluate', resources: [], stages: [{id: 'init', name: 'Init', enabled: true}, {id: 'eval', name: 'Eval', enabled: true}], edges: [{source: 'init', target: 'eval'}]}}};
     const workspace = renderToStaticMarkup(createElement(StageWorkspace, {snapshot: state}));
     assert.match(workspace, /阶段 Init/); assert.match(workspace, /阶段 Eval/); assert.match(workspace, /repeat\(2, 360px\)/);
+    assert.match(workspace, /展开阶段状态/); assert.match(workspace, /stage-workspace-body/);
     assert.match(workspace, /工作流阶段依赖关系/); assert.match(workspace, /Init → Eval/);
+    assert.doesNotMatch(workspace, /开始开发|重新开发/);
+    const {latestRunByStage, stageRunLabel} = await server.ssrLoadModule('/src/stageRuns.ts');
+    const projectRuns = [
+      {run_id: 'dataset-old', node_id: 'dataset', status: 'failed', created_at: '2026-11-05T01:00:00Z'},
+      {run_id: 'dataset-new', node_id: 'dataset', status: 'clarifying', created_at: '2026-11-05T02:00:00Z'},
+      {run_id: 'train-new', node_id: 'train', status: 'waiting_user', created_at: '2026-11-05T03:00:00Z'},
+    ];
+    assert.equal(latestRunByStage(projectRuns).get('dataset')?.run_id, 'dataset-new');
+    assert.equal(stageRunLabel('clarifying'), '需求澄清中');
     const {WorkflowPlanPreview} = await server.ssrLoadModule('/src/components/WorkflowPlanPreview.tsx');
     const previewPlan = {...state.project.plan, resources: [{id: 'data', name: '验证集', uri: '/eval.jsonl'}], tasks: [{id: 'task-eval', stage_id: 'eval', name: '小样评测', description: '仅评测', inputs: [{name: 'dataset', resource_id: 'data'}], outputs: [{name: 'metrics.json', description: '真实指标'}]}]};
     const preview = renderToStaticMarkup(createElement(WorkflowPlanPreview, {plan: previewPlan, entryTaskId: 'task-eval'}));

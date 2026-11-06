@@ -27,7 +27,6 @@ export function ProjectGraphPanel({
   const [graph, setGraph] = useState<ProjectGraphView | null>(null);
   const [runs, setRuns] = useState<StageRun[]>([]);
   const [loading, setLoading] = useState(true);
-  const [validatingNodeId, setValidatingNodeId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async (showLoading = true) => {
@@ -61,32 +60,6 @@ export function ProjectGraphPanel({
   );
   const runsByNode = useMemo(() => groupRunsByNode(runs), [runs]);
 
-  const validateNode = async (node: ProjectNode) => {
-    setValidatingNodeId(node.id);
-    setError(null);
-    try {
-      const run = await client.runProjectNode(
-        projectId,
-        node.id,
-        requestOptions,
-        crypto.randomUUID(),
-      );
-      setRuns(current => [
-        run,
-        ...current.filter(item => item.run_id !== run.run_id),
-      ]);
-      await refresh(false);
-    } catch (failure) {
-      setError(
-        failure instanceof Error
-          ? failure.message
-          : 'Failed to validate the Project node.',
-      );
-    } finally {
-      setValidatingNodeId(null);
-    }
-  };
-
   const readArtifact = async (artifact: ProjectArtifact) => {
     const document = await client.projectArtifact(
       projectId,
@@ -103,7 +76,7 @@ export function ProjectGraphPanel({
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="font-semibold">Working Graph</h2>
+          <h2 className="font-semibold">实验流程</h2>
           {graph && <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
             {graph.lifecycle === 'development' ? '开发中' : '已发布'}
           </span>}
@@ -118,7 +91,7 @@ export function ProjectGraphPanel({
       <button
         type="button"
         onClick={() => { void refresh(); }}
-        disabled={loading || validatingNodeId !== null}
+        disabled={loading}
         className="rounded border bg-white px-3 py-1 text-xs disabled:opacity-40"
       >
         {loading ? '加载中' : '刷新'}
@@ -131,10 +104,6 @@ export function ProjectGraphPanel({
           key={node.id}
           node={node}
           runs={runsByNode.get(node.id) ?? []}
-          lifecycle={graph?.lifecycle ?? 'development'}
-          validating={validatingNodeId === node.id}
-          validationDisabled={validatingNodeId !== null}
-          onValidate={() => { void validateNode(node); }}
           onReadArtifact={readArtifact}
         />)}
       </div>
@@ -167,20 +136,12 @@ export function ProjectGraphPanel({
 interface NodeCardProps {
   node: ProjectNode;
   runs: StageRun[];
-  lifecycle: 'development' | 'frozen';
-  validating: boolean;
-  validationDisabled: boolean;
-  onValidate: () => void;
   onReadArtifact: (artifact: ProjectArtifact) => Promise<ProjectArtifactDocument>;
 }
 
 function NodeCard({
   node,
   runs,
-  lifecycle,
-  validating,
-  validationDisabled,
-  onValidate,
   onReadArtifact,
 }: NodeCardProps) {
   const latest = runs[0] ?? null;
@@ -227,20 +188,12 @@ function NodeCard({
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-1.5">
           <h3 className="break-words text-sm font-medium">{node.title}</h3>
-          <StatusBadge node={node} latest={latest} stale={stale} />
+          <StatusBadge latest={latest} stale={stale} />
         </div>
         <p className="mt-1 break-all font-mono text-[10px] text-slate-500">
-          {node.id} · {node.type} · {node.executor}
+          {node.id} · {node.type} · {node.execution_role || node.executor.kind}
         </p>
       </div>
-      <button
-        type="button"
-        onClick={onValidate}
-        disabled={validationDisabled || lifecycle !== 'development'}
-        className="shrink-0 rounded bg-slate-900 px-3 py-1 text-xs font-medium text-white disabled:bg-slate-300"
-      >
-        {validating ? '验证中' : latest ? '再次验证' : '验证'}
-      </button>
     </div>
 
     {latest && <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-slate-500">
@@ -255,6 +208,22 @@ function NodeCard({
       <ul className="mt-1 space-y-0.5 rounded bg-slate-50 px-2 py-1.5 font-mono text-[10px] text-slate-600">
         {latest.input_refs.map(inputRef => <li key={inputRef} className="break-all">
           {inputRef}
+        </li>)}
+      </ul>
+    </details>}
+    {latest && latest.task_runs.length > 0 && <details className="mt-2">
+      <summary className="cursor-pointer text-[10px] text-slate-500">
+        执行明细 · {latest.task_runs.length}
+      </summary>
+      <ul className="mt-1 space-y-1 rounded bg-slate-50 px-2 py-1.5 text-[10px]">
+        {latest.task_runs.map(taskRun => <li
+          key={taskRun.task_run_id}
+          className="flex min-w-0 items-center justify-between gap-2"
+        >
+          <span className="min-w-0 truncate">
+            {taskRun.role_id || 'task'} · {taskRun.task_run_id}
+          </span>
+          <RunStatus status={taskRun.status} />
         </li>)}
       </ul>
     </details>}
@@ -296,29 +265,13 @@ function NodeCard({
         {JSON.stringify(node.config, null, 2)}
       </pre>
     </details>
-    {runs.length > 0 && <details className="mt-2">
-      <summary className="cursor-pointer text-xs text-slate-600">验证历史 · {runs.length}</summary>
-      <ol className="mt-2 space-y-1.5">
-        {runs.slice(0, 8).map(run => <li
-          key={run.run_id}
-          className="flex items-start justify-between gap-2 rounded bg-slate-50 px-2 py-1.5 text-[10px]"
-        >
-          <span className="min-w-0 text-slate-600">
-            {runTime(run.created_at)} · {run.message}
-          </span>
-          <RunStatus status={run.status} />
-        </li>)}
-      </ol>
-    </details>}
   </article>;
 }
 
 function StatusBadge({
-  node,
   latest,
   stale,
 }: {
-  node: ProjectNode;
   latest: StageRun | null;
   stale: boolean;
 }) {
@@ -329,21 +282,26 @@ function StatusBadge({
   }
   if (latest) return <RunStatus status={latest.status} />;
   return <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
-    {node.launch_mode === 'agent' ? 'Agent 配置' : '未验证'}
+    待验证
   </span>;
 }
 
 function RunStatus({ status }: { status: StageRun['status'] }) {
-  const label = status === 'running'
-    ? '验证中'
-    : status === 'succeeded'
-      ? '验证通过'
-      : '验证失败';
-  const tone = status === 'running'
-    ? 'bg-sky-100 text-sky-800'
-    : status === 'succeeded'
-      ? 'bg-emerald-100 text-emerald-800'
-      : 'bg-rose-100 text-rose-800';
+  const label = {
+    clarifying: '需求梳理中',
+    running: '执行中',
+    waiting_user: '待用户确认',
+    waiting_external: '等待平台',
+    succeeded: '执行完成',
+    failed: '执行失败',
+  }[status];
+  const tone = status === 'succeeded'
+    ? 'bg-emerald-100 text-emerald-800'
+    : status === 'failed'
+      ? 'bg-rose-100 text-rose-800'
+      : status === 'waiting_user' || status === 'waiting_external'
+        ? 'bg-amber-100 text-amber-800'
+        : 'bg-sky-100 text-sky-800';
   return <span className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-medium ${tone}`}>
     {label}
   </span>;

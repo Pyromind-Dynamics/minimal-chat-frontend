@@ -26,6 +26,11 @@
   margin: revert-layer;
 }
 
+.stage-workspace-body {
+  max-height: min(36vh, 30rem);
+  overscroll-behavior: contain;
+}
+
 @layer base {
   .product-planning-chat * {
     border-color: #e2e8f0;

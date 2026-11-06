@@ -31,6 +31,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
   const options = useMemo<RequestOptions>(() => ({ userId, cookie: credentials.cookie, xCluster: credentials.xCluster }), [userId, credentials]);
   const [conversations, setConversations] = useState<ConversationSnapshot[]>([]);
   const [busy, setBusy] = useState(false);
+  const [respondingPermission, setRespondingPermission] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -155,6 +156,28 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
     try { await client.command(id, {type: 'resolve_experiment_submission', run_id: runId, action, task_id: taskId, command_id: crypto.randomUUID()}, options); await refresh(); }
     catch (failure) {setError(String(failure));} finally {setBusy(false);}
   };
+  const respondToPermission = async (accept: boolean) => {
+    const id = activeId.current;
+    const permission = state.snapshot?.pending_permissions[0];
+    if (!id || !permission || respondingPermission) return;
+    setRespondingPermission(true); setError(null);
+    try {
+      const receipt = await client.command(id, {
+        command_id: crypto.randomUUID(),
+        type: 'permission_response',
+        permission_id: permission.permission_id,
+        decision: accept ? 'allow_once' : 'deny',
+        reason: accept ? undefined : 'User rejected the pending action.',
+      }, options);
+      if (receipt.status === 'failed') throw new Error(JSON.stringify(receipt.response));
+      await refresh();
+    } catch (failure) {
+      setError(String(failure));
+      await refresh().catch(() => undefined);
+    } finally {
+      setRespondingPermission(false);
+    }
+  };
 
   const newConversation = () => {
     generation.current += 1; activeId.current = null;
@@ -259,8 +282,15 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
         </header>}
         {!state.conversationId && state.pendingOutboundMessages.length === 0 ? <PreparationWelcome /> : <ChatPanel events={state.snapshot?.project ? managerChatEvents(state.events) : state.events} requestOptions={options} status={state.status} conversationId={state.conversationId} isCondensing={state.isCondensing} pendingOutboundMessages={state.pendingOutboundMessages}
           contentKey={state.snapshot?.preparation?.plan ? state.snapshot.preparation.revision : undefined}
-          pendingInputs={state.snapshot?.project ? [] : state.snapshot?.pending_inputs ?? []}
-          onRespondToUserInput={respondToInput} readInputMedia={readInputMedia}>
+          pendingInputs={state.snapshot?.pending_inputs ?? []}
+          pendingPermission={state.snapshot?.pending_permissions[0]}
+          isRespondingToConfirmation={respondingPermission}
+          onRespondToConfirmation={accept => { void respondToPermission(accept); }}
+          onRespondToUserInput={async (requestId, status, answers, commandId) => {
+            const id = activeId.current; if (!id) return;
+            await client.command(id, {type: 'input_response', command_id: commandId, request_id: requestId, status, answers}, options);
+            await refresh();
+          }}>
           {state.snapshot?.preparation?.plan && !state.snapshot.project && <PreparationPlanMessage snapshot={state.snapshot} busy={busy || loading} onCreate={createProject} />}
         </ChatPanel>}
         {state.snapshot?.preparation && <PreparationPanel snapshot={state.snapshot} />}

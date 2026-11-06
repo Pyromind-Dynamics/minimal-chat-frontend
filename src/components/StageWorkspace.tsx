@@ -5,11 +5,11 @@ import { executionProgressLabel } from '../experimentExecutions';
 import { stageOperations } from '../preparation';
 import { StageAgentConversation } from './StageAgentConversation';
 import { WorkflowStageRow } from './WorkflowPlanPreview';
-
 export function StageWorkspace({ snapshot, requestOptions = {} }: {
   snapshot: ConversationSnapshot; requestOptions?: RequestOptions;
 }) {
   const [selectedRuns, setSelectedRuns] = useState<Record<string, string>>({});
+  const [stageRunExpanded, setStageRunExpanded] = useState(false);
   const project = snapshot.project;
   if (!project) return null;
   const executions = snapshot.experiment_executions ?? [];
@@ -22,10 +22,10 @@ export function StageWorkspace({ snapshot, requestOptions = {} }: {
   const columns = { gridTemplateColumns: `repeat(${Math.max(stages.length, 1)}, ${stageWidth}px)`, width: 'max-content' };
   return <section aria-label="阶段工作台" className="flex max-h-[55vh] shrink-0 flex-col border-b-4 border-slate-300 bg-slate-100">
     <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-100 px-4 py-3">
-      <div className="flex items-center gap-3"><span className="rounded bg-slate-800 px-2 py-1 text-xs font-semibold text-white">State</span><h2 className="font-semibold">workflowPLAN · 阶段状态</h2><span className="text-xs text-slate-500">{stages.length} 个阶段</span></div>
+      <div className="flex items-center gap-3"><span className="rounded bg-slate-800 px-2 py-1 text-xs font-semibold text-white">State</span><h2 className="font-semibold">workflowPLAN · 阶段状态</h2><button type="button" aria-expanded={stageRunExpanded} onClick={() => setStageRunExpanded(value => !value)} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600">{stageRunExpanded ? '收起阶段状态' : '展开阶段状态'}</button><span className="text-xs text-slate-500">{stages.length} 个阶段</span></div>
       <span className="rounded-full border bg-white px-2 py-1 font-mono text-[10px] text-slate-500" title={project.project_id}>Project {project.project_id.slice(0, 12)}</span>
     </header>
-    <div className="min-h-0 overflow-auto p-4">
+    <div hidden={!stageRunExpanded} className="stage-workspace-body min-h-0 overflow-auto p-4">
     <p className="mt-1 text-xs text-slate-600">{project.plan.goal}</p>
     {project.plan.edges.length > 0 && <p className="mt-2 text-xs text-slate-500">{project.plan.edges.map(edge => `${stages.find(stage => stage.id === edge.source)?.name ?? edge.source} → ${stages.find(stage => stage.id === edge.target)?.name ?? edge.target}`).join('；')}</p>}
     <div className="mt-4 min-w-fit">
