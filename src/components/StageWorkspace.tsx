@@ -13,6 +13,11 @@ export function StageWorkspace({ snapshot, requestOptions = {} }: {
   const project = snapshot.project;
   if (!project) return null;
   const executions = snapshot.experiment_executions ?? [];
+  const pendingReports = new Set(snapshot.experiment_queue?.filter(item =>
+    item.kind === 'generate_report' && item.state === 'reconciliation_required'
+  ).map(item => item.run_id));
+  const statusLabel = (run: typeof executions[number]) => pendingReports.has(run.run_id)
+    ? '验收恢复待确认' : executionProgressLabel(run);
   const known = new Set(project.plan.stages.map(stage => stage.id));
   const historical = executions.filter(run => run.stage_id && !known.has(run.stage_id) && run.stage_snapshot)
     .filter((run, index, all) => all.findIndex(other => other.stage_id === run.stage_id) === index)
@@ -31,8 +36,8 @@ export function StageWorkspace({ snapshot, requestOptions = {} }: {
     <div className="mt-4 min-w-fit">
     <WorkflowStageRow plan={{...project.plan, stages}} columnWidth={stageWidth} catalog={snapshot.preparation?.policy.workflow_nodes} status={stage => {
         const runs = executions.filter(run => run.stage_id === stage.id);
-        const latest = runs.at(-1);
-        return historical.some(item => item.id === stage.id) ? '历史阶段' : !stage.enabled ? '未启用' : latest ? executionProgressLabel(latest) : '待执行';
+        const latest = runs.find(run => pendingReports.has(run.run_id)) ?? runs.at(-1);
+        return historical.some(item => item.id === stage.id) ? '历史阶段' : !stage.enabled ? '未启用' : latest ? statusLabel(latest) : '待执行';
       }} />
     <div className="mt-3 grid items-start gap-3" style={columns}>
       {stages.map(stage => {
@@ -44,11 +49,11 @@ export function StageWorkspace({ snapshot, requestOptions = {} }: {
           {runs.length === 0 && <p className="my-6 text-center text-xs text-slate-400">{stage.enabled ? '尚未执行' : '此阶段未启用'}</p>}
           {runs.length > 1 && <label className="mt-3 block text-xs text-slate-500">执行历史
             <select aria-label={`${stage.name} 的执行记录`} value={selected?.run_id} onChange={event => setSelectedRuns(current => ({...current, [selectionKey]: event.target.value}))} className="mt-1 block w-full rounded border bg-white p-2 text-xs text-slate-700">
-              {runs.map((run, index) => <option key={run.run_id} value={run.run_id}>第 {index + 1} 次 · {run.task_name} · {executionProgressLabel(run)}</option>)}
+              {runs.map((run, index) => <option key={run.run_id} value={run.run_id}>第 {index + 1} 次 · {run.task_name} · {statusLabel(run)}</option>)}
             </select>
           </label>}
           {selected?.waiting_reason && <p role={selected.report_state === 'failed' ? 'alert' : 'status'} className="mt-2 break-words whitespace-pre-wrap text-xs text-amber-800">{selected.waiting_reason}</p>}
-          {(selected || operations.length > 0) && <StageAgentConversation key={selected?.run_id ?? selectionKey} operations={operations} requestOptions={requestOptions} status={selected ? executionProgressLabel(selected) : undefined} />}
+          {(selected || operations.length > 0) && <StageAgentConversation key={selected?.run_id ?? selectionKey} operations={operations} requestOptions={requestOptions} status={selected ? statusLabel(selected) : undefined} />}
         </section>;
       })}
     </div>
