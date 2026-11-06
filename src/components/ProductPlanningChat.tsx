@@ -18,6 +18,7 @@ import { PreparationPanel } from './PreparationPanel';
 import { PreparationWelcome } from './PreparationWelcome';
 import { PreparationPlanMessage } from './PreparationPlanMessage';
 import { StageWorkspace } from './StageWorkspace';
+import { ProjectConfirmationPanel } from './ProjectConfirmationPanel';
 import { managerChatEvents } from '../preparation';
 
 export function ProductPlanningChat({ client, title, storageNamespace }: {
@@ -56,6 +57,12 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
     apply(snapshot);
     return snapshot.through_seq;
   }, [client, options, apply]);
+
+  const readInputMedia = useCallback((requestId: string, contentIndex: number, imageIndex: number) => {
+    const id = activeId.current;
+    if (!id) return Promise.reject(new Error('会话未打开'));
+    return client.inputMedia(id, requestId, contentIndex, imageIndex, options);
+  }, [client, options]);
 
   const open = useCallback(async (id: string) => {
     const epoch = ++generation.current;
@@ -167,6 +174,12 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
       .then(() => refresh()).catch(failure => { setError(String(failure)); void refresh(); }).finally(() => setBusy(false));
   };
 
+  const respondToInput = async (requestId: string, status: 'answered' | 'cancelled', answers: import('../types').UserInputAnswer[], commandId: string) => {
+    const id = activeId.current; if (!id) throw new Error('会话未打开');
+    await client.command(id, {type: 'input_response', command_id: commandId, request_id: requestId, status, answers}, options);
+    await refresh();
+  };
+
   const applyCredentials = () => {
     const next = {
       cookie: credentialDraft.cookie.trim(),
@@ -230,7 +243,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
     <StatusBar wsState={connection} status={state.status} conversationId={state.conversationId} isCreating={busy && !state.conversationId} hasConnected={hasConnected} />
     {error && <div role="alert" className="border-b bg-red-50 p-3 text-sm text-red-700">{error}<button type="button" className="ml-3 underline" onClick={() => setError(null)}>关闭</button></div>}
     {notice && <div role="status" className="border-b bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</div>}
-    <main className={`grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:overflow-hidden ${!state.snapshot || state.snapshot.preparation || state.snapshot.project ? 'lg:grid-cols-[220px_minmax(0,1fr)]' : 'lg:grid-cols-[200px_minmax(0,1fr)_520px] 2xl:grid-cols-[240px_minmax(0,1fr)_600px]'}`}>
+    <main className={`grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:overflow-hidden ${state.snapshot?.project ? 'project-workbench lg:grid-cols-[200px_minmax(0,1fr)_360px] 2xl:grid-cols-[220px_minmax(0,1fr)_420px]' : !state.snapshot || state.snapshot.preparation ? 'lg:grid-cols-[220px_minmax(0,1fr)]' : 'lg:grid-cols-[200px_minmax(0,1fr)_520px] 2xl:grid-cols-[240px_minmax(0,1fr)_600px]'}`}>
       <nav aria-label="会话列表" className="overflow-y-auto border-r bg-slate-50">
         <div className="border-b p-3 text-xs font-medium text-slate-500">对话与 Project <span className="ml-1 text-slate-400">{conversations.length}</span></div>
         {conversations.map(item => <button key={item.conversation_id} type="button" disabled={busy || loading} onClick={() => { void open(item.conversation_id); }} className={`block w-full border-b p-3 text-left text-sm disabled:opacity-50 ${item.conversation_id === state.conversationId ? 'bg-blue-50' : ''}`}>
@@ -246,12 +259,8 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
         </header>}
         {!state.conversationId && state.pendingOutboundMessages.length === 0 ? <PreparationWelcome /> : <ChatPanel events={state.snapshot?.project ? managerChatEvents(state.events) : state.events} requestOptions={options} status={state.status} conversationId={state.conversationId} isCondensing={state.isCondensing} pendingOutboundMessages={state.pendingOutboundMessages}
           contentKey={state.snapshot?.preparation?.plan ? state.snapshot.preparation.revision : undefined}
-          pendingInputs={state.snapshot?.pending_inputs ?? []}
-          onRespondToUserInput={async (requestId, status, answers, commandId) => {
-            const id = activeId.current; if (!id) return;
-            await client.command(id, {type: 'input_response', command_id: commandId, request_id: requestId, status, answers}, options);
-            await refresh();
-          }}>
+          pendingInputs={state.snapshot?.project ? [] : state.snapshot?.pending_inputs ?? []}
+          onRespondToUserInput={respondToInput} readInputMedia={readInputMedia}>
           {state.snapshot?.preparation?.plan && !state.snapshot.project && <PreparationPlanMessage snapshot={state.snapshot} busy={busy || loading} onCreate={createProject} />}
         </ChatPanel>}
         {state.snapshot?.preparation && <PreparationPanel snapshot={state.snapshot} />}
@@ -261,6 +270,13 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
         }} />
         </section>
       </section>
+      {state.snapshot?.project && <ProjectConfirmationPanel snapshot={state.snapshot} onRespond={respondToInput}
+        onPermission={async (permissionId, decision, commandId) => {
+          const id = activeId.current; if (!id) throw new Error('会话未打开');
+          await client.command(id, {type: 'permission_response', command_id: commandId, permission_id: permissionId, decision}, options);
+          await refresh();
+        }}
+        readMedia={readInputMedia} />}
       {state.snapshot && !state.snapshot.preparation && !state.snapshot.project && <ExperimentPlanPanel view={state.snapshot.experiment_plan} contextView={state.snapshot.experiment_context} exploration
         executions={state.snapshot?.experiment_executions ?? []} selectedRevision={null} busy={busy || loading}
         queue={state.snapshot?.experiment_queue ?? []}

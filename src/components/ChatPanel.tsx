@@ -1,3 +1,4 @@
+import type { ReadInputMedia } from '../types';
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { RequestOptions } from '../api';
@@ -45,6 +46,7 @@ interface ChatPanelProps {
   pendingPermission?: ProductPermission;
   pendingInputs?: PendingUserInput[];
   onRespondToUserInput?: RespondToUserInput;
+  readInputMedia?: ReadInputMedia;
   conversationId?: string | null;
 }
 
@@ -67,6 +69,7 @@ export function ChatPanel({
   pendingPermission,
   pendingInputs = [],
   onRespondToUserInput,
+  readInputMedia,
   conversationId,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -273,7 +276,7 @@ export function ChatPanel({
       {onRespondToUserInput && pendingInputs.length > 0 && (
         <div ref={inputRef} className="mx-auto w-full max-w-3xl">
           {pendingInputs.map((request) => (
-            <UserInputCard key={`${conversationId}:${request.request_id}`} request={request} onRespond={onRespondToUserInput} />
+            <UserInputCard key={`${conversationId}:${request.request_id}`} request={request} onRespond={onRespondToUserInput} readMedia={readInputMedia} />
           ))}
         </div>
       )}

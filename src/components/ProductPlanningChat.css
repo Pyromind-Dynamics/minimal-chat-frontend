@@ -31,3 +31,9 @@
     border-color: #e2e8f0;
   }
 }
+
+/* On small screens confirmations lead the workbench; each region can scroll. */
+@media (width < 64rem) {
+  .project-workbench > nav { max-height: 9rem; }
+  .project-workbench > .project-confirmations { grid-row: 2; max-height: 70vh; border-bottom: 1px solid #e2e8f0; }
+}

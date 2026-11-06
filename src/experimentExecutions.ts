@@ -12,6 +12,12 @@ export interface ExperimentExecution {
   report_uri?: string | null;
   blockers?: string[];
   waiting_reason?: string | null;
+  checkpoint?: {
+    checkpoint_id: string;
+    status: 'pending' | 'approved' | 'revise';
+    document: { summary: string; sample_count: number; retained_count: number; source_count?: number; validation?: Record<string, unknown>; preview: Record<string, unknown>[] };
+    evidence: Record<string, string>;
+  } | null;
   role_id: string;
   state: string;
   report_state: string;
@@ -24,7 +30,8 @@ export interface ExperimentExecution {
 
 const labels: Record<string, string> = {
   prepared: '方案已准备 · 未提交平台',
-  needs_input: '等待补充输入', queued: '排队中', preparing: '准备评测方案', awaiting_confirmation: '等待执行确认',
+  needs_input: '执行受阻', queued: '排队中', preparing: '准备执行', awaiting_confirmation: '等待执行确认',
+  waiting_user: '等待用户确认', waiting_confirmation: '等待工作流确认',
   queued_submission: '等待提交平台', submitting: '正在提交平台', waiting_platform: '等待平台',
   waiting_artifacts: '等待产物校验', succeeded: '已成功', failed: '已失败', rejected: '已拒绝',
   submission_uncertain: '提交结果待核对', cancel_requested: '取消中', cancelled: '已取消',
@@ -32,7 +39,14 @@ const labels: Record<string, string> = {
 };
 export function executionLabel(state: string): string { return labels[state] ?? `状态：${state}`; }
 
+export function executionProgressLabel(run: ExperimentExecution): string {
+  if (run.state === 'waiting_artifacts') return run.report_state === 'failed' ? '产物登记失败' : '正在整理产物';
+  if (run.report_state === 'failed') return `${executionLabel(run.state)} · 报告失败`;
+  if (run.state === 'succeeded' && run.report_state !== 'ready') return '执行已完成 · 正在生成报告';
+  return executionLabel(run.state);
+}
+
 export function stageExecutionLabel(executions: readonly ExperimentExecution[], stageId: string, runIds: readonly string[] = [], unassociatedLabel = '尚未执行'): string {
   const matching = executions.filter(run => run.stage_id === stageId || runIds.includes(run.run_id));
-  return matching.length ? executionLabel(matching[matching.length - 1].state) : unassociatedLabel;
+  return matching.length ? executionProgressLabel(matching[matching.length - 1]) : unassociatedLabel;
 }
