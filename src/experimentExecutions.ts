@@ -33,7 +33,7 @@ const labels: Record<string, string> = {
   needs_input: '执行受阻', queued: '排队中', preparing: '准备执行', awaiting_confirmation: '等待执行确认',
   waiting_user: '等待用户确认', waiting_confirmation: '等待工作流确认',
   queued_submission: '等待提交平台', submitting: '正在提交平台', waiting_platform: '等待平台',
-  waiting_artifacts: '等待产物校验', succeeded: '已成功', failed: '已失败', rejected: '已拒绝',
+  waiting_artifacts: '等待产物校验', reported: '已交付报告', succeeded: '已成功', failed: '已失败', rejected: '已拒绝',
   submission_uncertain: '提交结果待核对', cancel_requested: '取消中', cancelled: '已取消',
   abandoned: '已终止跟踪 · 平台任务可能仍在运行', waiting_authorization: '等待重新授权',
 };

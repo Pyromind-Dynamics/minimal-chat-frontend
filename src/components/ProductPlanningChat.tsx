@@ -214,6 +214,8 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
   };
 
 
+  const isProject = Boolean(state.snapshot?.project);
+
   return <div className="product-planning-chat flex h-screen flex-col bg-white text-left text-slate-900">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
       <div><h1 className="font-semibold">{title}</h1><p className="text-xs text-slate-500">对话准备 → 审阅 workflowPLAN → 创建并启动 → 阶段工作台</p></div>
@@ -282,11 +284,11 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
         </header>}
         {!state.conversationId && state.pendingOutboundMessages.length === 0 ? <PreparationWelcome /> : <ChatPanel events={state.snapshot?.project ? managerChatEvents(state.events) : state.events} requestOptions={options} status={state.status} conversationId={state.conversationId} isCondensing={state.isCondensing} pendingOutboundMessages={state.pendingOutboundMessages}
           contentKey={state.snapshot?.preparation?.plan ? state.snapshot.preparation.revision : undefined}
-          pendingInputs={state.snapshot?.pending_inputs ?? []}
-          pendingPermission={state.snapshot?.pending_permissions[0]}
+          pendingInputs={isProject ? undefined : state.snapshot?.pending_inputs}
+          pendingPermission={isProject ? undefined : state.snapshot?.pending_permissions[0]}
           isRespondingToConfirmation={respondingPermission}
-          onRespondToConfirmation={accept => { void respondToPermission(accept); }}
-          onRespondToUserInput={async (requestId, status, answers, commandId) => {
+          onRespondToConfirmation={isProject ? undefined : accept => { void respondToPermission(accept); }}
+          onRespondToUserInput={isProject ? undefined : async (requestId, status, answers, commandId) => {
             const id = activeId.current; if (!id) return;
             await client.command(id, {type: 'input_response', command_id: commandId, request_id: requestId, status, answers}, options);
             await refresh();
