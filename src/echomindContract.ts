@@ -87,17 +87,32 @@ export interface ProjectEdge {
 }
 
 export interface ProjectRecord {
-  schema_version: 1;
+  schema_version: 2;
   project_id: string;
   name: string;
   description: string;
   skill: string;
   requirements: ProjectRequirement[];
   owner_user_id: string | null;
-  echomind_conversation_id: string;
+  conversation_id: string;
+  cluster: string;
   lifecycle: ProjectLifecycle;
   frozen_at: string | null;
   created_at: string;
+}
+
+export interface ProjectSummary {
+  project_id: string;
+  name: string;
+  description: string;
+  skill: string;
+  owner_user_id: string | null;
+  conversation_id: string;
+  cluster: string;
+  lifecycle: ProjectLifecycle;
+  node_count: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PersistedProjectGraph {
@@ -212,6 +227,7 @@ export interface ProjectNodeStart {
   graph_id: string;
   node_id: string;
   conversation_id: string;
+  cluster: string;
   event_id: string;
   run: StageRun;
   status: 'started';

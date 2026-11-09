@@ -20,6 +20,7 @@ export interface PreparationView {
 export interface ProjectView {
   project_id: string; conversation_id: string; plan_sequence: number;
   plan: WorkflowContext; creation_command_id: string; initial_run_id: string;
+  cluster?: string | null;
 }
 export interface ExecutionBinding {
   project_id: string; task_run_id: string; stage_id: string; plan_sequence: number;
