@@ -94,6 +94,20 @@ test('preparation card and workspace render checklist, plan, creation and stage 
     assert.match(continuous, /<strong>报告已保存<\/strong>/);
     assert.match(continuous, /read/); assert.match(continuous, /已读取四条数据/);
     assert.doesNotMatch(continuous, /此前运行|执行过程|整理结果|第 2 轮|任务与报告/);
+    const resumed = renderToStaticMarkup(createElement(StageWorkspace, {snapshot: {
+      ...state,
+      experiment_executions: [
+        {...runs[0], state: 'reported', task_name: 'Recovered execution'},
+        {...runs[1], state: 'failed', task_name: 'Failed launch'},
+      ],
+      timeline: [
+        {...logTurns[0], activity: null, started_seq: 2},
+        {...logTurns[1], started_seq: 1, completed_seq: 3, execution: {...logTurns[1].execution, task_run_id: 'old'}},
+      ],
+    }}));
+    assert.match(resumed, /<option value="old" selected="">/);
+    assert.match(resumed, /报告已保存/);
+    assert.match(resumed, /第 2 次 · Failed launch · 已失败/);
     const {ToolCallBlock} = await server.ssrLoadModule('/src/components/ToolCallBlock.tsx');
     const tool = renderToStaticMarkup(createElement(ToolCallBlock, {
       action: {tool_call: {name: 'inspect_resource', arguments: {uri: '/eval.jsonl'}}},

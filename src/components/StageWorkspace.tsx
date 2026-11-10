@@ -23,6 +23,23 @@ export function StageWorkspace({ snapshot, requestOptions = {} }: {
     .filter((run, index, all) => all.findIndex(other => other.stage_id === run.stage_id) === index)
     .map(run => ({ id: run.stage_id!, kind: run.stage_snapshot!.kind, name: run.stage_snapshot!.name, description: '历史阶段', enabled: false, placeholder: false }));
   const stages = [...project.plan.stages, ...historical];
+  const stageActivity = new Map(stages.map(stage => {
+    const runs = executions.filter(run => run.stage_id === stage.id);
+    const operations = stageOperations(snapshot, stage.id);
+    const lastActivity = new Map<string, number>();
+    for (const operation of operations) {
+      const runId = operation.execution!.task_run_id;
+      const seq = operation.completed_seq ?? operation.started_seq;
+      lastActivity.set(runId, Math.max(lastActivity.get(runId) ?? 0, seq));
+    }
+    const last = runs.at(-1);
+    // A newly queued execution may not have produced any agent activity yet.
+    const latest = last && lastActivity.has(last.run_id)
+      ? runs.reduce((current, run) =>
+        (lastActivity.get(run.run_id) ?? -1) > (lastActivity.get(current.run_id) ?? -1) ? run : current, last)
+      : last;
+    return [stage.id, { runs, operations, latest }];
+  }));
   const stageWidth = 360;
   const columns = { gridTemplateColumns: `repeat(${Math.max(stages.length, 1)}, ${stageWidth}px)`, width: 'max-content' };
   return <section aria-label="阶段工作台" className="flex max-h-[55vh] shrink-0 flex-col border-b-4 border-slate-300 bg-slate-100">
@@ -35,16 +52,16 @@ export function StageWorkspace({ snapshot, requestOptions = {} }: {
     {project.plan.edges.length > 0 && <p className="mt-2 text-xs text-slate-500">{project.plan.edges.map(edge => `${stages.find(stage => stage.id === edge.source)?.name ?? edge.source} → ${stages.find(stage => stage.id === edge.target)?.name ?? edge.target}`).join('；')}</p>}
     <div className="mt-4 min-w-fit">
     <WorkflowStageRow plan={{...project.plan, stages}} columnWidth={stageWidth} catalog={snapshot.preparation?.policy.workflow_nodes} status={stage => {
-        const runs = executions.filter(run => run.stage_id === stage.id);
-        const latest = runs.find(run => pendingReports.has(run.run_id)) ?? runs.at(-1);
+        const { runs, latest: recent } = stageActivity.get(stage.id)!;
+        const latest = runs.find(run => pendingReports.has(run.run_id)) ?? recent;
         return historical.some(item => item.id === stage.id) ? '历史阶段' : !stage.enabled ? '未启用' : latest ? statusLabel(latest) : '待执行';
       }} />
     <div className="mt-3 grid items-start gap-3" style={columns}>
       {stages.map(stage => {
-        const runs = executions.filter(run => run.stage_id === stage.id);
+        const { runs, latest, operations: allOperations } = stageActivity.get(stage.id)!;
         const selectionKey = `${project.project_id}:${stage.id}`;
-        const selected = runs.find(run => run.run_id === selectedRuns[selectionKey]) ?? runs.at(-1);
-        const operations = stageOperations(snapshot, stage.id).filter(operation => !selected || operation.execution?.task_run_id === selected.run_id);
+        const selected = runs.find(run => run.run_id === selectedRuns[selectionKey]) ?? latest;
+        const operations = allOperations.filter(operation => !selected || operation.execution?.task_run_id === selected.run_id);
         return <section key={stage.id} data-stage-id={stage.id} aria-label={`阶段 ${stage.name}`} className="min-w-0 overflow-hidden break-words rounded-lg border bg-white p-3">
           {runs.length === 0 && <p className="my-6 text-center text-xs text-slate-400">{stage.enabled ? '尚未执行' : '此阶段未启用'}</p>}
           {runs.length > 1 && <label className="mt-3 block text-xs text-slate-500">执行历史

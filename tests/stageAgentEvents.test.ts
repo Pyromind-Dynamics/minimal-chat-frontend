@@ -51,6 +51,17 @@ test('legacy text stays a message and never becomes a fabricated tool call', () 
   assert.equal(activity.events[0].llm_message.content[0].type === 'text' && activity.events[0].llm_message.content[0].text, 'terminal: printed from a document');
 });
 
+test('an unavailable transcript placeholder does not become a chat message', () => {
+  const text = 'Transcript tail:\n  (no transcript lines available yet)';
+  const failed: TimelineOperation = {
+    ...turn(1, []), status: 'failed', activity: null,
+    details: {subagent: {version: 1, trace: {availability: 'unavailable', text}}},
+    output: [{type: 'text', text}],
+  };
+  assert.deepEqual(stageAgentEvents([failed]).events, []);
+  assert.equal(stageAgentEvents([{...failed, output: [{type: 'text', text: 'Launch failed'}]}]).events.length, 1);
+});
+
 test('the latest bounded activity window retains truncation information', () => {
   const window = turn(1, Array.from({length: 150}, (_, index) => message(`m${index}`, `消息 ${index}`)));
   const activity = stageAgentEvents([window]);

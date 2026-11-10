@@ -11,7 +11,10 @@ export function stageAgentEvents(operations: readonly TimelineOperation[]) {
       for (const item of operation.activity.items) items.set(item.item_id, item);
     } else {
       const trace = subagentDisplay(operation.details)?.trace;
-      const text = trace?.text || readableResult(operation.output.filter(block => block.type === 'text').map(block => block.text).join('\n'));
+      const output = readableResult(operation.output.filter(block => block.type === 'text').map(block => block.text).join('\n'));
+      const text = trace?.availability === 'unavailable'
+        ? (output.trim() === trace.text.trim() ? '' : output)
+        : trace?.text || output;
       truncated ||= !!trace?.truncated;
       // Historical text remains a message; never guess tool calls from log lines.
       if (text.trim()) items.set(operation.item_id, {
