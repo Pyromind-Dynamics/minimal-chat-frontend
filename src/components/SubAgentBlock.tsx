@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ActionEvent, ObservationEvent } from '../types';
-import { object, readableResult, subagentDisplay } from '../subagentPresentation';
+import { object, readableResult, subagentDisplay, subagentStatus, subagentStatusLabel } from '../subagentPresentation';
 import { ContentList } from './ContentList';
 
-export function SubAgentBlock({ action, observation, initiallyExpanded = false }: {
-  action: ActionEvent; observation?: ObservationEvent; initiallyExpanded?: boolean;
+export function SubAgentBlock({ action, observation, initiallyExpanded = false, roleLabel, statusText }: {
+  action: ActionEvent; observation?: ObservationEvent; initiallyExpanded?: boolean; roleLabel?: string; statusText?: string;
 }) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
   const [now, setNow] = useState(() => Date.now());
@@ -16,16 +16,12 @@ export function SubAgentBlock({ action, observation, initiallyExpanded = false }
   const phaseLabels: Record<string, string> = { execute: '执行任务', report: '整理结果' };
   const phase = display?.phase ? phaseLabels[display.phase] ?? display.phase : undefined;
   const args = object(action.tool_call.arguments);
-  const role = display?.role ?? (typeof args.agent === 'string' ? args.agent : action.tool_call.name);
+  const role = roleLabel ?? display?.role ?? (typeof args.agent === 'string' ? args.agent : action.tool_call.name);
   const task = display?.task ?? (typeof args.task === 'string' ? args.task : '未记录任务说明');
   const operationStatus = observation?.observation.operation_status;
-  const terminalReason = observation?.observation.error_code?.replace(/^subagent_/, '');
-  const status = operationStatus === 'failed' ? terminalReason ?? 'failed'
-    : operationStatus === 'completed' ? 'completed' : display?.status ?? operationStatus ?? 'running';
+  const status = subagentStatus(action.details, operationStatus, observation?.observation.error_code);
   const running = ['running', 'queued'].includes(status);
-  const labels: Record<string, string> = { running: '运行中', queued: '排队中', complete: '已完成', completed: '已完成',
-    cancelled: '已取消', canceled: '已取消', stopped: '已停止', interrupted: '已中断', paused: '已暂停', timed_out: '已超时', failed: '失败' };
-  const statusLabel = labels[status] ?? status;
+  const statusLabel = statusText ?? subagentStatusLabel(status);
   const failed = status === 'failed';
   const trace = display?.trace;
   const output = readableResult((observation?.observation.to_llm_content ?? [])
@@ -48,9 +44,9 @@ export function SubAgentBlock({ action, observation, initiallyExpanded = false }
       className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-slate-100/70">
       <span aria-hidden="true" className="mt-0.5 text-slate-400">{expanded ? '▾' : '▸'}</span>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-xs"><span className="font-semibold text-slate-800">子 Agent · {role}</span>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"><span className="break-all font-semibold text-slate-800">子 Agent · {role}</span>
           {phase && <span className="text-slate-500">{phase}</span>}
-          {runs.length > 1 && <span className="text-slate-400">第 {runs.length} 轮</span>}
+          {runs.length > 1 && <span className="text-slate-400">已续跑 {runs.length - 1} 次</span>}
           <span className={failed ? 'text-red-600' : running ? 'text-blue-600' : 'text-slate-500'}>{statusLabel}</span>
           <span className="ml-auto text-slate-400">{duration}</span></div>
         <p className="mt-1 line-clamp-2 break-words text-sm text-slate-700">{task}</p>
@@ -60,9 +56,9 @@ export function SubAgentBlock({ action, observation, initiallyExpanded = false }
       {previousRuns.length > 0 && <div><h4 className="mb-1 font-semibold">此前运行</h4>
         {previousRuns.map((run, index) => {
           const prior = subagentDisplay(run.details);
-          const state = run.status === 'failed' ? run.error_code?.replace(/^subagent_/, '') ?? 'failed' : run.status;
+          const state = subagentStatus(run.details, run.status, run.error_code);
           return <details key={run.item_id} className="mb-2 rounded-lg border border-slate-200 p-2">
-            <summary className="cursor-pointer">第 {index + 1} 轮 · {phaseLabels[prior?.phase ?? ''] ?? '执行任务'} · {labels[state] ?? state}</summary>
+            <summary className="cursor-pointer">第 {index + 1} 次运行 · {phaseLabels[prior?.phase ?? ''] ?? '执行任务'} · {subagentStatusLabel(state)}</summary>
             {prior?.trace?.text && <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words">{prior.trace.text}</pre>}
             <ContentList content={[{ type: 'text', text: readableResult(run.output.filter(block => block.type === 'text').map(block => block.text).join('\n')) || '未记录最终文本结果。' }]} markdown />
             <p className="mt-1 break-all font-mono text-[10px] text-slate-400">run {prior?.run_id ?? run.run_id ?? run.item_id}</p>

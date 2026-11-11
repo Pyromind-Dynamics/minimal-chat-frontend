@@ -1,20 +1,7 @@
 import { productRequest, type RequestOptions } from './api';
 import { BACKEND_URL, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL } from './config';
-import {
-  PROJECTS_PATH,
-  echomindProjectArtifactPath,
-  echomindProjectGraphPath,
-  echomindProjectNodeRunPath,
-  echomindProjectPath,
-  echomindProjectRunsPath,
-  type ProjectArtifactDocument,
-  type ProjectGraphView,
-  type ProjectInfo,
-  type ProjectSummary,
-  type StageRun,
-} from './echomindContract';
+import { PROJECTS_PATH, type ProjectSummary } from './echomindContract';
 import type { CommandReceipt, ConversationSnapshot } from './types';
-import type { PlanRevision } from './experimentPlans';
 
 export function createProductClient(path: string) {
   const base = `${BACKEND_URL}${path}`;
@@ -25,16 +12,8 @@ export function createProductClient(path: string) {
     list: (options: RequestOptions) => productRequest<ConversationSnapshot[]>(base, {}, options),
     snapshot: (id: string, options: RequestOptions) => productRequest<ConversationSnapshot>(`${base}/${encodeURIComponent(id)}/snapshot`, {}, options),
     command: (id: string, command: Record<string, unknown>, options: RequestOptions) => productRequest<CommandReceipt>(`${base}/${encodeURIComponent(id)}/commands`, { method: 'POST', body: JSON.stringify(command) }, options),
-    revision: (id: string, revision: number, options: RequestOptions) => productRequest<PlanRevision>(`${base}/${encodeURIComponent(id)}/experiment-plans?revision=${revision}`, {}, options),
-    project: (id: string, options: RequestOptions) => productRequest<ProjectInfo>(`${BACKEND_URL}${echomindProjectPath(id)}`, {}, options),
     listProjects: (options: RequestOptions) => productRequest<ProjectSummary[]>(`${BACKEND_URL}${PROJECTS_PATH}`, {}, options),
-    projectGraph: (id: string, options: RequestOptions) => productRequest<ProjectGraphView>(`${BACKEND_URL}${echomindProjectGraphPath(id)}`, {}, options),
-    projectRuns: (id: string, options: RequestOptions) => productRequest<StageRun[]>(`${BACKEND_URL}${echomindProjectRunsPath(id)}`, {}, options),
-    runProjectNode: (projectId: string, nodeId: string, options: RequestOptions, requestId: string = crypto.randomUUID()) => productRequest<StageRun>(`${BACKEND_URL}${echomindProjectNodeRunPath(projectId, nodeId)}`, { method: 'POST', body: JSON.stringify({ request_id: requestId }) }, options),
-    projectArtifact: (projectId: string, artifactId: string, options: RequestOptions) => productRequest<ProjectArtifactDocument>(`${BACKEND_URL}${echomindProjectArtifactPath(projectId, artifactId)}`, {}, options),
-    executionArtifact: (id: string, runId: string, name: string, options: RequestOptions) => productRequest<{content: string}>(`${base}/${encodeURIComponent(id)}/experiment-executions/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(name)}`, {}, options),
     inputMedia: (id: string, requestId: string, contentIndex: number, imageIndex: number, options: RequestOptions) => productRequest<{url: string}>(`${base}/${encodeURIComponent(id)}/pending-inputs/${encodeURIComponent(requestId)}/media/${contentIndex}/${imageIndex}`, {}, options),
-    checkpointMedia: (id: string, runId: string, checkpointId: string, sample: number, media: number, options: RequestOptions) => productRequest<{url: string}>(`${base}/${encodeURIComponent(id)}/experiment-executions/${encodeURIComponent(runId)}/checkpoints/${encodeURIComponent(checkpointId)}/media/${sample}/${media}`, {}, options),
     eventsUrl: (id: string, afterSeq: number) => `${base}/${encodeURIComponent(id)}/events?afterSeq=${afterSeq}`,
   };
 }

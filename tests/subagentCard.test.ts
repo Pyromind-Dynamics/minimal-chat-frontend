@@ -17,6 +17,6 @@ test('subagent card expands while running and preserves cancellation semantics',
     assert.match(render('running'), /运行中/);
     assert.match(render('failed', 'subagent_interrupted'), /已中断/);
     assert.doesNotMatch(render('failed', 'subagent_stopped'), /运行中/);
-    assert.match(render('completed'), /已完成/);
+    assert.match(render('completed'), /本轮已结束/);
   } finally { await server.close(); }
 });

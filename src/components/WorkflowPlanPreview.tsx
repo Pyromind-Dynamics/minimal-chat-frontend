@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import type { ExperimentStage } from '../experimentPlans';
+import type { ExperimentStage } from '../workflowPlan';
 import type { WorkflowContext, WorkflowNodeDefinition } from '../preparation';
 
 export function WorkflowStageRow({ plan, status, catalog = [], columnWidth = 260 }: {

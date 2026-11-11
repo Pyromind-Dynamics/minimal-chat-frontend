@@ -2,8 +2,9 @@ import type { ConversationSnapshot } from '../types';
 import type { RequestOptions } from '../api';
 import { useState } from 'react';
 import { executionProgressLabel } from '../experimentExecutions';
-import { stageOperations } from '../preparation';
+import { stageOperations, stageRunOperations } from '../preparation';
 import { StageAgentConversation } from './StageAgentConversation';
+import { SubagentRunsPanel } from './SubagentRunsPanel';
 import { WorkflowStageRow } from './WorkflowPlanPreview';
 export function StageWorkspace({ snapshot, requestOptions = {} }: {
   snapshot: ConversationSnapshot; requestOptions?: RequestOptions;
@@ -13,11 +14,7 @@ export function StageWorkspace({ snapshot, requestOptions = {} }: {
   const project = snapshot.project;
   if (!project) return null;
   const executions = snapshot.experiment_executions ?? [];
-  const pendingReports = new Set(snapshot.experiment_queue?.filter(item =>
-    item.kind === 'generate_report' && item.state === 'reconciliation_required'
-  ).map(item => item.run_id));
-  const statusLabel = (run: typeof executions[number]) => pendingReports.has(run.run_id)
-    ? '验收恢复待确认' : executionProgressLabel(run);
+  const statusLabel = executionProgressLabel;
   const known = new Set(project.plan.stages.map(stage => stage.id));
   const historical = executions.filter(run => run.stage_id && !known.has(run.stage_id) && run.stage_snapshot)
     .filter((run, index, all) => all.findIndex(other => other.stage_id === run.stage_id) === index)
@@ -52,8 +49,7 @@ export function StageWorkspace({ snapshot, requestOptions = {} }: {
     {project.plan.edges.length > 0 && <p className="mt-2 text-xs text-slate-500">{project.plan.edges.map(edge => `${stages.find(stage => stage.id === edge.source)?.name ?? edge.source} → ${stages.find(stage => stage.id === edge.target)?.name ?? edge.target}`).join('；')}</p>}
     <div className="mt-4 min-w-fit">
     <WorkflowStageRow plan={{...project.plan, stages}} columnWidth={stageWidth} catalog={snapshot.preparation?.policy.workflow_nodes} status={stage => {
-        const { runs, latest: recent } = stageActivity.get(stage.id)!;
-        const latest = runs.find(run => pendingReports.has(run.run_id)) ?? recent;
+        const { latest } = stageActivity.get(stage.id)!;
         return historical.some(item => item.id === stage.id) ? '历史阶段' : !stage.enabled ? '未启用' : latest ? statusLabel(latest) : '待执行';
       }} />
     <div className="mt-3 grid items-start gap-3" style={columns}>
@@ -62,8 +58,10 @@ export function StageWorkspace({ snapshot, requestOptions = {} }: {
         const selectionKey = `${project.project_id}:${stage.id}`;
         const selected = runs.find(run => run.run_id === selectedRuns[selectionKey]) ?? latest;
         const operations = allOperations.filter(operation => !selected || operation.execution?.task_run_id === selected.run_id);
+        const runOperations = stageRunOperations(snapshot, stage.id);
         return <section key={stage.id} data-stage-id={stage.id} aria-label={`阶段 ${stage.name}`} className="min-w-0 overflow-hidden break-words rounded-lg border bg-white p-3">
-          {runs.length === 0 && <p className="my-6 text-center text-xs text-slate-400">{stage.enabled ? '尚未执行' : '此阶段未启用'}</p>}
+          <SubagentRunsPanel key={`${snapshot.conversation_id}:${stage.id}`} operations={runOperations} executions={runs} />
+          {runs.length === 0 && runOperations.length === 0 && <p className="my-6 text-center text-xs text-slate-400">{stage.enabled ? '尚未执行' : '此阶段未启用'}</p>}
           {runs.length > 1 && <label className="mt-3 block text-xs text-slate-500">执行历史
             <select aria-label={`${stage.name} 的执行记录`} value={selected?.run_id} onChange={event => setSelectedRuns(current => ({...current, [selectionKey]: event.target.value}))} className="mt-1 block w-full rounded border bg-white p-2 text-xs text-slate-700">
               {runs.map((run, index) => <option key={run.run_id} value={run.run_id}>第 {index + 1} 次 · {run.task_name} · {statusLabel(run)}</option>)}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { groupSubagentOperations, readableResult } from '../src/subagentPresentation.ts';
+import { groupSubagentOperations, readableResult, subagentStatus } from '../src/subagentPresentation.ts';
 import { snapshotToChatEvents } from '../src/productSnapshot.ts';
 import type { ConversationSnapshot, TimelineOperation } from '../src/types.ts';
 
@@ -70,4 +70,25 @@ test('unproven, cyclic or different-role links never hide independent runs', () 
   const ops = [make('self', 'self', 1), make('earlier', 'later', 2),
     make('later', 'earlier', 3, 'general_purpose'), make('missing', 'absent', 4)];
   assert.equal(groupSubagentOperations(ops).hidden.size, 0);
+});
+
+test('run chains retain independent tasks and resolve the latest round status', () => {
+  const run = (id: string, state: string, seq: number, previous?: string) => ({
+    ...operation(id, 'subagent', { subagent: { version: 1, run_id: id, role: 'search',
+      status: state, previous_run_id: previous } }), started_seq: seq,
+  });
+  const paused = { ...run('old', 'paused', 1), status: 'failed' as const, error_code: 'subagent_paused' };
+  const olderQueue = run('older', 'queued', 2);
+  const resumed = run('new', 'queued', 3, 'old');
+  const unknown = operation('legacy', 'subagent');
+  const rejected = { ...operation('rejected', 'tool'), status: 'failed' as const };
+  assert.equal(subagentStatus(paused.details, paused.status, paused.error_code), 'paused');
+  const summary = groupSubagentOperations([paused, olderQueue, resumed, unknown, rejected]);
+  assert.deepEqual([...summary.runs.values()], [[paused, resumed], [unknown], [olderQueue]]);
+  assert.equal(subagentStatus(unknown.details, unknown.status), 'unknown');
+  const running = run('new', 'running', 3, 'old');
+  assert.deepEqual(groupSubagentOperations([paused, running]).runs.get('old'), [paused, running]);
+  for (const [status, error_code] of [['completed', undefined], ['failed', 'subagent_stopped'], ['failed', 'subagent_failed']] as const) {
+    assert.equal(subagentStatus(running.details, status, error_code), error_code?.replace('subagent_', '') ?? status);
+  }
 });

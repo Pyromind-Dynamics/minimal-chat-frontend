@@ -1,7 +1,8 @@
-import type { ExperimentContextView } from './experimentPlans';
+import type { WorkflowContext } from './workflowPlan';
 import type { ChatEvent, ConversationSnapshot, TimelineOperation } from './types';
+import { subagentDisplay } from './subagentPresentation.ts';
 
-export type WorkflowContext = ExperimentContextView['context'];
+export type { WorkflowContext } from './workflowPlan';
 export interface WorkflowNodeDefinition {
   id: string; name: string; description: string; roles: string[]; required_fields?: string[];
   tasks: {id: string; description: string; display_name?: string | null}[];
@@ -36,6 +37,20 @@ export function stageOperations(snapshot: ConversationSnapshot, stageId: string)
   return snapshot.timeline.filter((item): item is TimelineOperation => item.kind === 'operation'
     && item.category === 'subagent' && item.execution?.project_id === snapshot.project?.project_id
     && item.execution?.stage_id === stageId);
+}
+
+export function stageRunOperations(snapshot: ConversationSnapshot, stageId: string): TimelineOperation[] {
+  const catalog = snapshot.preparation?.policy.workflow_nodes ?? [];
+  return snapshot.timeline.filter((item): item is TimelineOperation => {
+    if (item.kind !== 'operation' || item.category !== 'subagent') return false;
+    if (item.execution) return item.execution.project_id === snapshot.project?.project_id
+      && item.execution.stage_id === stageId;
+    const role = subagentDisplay(item.details)?.role;
+    if (!role) return false;
+    const matches = snapshot.project?.plan.stages.filter(stage =>
+      catalog.find(node => node.id === stage.kind)?.roles.includes(role)) ?? [];
+    return matches.length === 1 && matches[0].id === stageId;
+  });
 }
 
 export function managerChatEvents(events: ChatEvent[]): ChatEvent[] {

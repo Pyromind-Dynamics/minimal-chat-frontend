@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
-import { canCreateProject, managerChatEvents, stageOperations } from '../src/preparation.ts';
+import { canCreateProject, managerChatEvents, stageOperations, stageRunOperations } from '../src/preparation.ts';
 import type { ChatEvent, ConversationSnapshot, TimelineOperation } from '../src/types.ts';
 
 const snapshot = {
@@ -48,16 +48,36 @@ test('preparation card and workspace render checklist, plan, creation and stage 
     const workspace = renderToStaticMarkup(createElement(StageWorkspace, {snapshot: state}));
     assert.match(workspace, /阶段 Init/); assert.match(workspace, /阶段 Eval/); assert.match(workspace, /repeat\(2, 360px\)/);
     assert.match(workspace, /展开阶段状态/); assert.match(workspace, /stage-workspace-body/);
+    assert.doesNotMatch(workspace, /<details aria-label="子 Agent 运行"/);
+    const queued = {
+      kind: 'operation', category: 'subagent', item_id: 'unbound', name: 'search', started_seq: 1,
+      status: 'running', output: [], thought: [], arguments: {},
+      execution: { project_id: 'project', stage_id: 'eval', task_run_id: 'queued' },
+      details: { subagent: { version: 1, role: 'search', task: 'Assigned search', status: 'queued' } },
+    };
+    const withQueue = renderToStaticMarkup(createElement(StageWorkspace, {snapshot: {...state, timeline: [queued]}}));
+    assert.match(withQueue, /子 Agent 运行记录/);
+    assert.match(withQueue, /Assigned search/);
+    const {SubagentRunsPanel} = await server.ssrLoadModule('/src/components/SubagentRunsPanel.tsx');
+    const active = {...queued, item_id: 'active', started_seq: 2, details: {
+      subagent: {version: 1, role: 'search', task: 'Currently running', status: 'running'},
+    }};
+    const finished = {...queued, item_id: 'finished', started_seq: 3, status: 'completed'};
+    const localRuns = renderToStaticMarkup(createElement(SubagentRunsPanel, {operations: [queued, active, finished]}));
+    assert.match(localRuns.replaceAll('<!-- -->', ''), /全部 3/);
+    const summary = localRuns.slice(0, localRuns.indexOf('</summary>'));
+    assert.match(summary, /Currently running/);
+    assert.match(summary, /运行中/);
+    assert.doesNotMatch(summary, /Assigned search|open=/);
+    assert.match(localRuns, /本轮已结束/);
+    const waiting = renderToStaticMarkup(createElement(SubagentRunsPanel, {
+      operations: [finished],
+      executions: [{run_id: 'queued', state: 'waiting_platform', report_state: 'not_started'}],
+    }));
+    assert.match(waiting, /等待平台结果/);
+    assert.doesNotMatch(waiting, /本轮已结束|已完成/);
     assert.match(workspace, /工作流阶段依赖关系/); assert.match(workspace, /Init → Eval/);
     assert.doesNotMatch(workspace, /开始开发|重新开发/);
-    const {latestRunByStage, stageRunLabel} = await server.ssrLoadModule('/src/stageRuns.ts');
-    const projectRuns = [
-      {run_id: 'dataset-old', node_id: 'dataset', status: 'failed', created_at: '2026-11-05T01:00:00Z'},
-      {run_id: 'dataset-new', node_id: 'dataset', status: 'clarifying', created_at: '2026-11-05T02:00:00Z'},
-      {run_id: 'train-new', node_id: 'train', status: 'waiting_user', created_at: '2026-11-05T03:00:00Z'},
-    ];
-    assert.equal(latestRunByStage(projectRuns).get('dataset')?.run_id, 'dataset-new');
-    assert.equal(stageRunLabel('clarifying'), '需求澄清中');
     const {WorkflowPlanPreview} = await server.ssrLoadModule('/src/components/WorkflowPlanPreview.tsx');
     const previewPlan = {...state.project.plan, resources: [{id: 'data', name: '验证集', uri: '/eval.jsonl'}], tasks: [{id: 'task-eval', stage_id: 'eval', name: '小样评测', description: '仅评测', inputs: [{name: 'dataset', resource_id: 'data'}], outputs: [{name: 'metrics.json', description: '真实指标'}]}]};
     const preview = renderToStaticMarkup(createElement(WorkflowPlanPreview, {plan: previewPlan, entryTaskId: 'task-eval'}));
@@ -78,7 +98,7 @@ test('preparation card and workspace render checklist, plan, creation and stage 
     assert.doesNotMatch(history, /任务与报告|latest-run-detail|old-run-detail/);
     const logTurns = ['execute', 'report'].map((phase, index) => ({
       kind: 'operation', category: 'subagent', item_id: phase, name: 'eval', started_seq: index + 1,
-      status: 'completed', output: [], execution: {project_id: 'project', stage_id: 'eval', task_run_id: 'latest'},
+      status: 'completed', output: [], thought: [], arguments: {}, execution: {project_id: 'project', stage_id: 'eval', task_run_id: 'latest'},
       details: {subagent: {version: 1, phase}},
       activity: {truncated: false, items: [{
         kind: 'message', item_id: `message-${phase}`, started_seq: 1, role: 'assistant', status: 'completed',
@@ -93,7 +113,7 @@ test('preparation card and workspace render checklist, plan, creation and stage 
     assert.match(continuous, /预测已完成/); assert.match(continuous, /报告已保存/);
     assert.match(continuous, /<strong>报告已保存<\/strong>/);
     assert.match(continuous, /read/); assert.match(continuous, /已读取四条数据/);
-    assert.doesNotMatch(continuous, /此前运行|执行过程|整理结果|第 2 轮|任务与报告/);
+    assert.doesNotMatch(continuous, /此前运行|第 2 轮|任务与报告/);
     const resumed = renderToStaticMarkup(createElement(StageWorkspace, {snapshot: {
       ...state,
       experiment_executions: [
@@ -116,6 +136,32 @@ test('preparation card and workspace render checklist, plan, creation and stage 
     }));
     assert.match(tool, /inspect_resource/); assert.match(tool, /4 rows; truncated/);
   } finally {await server.close();}
+});
+
+test('stage run lists use explicit bindings and only unambiguous configured role mappings', () => {
+  const stages = [{id: 'data-stage', kind: 'data'}, {id: 'eval-stage', kind: 'evaluation'}];
+  const base = {
+    ...snapshot,
+    project: {project_id: 'project', plan: {stages}},
+    preparation: {...snapshot.preparation, policy: {workflow_nodes: [
+      {id: 'data', roles: ['dataset']}, {id: 'evaluation', roles: ['eval']},
+    ]}},
+  } as unknown as ConversationSnapshot;
+  const child = (id: string, role: string, execution?: TimelineOperation['execution']) => ({
+    kind: 'operation', category: 'subagent', item_id: id, name: role, execution,
+    details: {subagent: {version: 1, role}},
+  } as TimelineOperation);
+  const data = child('data', 'dataset');
+  const evaluation = child('eval', 'eval');
+  const foreign = child('foreign', 'dataset', {project_id: 'other', stage_id: 'data-stage', task_run_id: 'x', plan_sequence: 1});
+  const bound = child('bound', 'dataset', {project_id: 'project', stage_id: 'eval-stage', task_run_id: 'x', plan_sequence: 1});
+  const state = {...base, timeline: [data, evaluation, foreign, bound]};
+  assert.deepEqual(stageRunOperations(state, 'data-stage'), [data]);
+  assert.deepEqual(stageRunOperations(state, 'eval-stage'), [evaluation, bound]);
+  const ambiguous = {...state, project: {...state.project!, plan: {
+    ...state.project!.plan, stages: [...state.project!.plan.stages, {...stages[0], id: 'data-second'}],
+  }}} as ConversationSnapshot;
+  assert.deepEqual(stageRunOperations(ambiguous, 'data-stage'), []);
 });
 
 test('manager chat omits both child actions and their paired observations', () => {

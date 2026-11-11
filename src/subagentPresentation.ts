@@ -28,6 +28,27 @@ export function subagentDisplay(details: unknown): SubagentDisplay | undefined {
   const value = object(object(details).subagent);
   return value.version === 1 ? value as unknown as SubagentDisplay : undefined;
 }
+const statusLabels: Record<string, string> = {
+  running: '运行中', queued: '排队中', paused: '已暂停', unknown: '状态未确认',
+  complete: '本轮已结束', completed: '本轮已结束', failed: '失败', stopped: '已停止',
+  canceled: '已取消', cancelled: '已取消', interrupted: '已中断', timed_out: '已超时',
+};
+
+export function subagentStatus(details: unknown, status?: string, error?: string | null): string {
+  const observed = subagentDisplay(details)?.status;
+  if (status === 'completed') return 'completed';
+  if (status === 'failed') {
+    const reason = error?.replace(/^subagent_/, '') ?? observed;
+    return reason && !['queued', 'running', 'unknown'].includes(reason) && Object.hasOwn(statusLabels, reason)
+      ? reason : 'failed';
+  }
+  return observed && Object.hasOwn(statusLabels, observed) ? observed : 'unknown';
+}
+
+export function subagentStatusLabel(status: string): string {
+  return statusLabels[status] ?? statusLabels.unknown;
+}
+
 export function readableResult(text: string): string {
   try {
     const content = object(JSON.parse(text)).content;
@@ -51,7 +72,7 @@ export function groupSubagentOperations(operations: TimelineOperation[]) {
     const display = subagentDisplay(child.details);
     const previous = display?.previous_run_id ? byRunId.get(display.previous_run_id) : undefined;
     const linked = previous && previous.started_seq < child.started_seq
-      && previous.name === child.name;
+      && (subagentDisplay(previous.details)?.role ?? previous.name) === (display?.role ?? child.name);
     const root = linked ? roots.get(previous.item_id) ?? previous.item_id : child.item_id;
     roots.set(child.item_id, root);
     runs.set(root, [...runs.get(root) ?? [], child]);

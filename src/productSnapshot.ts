@@ -34,12 +34,8 @@ export function snapshotToChatEvents(
     if (item.kind === 'operation') {
       if (hidden.has(item.item_id)) continue;
       const history = runs.get(item.item_id);
-      const current = history?.at(-1) ?? item;
-      events.push({ ...toAction(current), id: item.item_id, subagent_runs: history,
-        related_operations: (history ?? [item]).flatMap(run => related.get(run.item_id) ?? []) });
-      const observation = { ...toObservation(current), id: `${item.item_id}:observation`,
-        action_id: item.item_id, tool_call_id: item.item_id };
-      events.push(observation);
+      const { action, observation } = operationCard(item, history, related);
+      events.push(action, observation);
       continue;
     }
     if (item.kind === 'workflow') {
@@ -101,6 +97,16 @@ export function snapshotToChatEvents(
     });
   }
   return events;
+}
+
+export function operationCard(item: TimelineOperation, history: TimelineOperation[] | undefined,
+  related: ReadonlyMap<string, TimelineOperation[]>) {
+  const current = history?.at(-1) ?? item;
+  const action = { ...toAction(current), id: item.item_id, subagent_runs: history,
+    related_operations: (history ?? [item]).flatMap(run => related.get(run.item_id) ?? []) };
+  const observation = { ...toObservation(current), id: `${item.item_id}:observation`,
+    action_id: item.item_id, tool_call_id: item.item_id };
+  return { action, observation };
 }
 
 function toAction(item: TimelineOperation): ActionEvent {

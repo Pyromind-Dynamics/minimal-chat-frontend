@@ -15,7 +15,6 @@ import {
 import { ChatPanel } from './ChatPanel';
 import { MessageInput } from './MessageInput';
 import { StatusBar } from './StatusBar';
-import { ExperimentPlanPanel } from './ExperimentPlanPanel';
 import { PreparationPanel } from './PreparationPanel';
 import { PreparationWelcome } from './PreparationWelcome';
 import { PreparationPlanMessage } from './PreparationPlanMessage';
@@ -244,18 +243,6 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
     } finally { setBusy(false); }
   };
 
-  const controlExecution = async (runId: string, action: 'cancel' | 'retry_report') => {
-    const id = activeId.current; if (!id) return;
-    setBusy(true); setError(null);
-    try { await client.command(id, {type: 'control_experiment_task', run_id: runId, action, command_id: crypto.randomUUID()}, options); await refresh(); }
-    catch (failure) {setError(String(failure));} finally {setBusy(false);}
-  };
-  const resolveExecution = async (runId: string, action: 'bind' | 'abandon', taskId?: string) => {
-    const id = activeId.current; if (!id) return;
-    setBusy(true); setError(null);
-    try { await client.command(id, {type: 'resolve_experiment_submission', run_id: runId, action, task_id: taskId, command_id: crypto.randomUUID()}, options); await refresh(); }
-    catch (failure) {setError(String(failure));} finally {setBusy(false);}
-  };
   const respondToPermission = async (accept: boolean) => {
     const id = activeId.current;
     const permission = state.snapshot?.pending_permissions[0];
@@ -382,7 +369,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
     <StatusBar wsState={connection} status={state.status} conversationId={state.conversationId} isCreating={busy && !state.conversationId} hasConnected={hasConnected} />
     {error && <div role="alert" className="border-b bg-red-50 p-3 text-sm text-red-700">{error}<button type="button" className="ml-3 underline" onClick={() => setError(null)}>关闭</button></div>}
     {notice && <div role="status" className="border-b bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</div>}
-    <main className={`grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:overflow-hidden ${state.snapshot?.project ? 'project-workbench lg:grid-cols-[320px_minmax(0,1fr)_360px] 2xl:grid-cols-[340px_minmax(0,1fr)_420px]' : !state.snapshot || state.snapshot.preparation ? 'lg:grid-cols-[320px_minmax(0,1fr)]' : 'lg:grid-cols-[320px_minmax(0,1fr)_520px] 2xl:grid-cols-[340px_minmax(0,1fr)_600px]'}`}>
+    <main className={`grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:overflow-hidden ${isProject ? 'project-workbench lg:grid-cols-[320px_minmax(0,1fr)_360px] 2xl:grid-cols-[340px_minmax(0,1fr)_420px]' : 'lg:grid-cols-[320px_minmax(0,1fr)]'}`}>
       <nav aria-label="EchoMind 导航" className="min-h-0 overflow-hidden border-r bg-slate-50 lg:grid lg:grid-cols-2">
         <div className="flex border-b p-2 lg:hidden">
           <button type="button" onClick={() => setMobilePane('projects')} className={`flex-1 rounded px-3 py-1.5 text-sm ${mobilePane === 'projects' ? 'bg-white font-medium shadow-sm' : 'text-slate-500'}`}>Project</button>
@@ -408,8 +395,8 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
           </div>
           {conversations.length === 0 && <p className="p-3 text-xs text-slate-400">暂无对话</p>}
           {conversations.map(item => <button key={item.conversation_id} type="button" disabled={busy || loading} onClick={() => openConversation(item.conversation_id, item.project?.project_id, item.project?.cluster)} className={`block w-full border-b p-3 text-left text-sm disabled:opacity-50 ${item.conversation_id === state.conversationId ? 'bg-blue-50' : 'hover:bg-white'}`}>
-            <span className="block truncate">{item.preparation?.plan?.goal || item.experiment_context?.context.goal || item.experiment_plan?.current?.plan.name || item.conversation_id.slice(0, 12)}</span>
-            <span className="mt-1 block text-[11px] text-slate-500">{item.project ? 'Project · 开发中' : item.preparation ? '准备中' : '历史会话'} · {item.updated_at ? new Date(item.updated_at).toLocaleString() : '新会话'}</span>
+            <span className="block truncate">{item.project?.plan.goal || item.preparation?.plan?.goal || item.conversation_id.slice(0, 12)}</span>
+            <span className="mt-1 block text-[11px] text-slate-500">{item.project ? 'Project · 开发中' : '准备中'} · {item.updated_at ? new Date(item.updated_at).toLocaleString() : '新会话'}</span>
           </button>)}
         </section>
       </nav>
@@ -446,17 +433,6 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
           await refresh();
         }}
         readMedia={readInputMedia} />}
-      {state.snapshot && !state.snapshot.preparation && !state.snapshot.project && <ExperimentPlanPanel view={state.snapshot.experiment_plan} contextView={state.snapshot.experiment_context} exploration
-        executions={state.snapshot?.experiment_executions ?? []} selectedRevision={null} busy={busy || loading}
-        queue={state.snapshot?.experiment_queue ?? []}
-        onDecision={() => {}} onHistory={() => {}}
-        onRefresh={() => { void refresh().catch(failure => setError(String(failure))); }}
-        onControl={controlExecution}
-        onReadArtifact={async (runId, name) => {
-          const id = activeId.current; if (!id) throw new Error('会话未打开');
-          return client.executionArtifact(id, runId, name, options);
-        }}
-        onResolve={resolveExecution} />}
     </main>
   </div>;
 }
