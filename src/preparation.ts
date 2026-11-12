@@ -4,15 +4,13 @@ import { subagentDisplay } from './subagentPresentation.ts';
 
 export type { WorkflowContext } from './workflowPlan';
 export interface WorkflowNodeDefinition {
-  id: string; name: string; description: string; roles: string[]; required_fields?: string[];
+  id: string; name: string; description: string; roles: string[];
   tasks: {id: string; description: string; display_name?: string | null}[];
 }
 export interface PreparationView {
-  policy: { checklist_id: string; version: number; fields: { key: string; label: string; required: boolean; description: string }[]; workflow_nodes?: WorkflowNodeDefinition[] };
+  policy: { allowed_roles: string[]; workflow_nodes: WorkflowNodeDefinition[] };
   revision: number;
   phase: 'collecting' | 'planning' | 'ready' | 'active';
-  facts: Record<string, { value: unknown; status: 'missing' | 'resolved' | 'conflict'; evidence_refs: string[] }>;
-  missing: string[];
   plan: WorkflowContext | null;
   entry_task?: {request_id: string} | null;
   review_pending: boolean;
@@ -20,7 +18,7 @@ export interface PreparationView {
 }
 export interface ProjectView {
   project_id: string; conversation_id: string; plan_sequence: number;
-  plan: WorkflowContext; creation_command_id: string; initial_run_id: string;
+  plan: WorkflowContext; creation_command_id: string;
   cluster?: string | null;
 }
 export interface ExecutionBinding {
@@ -29,7 +27,7 @@ export interface ExecutionBinding {
 export function canCreateProject(snapshot: ConversationSnapshot): boolean {
   const preparation = snapshot.preparation;
   return !!preparation && !snapshot.project && preparation.phase === 'ready'
-    && !preparation.review_pending && preparation.missing.length === 0
+    && !preparation.review_pending
     && snapshot.status !== 'running' && !(snapshot.pending_inputs?.length)
     && snapshot.pending_permissions.length === 0;
 }

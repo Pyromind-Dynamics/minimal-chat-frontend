@@ -15,7 +15,6 @@ import {
 import { ChatPanel } from './ChatPanel';
 import { MessageInput } from './MessageInput';
 import { StatusBar } from './StatusBar';
-import { PreparationPanel } from './PreparationPanel';
 import { PreparationWelcome } from './PreparationWelcome';
 import { PreparationPlanMessage } from './PreparationPlanMessage';
 import { StageWorkspace } from './StageWorkspace';
@@ -419,7 +418,6 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
           }}>
           {state.snapshot?.preparation?.plan && !state.snapshot.project && <PreparationPlanMessage snapshot={state.snapshot} busy={busy || loading} onCreate={createProject} />}
         </ChatPanel>}
-        {state.snapshot?.preparation && <PreparationPanel snapshot={state.snapshot} />}
         <MessageInput onSend={text => { void send(text); }} status={state.status} sending={busy} disabled={loading || busy} canInterrupt={state.status === 'running' && !busy} onInterrupt={() => {
           const id = activeId.current;
           if (id) void client.command(id, { type: 'cancel', command_id: crypto.randomUUID() }, options).then(() => refresh()).catch(failure => setError(String(failure)));

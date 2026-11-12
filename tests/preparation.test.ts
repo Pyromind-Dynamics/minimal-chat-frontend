@@ -8,14 +8,14 @@ import type { ChatEvent, ConversationSnapshot, TimelineOperation } from '../src/
 
 const snapshot = {
   conversation_id: 'chat', status: 'idle', pending_permissions: [], pending_inputs: [], timeline: [],
-  preparation: {phase: 'ready', revision: 2, facts: {}, missing: [], review_pending: false, plan: null, policy: {fields: []}},
+  preparation: {phase: 'ready', revision: 2, review_pending: false, plan: null, policy: {allowed_roles: [], workflow_nodes: []}},
 } as unknown as ConversationSnapshot;
 
 test('creation is offered only for the current ready draft after the turn ends', () => {
   assert.equal(canCreateProject(snapshot), true);
   assert.equal(canCreateProject({...snapshot, status: 'running'}), false);
   assert.equal(canCreateProject({...snapshot, preparation: {...snapshot.preparation!, review_pending: true}}), false);
-  assert.equal(canCreateProject({...snapshot, preparation: {...snapshot.preparation!, missing: ['dataset']}}), false);
+  assert.equal(canCreateProject({...snapshot, preparation: {...snapshot.preparation!, phase: 'planning'}}), false);
   assert.equal(canCreateProject({...snapshot, pending_inputs: [{request_id: 'question', questions: []}]}), false);
 });
 
@@ -25,21 +25,19 @@ test('stage projection uses business execution bindings and never the native run
   assert.deepEqual(stageOperations(state, 'init').map(item => item.execution?.task_run_id), ['business-one']);
 });
 
-test('preparation card and workspace render checklist, plan, creation and stage columns', async () => {
+test('review plan and creation remain available without the checklist panel', async () => {
   const server = await createServer({define: {'window.location.host': JSON.stringify('localhost:5173')}, server: {middlewareMode: true, ws: false}, optimizeDeps: {noDiscovery: true, include: []}, appType: 'custom'});
   try {
-    const {PreparationPanel} = await server.ssrLoadModule('/src/components/PreparationPanel.tsx');
     const {PreparationWelcome} = await server.ssrLoadModule('/src/components/PreparationWelcome.tsx');
     const welcome = renderToStaticMarkup(createElement(PreparationWelcome));
     assert.match(welcome, /收集信息/); assert.match(welcome, /审阅计划/); assert.match(welcome, /阶段执行/);
-    const prep = {...snapshot, preparation: {...snapshot.preparation!, policy: {checklist_id: 'test', version: 1, fields: [{key: 'data', label: '评测数据', required: true, description: ''}]}, facts: {data: {status: 'resolved', value: '/eval.jsonl', evidence_refs: ['resource:evidence']}}, plan: {goal: 'Evaluate', resources: [], stages: [{id: 'eval', name: 'Eval', enabled: true}], tasks: [], edges: []}}};
-    const html = renderToStaticMarkup(createElement(PreparationPanel, {snapshot: prep}));
-    assert.match(html, /评测数据/); assert.match(html, /准备 Checklist/);
+    const prep = {...snapshot, preparation: {...snapshot.preparation!, plan: {goal: 'Evaluate', resources: [], stages: [{id: 'eval', name: 'Eval', enabled: true}], tasks: [], edges: []}}};
     const {PreparationPlanMessage} = await server.ssrLoadModule('/src/components/PreparationPlanMessage.tsx');
     const {ChatPanel} = await server.ssrLoadModule('/src/components/ChatPanel.tsx');
     const planMessage = createElement(PreparationPlanMessage, {snapshot: prep, busy: false, onCreate: () => {}});
     const chat = renderToStaticMarkup(createElement(ChatPanel, {events: [], requestOptions: {}, status: 'idle'}, planMessage));
     assert.match(chat, /workflowPLAN/); assert.match(chat, /创建并启动/); assert.match(chat, /尚未创建 Project/);
+    assert.doesNotMatch(chat, /准备 Checklist|信息收集进度|查看信息与依据/);
     assert.match(chat, /计划阶段 · 未启动/);
     const updating = renderToStaticMarkup(createElement(PreparationPlanMessage, {snapshot: {...prep, preparation: {...prep.preparation, review_pending: true}}, busy: false, onCreate: () => {}}));
     assert.match(updating, /正在更新草稿/); assert.doesNotMatch(updating, /<button/);
