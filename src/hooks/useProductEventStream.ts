@@ -18,7 +18,6 @@ interface ProductEventStreamOptions {
   onEvent: (event: ProductEvent) => void;
   onGap: () => Promise<number>;
   eventsUrl?: typeof productEventsUrl;
-  refreshOnConnect?: boolean;
 }
 
 const RECONNECT_DELAY_MS = 3_000;
@@ -30,7 +29,6 @@ export function useProductEventStream({
   eventsUrl = productEventsUrl,
   onEvent,
   onGap,
-  refreshOnConnect = false,
 }: ProductEventStreamOptions): ConnectionState {
   const [connectionState, setConnectionState] =
     useState<ConnectionState>('closed');
@@ -53,9 +51,9 @@ export function useProductEventStream({
       while (!stopped) {
         try {
           setConnectionState('connecting');
-          if (refreshOnConnect) cursor = await onGapRef.current();
           if (stopped) return;
           await prepareProductRequest(requestOptions);
+          if (stopped) return;
           const response = await fetch(eventsUrl(conversationId!, cursor), {
             credentials: 'include',
             headers: getProductRequestHeaders(requestOptions),
@@ -72,7 +70,9 @@ export function useProductEventStream({
             let disposition = classifyProductSequence(cursor, event.seq);
             if (disposition === 'ignore') continue;
             if (disposition === 'gap') {
-              cursor = await onGapRef.current();
+              const throughSeq = await onGapRef.current();
+              if (stopped) return;
+              cursor = Math.max(cursor, throughSeq);
               disposition = classifyProductSequence(cursor, event.seq);
               if (disposition === 'ignore') continue;
               if (disposition === 'gap') {
@@ -99,7 +99,7 @@ export function useProductEventStream({
       controller.abort();
       setConnectionState('closed');
     };
-  }, [afterSeq, conversationId, requestOptions, eventsUrl, refreshOnConnect]);
+  }, [afterSeq, conversationId, requestOptions, eventsUrl]);
 
   return connectionState;
 }
@@ -127,7 +127,11 @@ async function* readSseData(
       if (done) return;
     }
   } finally {
-    reader.releaseLock();
+    try {
+      await reader.cancel();
+    } finally {
+      reader.releaseLock();
+    }
   }
 }
 

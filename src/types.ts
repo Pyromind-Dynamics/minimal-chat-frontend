@@ -364,6 +364,16 @@ export type RespondToUserInput = (
   commandId: string,
 ) => Promise<void>;
 
+export interface ConversationSummary {
+  conversation_id: string;
+  status: ExecutionStatus;
+  through_seq: number;
+  updated_at: string | null;
+  title: string | null;
+  project_id: string | null;
+  cluster: string | null;
+}
+
 export interface ConversationSnapshot {
   preparation?: import('./preparation').PreparationView | null;
   project?: import('./preparation').ProjectView | null;

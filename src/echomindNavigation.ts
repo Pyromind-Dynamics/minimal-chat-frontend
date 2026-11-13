@@ -1,5 +1,5 @@
 import type { ProjectSummary } from './echomindContract';
-import type { ConversationSnapshot } from './types';
+import type { ConversationSummary } from './types';
 
 export interface EchoMindSelection {
   project: ProjectSummary | null;
@@ -19,7 +19,7 @@ export function resolveEchoMindSelection({
   urlConversationId?: string | null;
   savedConversationId?: string | null;
   projects: ProjectSummary[];
-  conversations: ConversationSnapshot[];
+  conversations: Pick<ConversationSummary, 'conversation_id'>[];
 }): EchoMindSelection | null {
   const projectsById = new Map(projects.map(project => [project.project_id, project]));
   for (const projectId of [urlProjectId, savedProjectId]) {

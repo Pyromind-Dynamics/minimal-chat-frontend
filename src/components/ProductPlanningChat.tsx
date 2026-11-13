@@ -4,7 +4,7 @@ import type { RequestOptions } from '../api';
 import { useChatContext } from '../ChatContext';
 import { useProductEventStream } from '../hooks/useProductEventStream';
 import type { ProductClient } from '../productClient';
-import type { ConversationSnapshot, ProductEvent } from '../types';
+import type { ConversationSnapshot, ConversationSummary, ProductEvent } from '../types';
 import type { ProjectSummary } from '../echomindContract';
 import { resolveEchoMindSelection } from '../echomindNavigation';
 import {
@@ -37,14 +37,20 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
   const [userId] = useState(() => new URLSearchParams(window.location.search).get('userId')?.trim() || localStorage.getItem(`${storageNamespace}.userId`) || '42');
   const [credentials, setCredentials] = useState<RequestOverrideFields>(loadRequestOverrides);
   const [credentialDraft, setCredentialDraft] = useState<RequestOverrideFields>(credentials);
-  const options = useMemo<RequestOptions>(() => ({ userId, cookie: credentials.cookie, xCluster: credentials.xCluster }), [userId, credentials]);
-  const [conversations, setConversations] = useState<ConversationSnapshot[]>([]);
+  const projectCluster = state.snapshot?.project?.cluster;
+  const options = useMemo<RequestOptions>(() => ({
+    userId, cookie: credentials.cookie, xCluster: projectCluster ?? credentials.xCluster,
+  }), [userId, credentials, projectCluster]);
+  const navigationOptions = useMemo<RequestOptions>(() => ({
+    userId, cookie: credentials.cookie, xCluster: credentials.xCluster,
+  }), [userId, credentials]);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [mobilePane, setMobilePane] = useState<'conversations' | 'projects'>('projects');
   const [busy, setBusy] = useState(false);
   const [respondingPermission, setRespondingPermission] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [openError, setOpenError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [afterSeq, setAfterSeq] = useState(0);
@@ -55,29 +61,89 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
   const activeId = useRef<string | null>(null);
   const didRestore = useRef(false);
   const generation = useRef(0);
+  const request = useRef<AbortController | null>(null);
+  const target = useRef<{ conversationId?: string; projectId?: string; cluster?: string } | null>(null);
   const refreshTimer = useRef<number | null>(null);
+  const inFlight = useRef<Promise<number> | null>(null);
+  const refreshAgain = useRef(false);
+  const lastRefresh = useRef(0);
+  const deltaFrame = useRef<number | null>(null);
+  const deltas = useRef<ProductEvent[]>([]);
   const createRequest = useRef<{conversation: string; revision: number; command: string} | null>(null);
 
   const apply = useCallback((snapshot: ConversationSnapshot) => {
     if (activeId.current !== snapshot.conversation_id) return;
     dispatch({ type: 'SET_PRODUCT_SNAPSHOT', snapshot });
-    setConversations(current => [snapshot, ...current.filter(item => item.conversation_id !== snapshot.conversation_id)]);
+    const summary: ConversationSummary = {
+      conversation_id: snapshot.conversation_id,
+      status: snapshot.status,
+      through_seq: snapshot.through_seq,
+      updated_at: snapshot.updated_at ?? null,
+      title: snapshot.project?.plan.goal ?? snapshot.preparation?.plan?.goal ?? null,
+      project_id: snapshot.project?.project_id ?? null,
+      cluster: snapshot.project?.cluster ?? null,
+    };
+    setConversations(current => {
+      const existing = current.find(item => item.conversation_id === summary.conversation_id);
+      if (existing && existing.through_seq > summary.through_seq) return current;
+      return [{ ...summary, title: summary.title ?? existing?.title ?? null },
+        ...current.filter(item => item.conversation_id !== summary.conversation_id)];
+    });
   }, [dispatch]);
 
-  const refresh = useCallback(async () => {
+  const resetRequests = useCallback(() => {
+    generation.current += 1;
+    request.current?.abort();
+    request.current = null;
+    if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+    refreshTimer.current = null;
+    inFlight.current = null;
+    refreshAgain.current = false;
+    lastRefresh.current = 0;
+    if (deltaFrame.current !== null) window.cancelAnimationFrame(deltaFrame.current);
+    deltaFrame.current = null;
+    deltas.current = [];
+  }, []);
+
+  const refresh = useCallback(async function refresh(): Promise<number> {
     const id = activeId.current, epoch = generation.current;
-    if (!id) return 0;
-    const snapshot = await client.snapshot(id, options);
-    if (generation.current !== epoch || activeId.current !== id) return 0;
-    apply(snapshot);
-    return snapshot.through_seq;
-  }, [client, options, apply]);
+    if (!id || loading || openError) return 0;
+    if (inFlight.current) {
+      refreshAgain.current = true;
+      return inFlight.current;
+    }
+    if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+    refreshTimer.current = null;
+    refreshAgain.current = false;
+    lastRefresh.current = performance.now();
+    const signal = request.current?.signal;
+    const pending = client.snapshot(id, options, signal).then(snapshot => {
+      if (generation.current !== epoch) return 0;
+      apply(snapshot);
+      return snapshot.through_seq;
+    }).catch(failure => {
+      if (generation.current !== epoch) return 0;
+      throw failure;
+    }).finally(() => {
+      if (generation.current !== epoch) return;
+      inFlight.current = null;
+      if (refreshAgain.current && refreshTimer.current === null) {
+        refreshAgain.current = false;
+        refreshTimer.current = window.setTimeout(() => {
+          refreshTimer.current = null;
+          void refresh().catch(failure => setError(String(failure)));
+        }, Math.max(0, 300 - (performance.now() - lastRefresh.current)));
+      }
+    });
+    inFlight.current = pending;
+    return pending;
+  }, [apply, client, loading, openError, options]);
 
   const refreshProjects = useCallback(async () => {
-    const items = await client.listProjects(options);
+    const items = await client.listProjects(navigationOptions);
     setProjects(items);
     return items;
-  }, [client, options]);
+  }, [client, navigationOptions]);
 
   const readInputMedia = useCallback((requestId: string, contentIndex: number, imageIndex: number) => {
     const id = activeId.current;
@@ -85,140 +151,151 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
     return client.inputMedia(id, requestId, contentIndex, imageIndex, options);
   }, [client, options]);
 
-  const open = useCallback(async (id: string, clusterOverride?: string) => {
-    const epoch = ++generation.current;
-    activeId.current = id;
-    dispatch({ type: 'SET_CONVERSATION_ID', id });
-    setHasConnected(false); setError(null); setNotice(null); setLoading(true);
-    const requestOptions = clusterOverride
-      ? { ...options, xCluster: clusterOverride }
-      : options;
+  const open = useCallback(async (selection: NonNullable<typeof target.current>) => {
+    resetRequests();
+    const controller = new AbortController();
+    request.current = controller;
+    target.current = selection;
+    const { signal } = controller;
+    activeId.current = selection.conversationId ?? null;
+    dispatch({ type: 'RESET_CONVERSATION' });
+    setHasConnected(false); setError(null); setOpenError(null); setNotice(null); setLoading(true);
     try {
-      const snapshot = await client.snapshot(id, requestOptions);
-      if (generation.current !== epoch) return;
-      apply(snapshot); setAfterSeq(snapshot.through_seq);
+      let id = selection.conversationId;
+      let cluster = selection.cluster;
+      if (!id && selection.projectId) {
+        const { project } = await client.project(selection.projectId, navigationOptions, signal);
+        id = project.conversation_id;
+        cluster = project.cluster;
+      }
+      if (!id || signal.aborted) return;
+      activeId.current = id;
+      const snapshot = await client.snapshot(id, {
+        ...navigationOptions,
+        xCluster: cluster ?? (selection.projectId ? undefined : navigationOptions.xCluster),
+      }, signal);
+      if (signal.aborted) return;
+      apply(snapshot);
+      setAfterSeq(snapshot.through_seq);
+      const projectId = snapshot.project?.project_id ?? null;
+      updateWorkbenchUrl(projectId, id);
+      if (projectId) localStorage.setItem(selectedProjectKey, projectId);
+      else localStorage.removeItem(selectedProjectKey);
       localStorage.setItem(selectedKey, id); localStorage.removeItem(newKey);
     } catch (failure) {
-      if (generation.current === epoch) setError(String(failure));
-    } finally { if (generation.current === epoch) setLoading(false); }
-  }, [client, options, dispatch, apply, selectedKey, newKey]);
+      if (!signal.aborted) setOpenError(String(failure));
+    } finally {
+      if (!signal.aborted) setLoading(false);
+    }
+  }, [apply, client, dispatch, navigationOptions, newKey, resetRequests, selectedKey, selectedProjectKey]);
 
   const openProject = useCallback((project: ProjectSummary) => {
-    const nextCredentials = { ...credentials, xCluster: project.cluster };
-    setCredentials(nextCredentials);
-    setCredentialDraft(nextCredentials);
-    saveRequestOverrides(nextCredentials);
-    setActiveProjectId(project.project_id);
-    localStorage.setItem(selectedProjectKey, project.project_id);
-    updateWorkbenchUrl(project.project_id, project.conversation_id);
-    void open(project.conversation_id, project.cluster);
-  }, [credentials, open, selectedProjectKey]);
-
-  const openConversation = useCallback((
-    conversationId: string,
-    projectId?: string | null,
-    cluster?: string | null,
-  ) => {
-    if (cluster) {
-      const nextCredentials = { ...credentials, xCluster: cluster };
-      setCredentials(nextCredentials);
-      setCredentialDraft(nextCredentials);
-      saveRequestOverrides(nextCredentials);
-    }
-    setActiveProjectId(projectId ?? null);
-    if (projectId) localStorage.setItem(selectedProjectKey, projectId);
-    else localStorage.removeItem(selectedProjectKey);
-    updateWorkbenchUrl(projectId ?? null, conversationId);
-    void open(conversationId, cluster ?? undefined);
-  }, [credentials, open, selectedProjectKey]);
+    void open({ conversationId: project.conversation_id, projectId: project.project_id, cluster: project.cluster });
+  }, [open]);
 
   useEffect(() => {
-    let disposed = false;
+    const controller = new AbortController();
+    const { signal } = controller;
     localStorage.setItem(`${storageNamespace}.userId`, userId);
-    if (didRestore.current) return () => { disposed = true; };
-    void Promise.allSettled([
-      client.list(options),
-      client.listProjects(options),
-    ]).then(([conversationResult, projectResult]) => {
-      if (disposed) return;
-      if (conversationResult.status === 'rejected') {
-        setError(String(conversationResult.reason));
-        return;
-      }
-      const items = conversationResult.value;
-      const projectItems = projectResult.status === 'fulfilled'
-        ? projectResult.value
-        : [];
-      setConversations(items);
-      setProjects(projectItems);
-      if (projectResult.status === 'rejected') {
-        setError(String(projectResult.reason));
-      }
-      if (localStorage.getItem(newKey)) {
-        didRestore.current = true;
-        return;
-      }
-      const params = new URLSearchParams(window.location.search);
-      const selection = resolveEchoMindSelection({
-        urlProjectId: params.get('project'),
-        savedProjectId: localStorage.getItem(selectedProjectKey),
-        urlConversationId: params.get('conversation'),
-        savedConversationId: localStorage.getItem(selectedKey),
-        projects: projectItems,
-        conversations: items,
+    const params = new URLSearchParams(window.location.search);
+    const conversationId = params.get('conversation')?.trim() || undefined;
+    const projectId = params.get('project')?.trim() || undefined;
+    const initialGeneration = generation.current;
+    const listed = client.list(navigationOptions, signal).then(items => {
+      if (!signal.aborted) setConversations(current => {
+        const byId = new Map(items.map(item => [item.conversation_id, item]));
+        for (const item of current) {
+          const listed = byId.get(item.conversation_id);
+          if (!listed || item.through_seq >= listed.through_seq) {
+            byId.set(item.conversation_id, { ...item, title: item.title ?? listed?.title ?? null });
+          }
+        }
+        return [...byId.values()].sort((a, b) => (b.updated_at ?? '').localeCompare(a.updated_at ?? ''));
       });
-      didRestore.current = true;
-      if (selection?.project) {
-        openProject(selection.project);
-      } else if (selection) {
-        updateWorkbenchUrl(null, selection.conversationId);
-        void open(selection.conversationId);
-      }
-    }).catch(failure => { if (!disposed) setError(String(failure)); });
-    return () => { disposed = true; };
-  }, [
-    client,
-    options,
-    open,
-    openProject,
-    storageNamespace,
-    userId,
-    selectedKey,
-    selectedProjectKey,
-    newKey,
-  ]);
+      return items;
+    });
+    const projectsListed = client.listProjects(navigationOptions, signal).then(items => {
+      if (!signal.aborted) setProjects(items);
+      return items;
+    });
 
-  useEffect(() => () => {
-    generation.current += 1;
-    if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
-  }, []);
+    if (!didRestore.current && (conversationId || projectId)) {
+      queueMicrotask(() => {
+        if (signal.aborted || generation.current !== initialGeneration) return;
+        didRestore.current = true;
+        void open({ conversationId, projectId });
+      });
+    }
+    void Promise.allSettled([listed, projectsListed]).then(([conversationsResult, projectsResult]) => {
+      if (signal.aborted || didRestore.current || generation.current !== initialGeneration) return;
+      didRestore.current = true;
+      if (localStorage.getItem(newKey)) return;
+      const selection = resolveEchoMindSelection({
+        savedProjectId: localStorage.getItem(selectedProjectKey),
+        savedConversationId: localStorage.getItem(selectedKey),
+        projects: projectsResult.status === 'fulfilled' ? projectsResult.value : [],
+        conversations: conversationsResult.status === 'fulfilled' ? conversationsResult.value : [],
+      });
+      if (selection?.project) openProject(selection.project);
+      else if (selection) void open({ conversationId: selection.conversationId });
+      else if (conversationsResult.status === 'rejected') setError(String(conversationsResult.reason));
+    });
+    return () => controller.abort();
+  }, [client, navigationOptions, open, openProject, storageNamespace, userId, selectedKey, selectedProjectKey, newKey]);
+
+  useEffect(() => resetRequests, [resetRequests]);
+
+  const flushDeltas = useCallback(() => {
+    if (deltaFrame.current !== null) window.cancelAnimationFrame(deltaFrame.current);
+    deltaFrame.current = null;
+    const events = deltas.current;
+    deltas.current = [];
+    if (events.length) dispatch({ type: 'APPLY_MESSAGE_EVENTS', events });
+  }, [dispatch]);
+
+  const scheduleRefresh = useCallback(() => {
+    if (inFlight.current) {
+      refreshAgain.current = true;
+    } else if (refreshTimer.current === null) {
+      refreshTimer.current = window.setTimeout(() => {
+        refreshTimer.current = null;
+        refreshAgain.current = false;
+        void refresh().catch(failure => setError(String(failure)));
+      }, Math.max(0, 300 - (performance.now() - lastRefresh.current)));
+    }
+  }, [refresh]);
 
   const onEvent = useCallback((event: ProductEvent) => {
     if (event.conversation_id !== activeId.current) return;
-    if (event.type.startsWith('message.')) dispatch({ type: 'APPLY_MESSAGE_EVENTS', events: [event] });
+    if (event.type === 'message.delta') {
+      deltas.current.push(event);
+      if (deltaFrame.current === null) deltaFrame.current = window.requestAnimationFrame(flushDeltas);
+      return;
+    }
+    if (event.type === 'message.started' || event.type === 'message.completed') {
+      flushDeltas();
+      dispatch({ type: 'APPLY_MESSAGE_EVENTS', events: [event] });
+      if (event.type === 'message.started') return;
+    }
     if (event.type === 'project.changed') {
       void refreshProjects().catch(failure => setError(String(failure)));
     }
-    if (refreshTimer.current === null) refreshTimer.current = window.setTimeout(() => {
-      refreshTimer.current = null;
-      void refresh().catch(failure => setError(String(failure)));
-    }, 120);
-  }, [dispatch, refresh, refreshProjects]);
+    scheduleRefresh();
+  }, [dispatch, flushDeltas, refreshProjects, scheduleRefresh]);
 
   const connection = useProductEventStream({
-    conversationId: loading ? null : state.conversationId,
+    conversationId: loading || openError ? null : state.conversationId,
     afterSeq, requestOptions: options, onEvent, onGap: refresh,
-    eventsUrl: client.eventsUrl, refreshOnConnect: true,
+    eventsUrl: client.eventsUrl,
   });
   useEffect(() => { if (connection === 'open') setHasConnected(true); }, [connection]);
   useEffect(() => {
-    const handler = () => { void refresh().catch(failure => setError(String(failure))); };
-    window.addEventListener('focus', handler);
-    return () => window.removeEventListener('focus', handler);
-  }, [refresh]);
+    window.addEventListener('focus', scheduleRefresh);
+    return () => window.removeEventListener('focus', scheduleRefresh);
+  }, [scheduleRefresh]);
 
   const send = async (text: string) => {
-    if (busy || loading) return;
+    if (busy || loading || openError) return;
     setBusy(true); setError(null); setNotice(null);
     const commandId = crypto.randomUUID();
     dispatch({ type: 'ADD_PENDING_OUTBOUND', message: { commandId, text, status: 'pending' } });
@@ -228,6 +305,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
         const snapshot = await client.create(options);
         id = snapshot.conversation_id;
         activeId.current = id;
+        request.current = new AbortController();
         dispatch({ type: 'SET_CONVERSATION_ID', id });
         dispatch({ type: 'ADD_PENDING_OUTBOUND', message: { commandId, text, status: 'pending' } });
         apply(snapshot); setAfterSeq(snapshot.through_seq); setHasConnected(false);
@@ -266,11 +344,14 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
   };
 
   const newConversation = () => {
-    generation.current += 1; activeId.current = null;
+    resetRequests();
+    target.current = null;
+    activeId.current = null;
+    setLoading(false);
+    setOpenError(null);
     localStorage.removeItem(selectedKey);
     localStorage.removeItem(selectedProjectKey);
     localStorage.setItem(newKey, '1');
-    setActiveProjectId(null);
     updateWorkbenchUrl(null, null);
     dispatch({ type: 'RESET_CONVERSATION' });
     setError(null); setNotice(null); setAfterSeq(0); setHasConnected(false);
@@ -289,7 +370,6 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
         const items = await refreshProjects();
         const current = items.find(item => item.conversation_id === id);
         if (current) {
-          setActiveProjectId(current.project_id);
           localStorage.setItem(selectedProjectKey, current.project_id);
           updateWorkbenchUrl(current.project_id, current.conversation_id);
         }
@@ -314,7 +394,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
 
 
   const isProject = Boolean(state.snapshot?.project);
-  const currentProjectId = activeProjectId ?? state.snapshot?.project?.project_id ?? null;
+  const currentProjectId = state.snapshot?.project?.project_id ?? null;
 
   return <div className="product-planning-chat flex h-screen flex-col bg-white text-left text-slate-900">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
@@ -365,7 +445,11 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
       </button>
     </form>
     </details>
-    <StatusBar wsState={connection} status={state.status} conversationId={state.conversationId} isCreating={busy && !state.conversationId} hasConnected={hasConnected} />
+    {loading ? <div role="status" className="border-b px-4 py-2 text-xs text-gray-600">加载会话…</div> :
+    <StatusBar wsState={connection} status={state.status} conversationId={state.conversationId} isCreating={busy && !state.conversationId} hasConnected={hasConnected} />}
+    {openError && <div role="alert" className="border-b bg-red-50 p-3 text-sm text-red-700">{openError}
+      <button type="button" className="ml-3 underline" onClick={() => { if (target.current) void open(target.current); }}>重试</button>
+    </div>}
     {error && <div role="alert" className="border-b bg-red-50 p-3 text-sm text-red-700">{error}<button type="button" className="ml-3 underline" onClick={() => setError(null)}>关闭</button></div>}
     {notice && <div role="status" className="border-b bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</div>}
     <main className={`grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:overflow-hidden ${isProject ? 'project-workbench lg:grid-cols-[320px_minmax(0,1fr)_360px] 2xl:grid-cols-[340px_minmax(0,1fr)_420px]' : 'lg:grid-cols-[320px_minmax(0,1fr)]'}`}>
@@ -379,7 +463,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
             <span>Project</span><span className="text-slate-400">{projects.length}</span>
           </div>
           {projects.length === 0 && <p className="p-3 text-xs text-slate-400">暂无 Project</p>}
-          {projects.map(project => <button key={project.project_id} type="button" disabled={busy || loading} onClick={() => openProject(project)} className={`block w-full border-b p-3 text-left text-sm disabled:opacity-50 ${project.project_id === currentProjectId ? 'bg-blue-50' : 'hover:bg-white'}`}>
+          {projects.map(project => <button key={project.project_id} type="button" disabled={busy} onClick={() => openProject(project)} className={`block w-full border-b p-3 text-left text-sm disabled:opacity-50 ${project.project_id === currentProjectId ? 'bg-blue-50' : 'hover:bg-white'}`}>
             <span className="block truncate font-medium">{project.name}</span>
             <span className="mt-1 block truncate font-mono text-[10px] text-slate-500">{project.cluster}</span>
             <span className="mt-1 flex items-center justify-between gap-2 text-[10px] text-slate-500">
@@ -393,9 +477,9 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
             <span>对话</span><span className="text-slate-400">{conversations.length}</span>
           </div>
           {conversations.length === 0 && <p className="p-3 text-xs text-slate-400">暂无对话</p>}
-          {conversations.map(item => <button key={item.conversation_id} type="button" disabled={busy || loading} onClick={() => openConversation(item.conversation_id, item.project?.project_id, item.project?.cluster)} className={`block w-full border-b p-3 text-left text-sm disabled:opacity-50 ${item.conversation_id === state.conversationId ? 'bg-blue-50' : 'hover:bg-white'}`}>
-            <span className="block truncate">{item.project?.plan.goal || item.preparation?.plan?.goal || item.conversation_id.slice(0, 12)}</span>
-            <span className="mt-1 block text-[11px] text-slate-500">{item.project ? 'Project · 开发中' : '准备中'} · {item.updated_at ? new Date(item.updated_at).toLocaleString() : '新会话'}</span>
+          {conversations.map(item => <button key={item.conversation_id} type="button" disabled={busy} onClick={() => void open({ conversationId: item.conversation_id, projectId: item.project_id ?? undefined, cluster: item.cluster ?? undefined })} className={`block w-full border-b p-3 text-left text-sm disabled:opacity-50 ${item.conversation_id === state.conversationId ? 'bg-blue-50' : 'hover:bg-white'}`}>
+            <span className="block truncate">{item.title || item.conversation_id.slice(0, 12)}</span>
+            <span className="mt-1 block text-[11px] text-slate-500">{item.project_id ? 'Project · 开发中' : '准备中'} · {item.updated_at ? new Date(item.updated_at).toLocaleString() : '新会话'}</span>
           </button>)}
         </section>
       </nav>
@@ -418,7 +502,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
           }}>
           {state.snapshot?.preparation?.plan && !state.snapshot.project && <PreparationPlanMessage snapshot={state.snapshot} busy={busy || loading} onCreate={createProject} />}
         </ChatPanel>}
-        <MessageInput onSend={text => { void send(text); }} status={state.status} sending={busy} disabled={loading || busy} canInterrupt={state.status === 'running' && !busy} onInterrupt={() => {
+        <MessageInput onSend={text => { void send(text); }} status={state.status} sending={busy} disabled={loading || busy || !!openError} canInterrupt={state.status === 'running' && !busy} onInterrupt={() => {
           const id = activeId.current;
           if (id) void client.command(id, { type: 'cancel', command_id: crypto.randomUUID() }, options).then(() => refresh()).catch(failure => setError(String(failure)));
         }} />
