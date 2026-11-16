@@ -7,7 +7,7 @@ import {
   type PendingOutboundMessage,
   type ProductEvent,
 } from './types';
-import type { WsState } from './hooks/useConversationSocket';
+import type { StreamConnectionState } from './types';
 import { snapshotToChatEvents } from './productSnapshot';
 import { pendingMessageEvents, projectMessageEvents, receivedUserCommandIds } from './productMessages';
 
@@ -18,7 +18,7 @@ interface ChatState {
   events: ChatEvent[];
   status: ExecutionStatus;
   isCondensing: boolean;
-  wsState: WsState;
+  wsState: StreamConnectionState;
   error: string | null;
   pendingOutboundMessages: PendingOutboundMessage[];
   messageEvents: ProductEvent[];
@@ -34,7 +34,7 @@ type ChatAction =
   | { type: 'CLEAR_EVENTS' }
   | { type: 'SET_STATUS'; status: ExecutionStatus }
   | { type: 'SET_CONDENSING'; isCondensing: boolean }
-  | { type: 'SET_WS_STATE'; wsState: WsState }
+  | { type: 'SET_WS_STATE'; wsState: StreamConnectionState }
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'ADD_PENDING_OUTBOUND'; message: PendingOutboundMessage }
   | { type: 'MARK_PENDING_OUTBOUND_FAILED'; commandId: string }

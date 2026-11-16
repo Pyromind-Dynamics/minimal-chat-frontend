@@ -72,6 +72,7 @@ export function snapshotToChatEvents(
       continue;
     }
     if (item.kind === 'notice') {
+      if (item.code === 'legacy_harness_retired' && snapshot.capabilities.read_only) continue;
       events.push({
         kind: 'ServerErrorEvent',
         source: 'environment',

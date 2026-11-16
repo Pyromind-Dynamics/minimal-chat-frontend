@@ -502,7 +502,8 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
           }}>
           {state.snapshot?.preparation?.plan && !state.snapshot.project && <PreparationPlanMessage snapshot={state.snapshot} busy={busy || loading} onCreate={createProject} />}
         </ChatPanel>}
-        <MessageInput onSend={text => { void send(text); }} status={state.status} sending={busy} disabled={loading || busy || !!openError} canInterrupt={state.status === 'running' && !busy} onInterrupt={() => {
+        {state.snapshot?.capabilities.read_only && <p className="border-t bg-amber-50 px-4 py-2 text-xs text-amber-800">此会话已归档，仅可查看历史记录和产物。请新建会话继续。</p>}
+        <MessageInput onSend={text => { void send(text); }} status={state.status} sending={busy} disabled={loading || busy || !!openError || state.snapshot?.capabilities.read_only} canInterrupt={state.status === 'running' && !busy} onInterrupt={() => {
           const id = activeId.current;
           if (id) void client.command(id, { type: 'cancel', command_id: crypto.randomUUID() }, options).then(() => refresh()).catch(failure => setError(String(failure)));
         }} />

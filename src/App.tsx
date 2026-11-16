@@ -972,6 +972,8 @@ function ChatApp() {
 
           {hasPendingInput ? (
             <p className="border-t border-indigo-100 bg-indigo-50/70 px-4 py-2.5 text-xs leading-5 text-indigo-700">请在上方卡片完成回答，或取消提问后继续聊天。</p>
+          ) : state.snapshot?.capabilities.read_only ? (
+            <p className="border-t bg-amber-50 px-4 py-2 text-xs text-amber-800">此会话已归档，仅可查看历史记录和产物。请新建会话继续。</p>
           ) : state.snapshot?.automatic_turns_suspended && (
             <p className="border-t bg-amber-50 px-4 py-2 text-xs text-amber-800">自动执行已暂停。发送一条新消息后继续。</p>
           )}
@@ -989,6 +991,7 @@ function ChatApp() {
             status={state.status}
             sending={isSending}
             disabled={
+              state.snapshot?.capabilities.read_only ||
               isLoadingEvents
               || hasPendingInput
               || isRespondingToConfirmation

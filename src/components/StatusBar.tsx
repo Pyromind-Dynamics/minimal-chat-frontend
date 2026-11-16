@@ -1,9 +1,9 @@
-import type { WsState } from '../hooks/useConversationSocket';
+import type { StreamConnectionState } from '../types';
 import type { ExecutionStatus } from '../types';
 import { deriveDisplayConnectionState } from '../productStreamState';
 
 interface StatusBarProps {
-  wsState: WsState;
+  wsState: StreamConnectionState;
   status: ExecutionStatus;
   conversationId: string | null;
   isCreating: boolean;

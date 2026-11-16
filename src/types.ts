@@ -214,6 +214,7 @@ export type ExecutionStatus =
   | 'closed';
 
 export interface HarnessCapabilities {
+  read_only?: boolean;
   user_input_reply?: boolean;
   resume: boolean;
   cancel: boolean;
@@ -508,3 +509,5 @@ export function getLatestPlan(events: ChatEvent[]): UpdatePlanObservation | null
   }
   return null;
 }
+
+export type StreamConnectionState = 'connecting' | 'open' | 'closed';

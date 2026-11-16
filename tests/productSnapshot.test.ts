@@ -83,3 +83,15 @@ test('resolved input is displayed even when the runner never reported tool compl
       status === 'cancelled' ? '已取消' : '已中断');
   }
 });
+
+test('archived sessions use the archive banner instead of a server error card', () => {
+  const snapshot: ConversationSnapshot = {
+    schema_version: 1, conversation_id: 'legacy', through_seq: 1, status: 'closed',
+    capabilities: {read_only: true, resume: false, cancel: false, permission_reply: false,
+      partial_message: false, fork: false, workflow_rollback: false, native_workspace_tools: []},
+    timeline: [{kind: 'notice', item_id: 'archive', started_seq: 1, severity: 'warning',
+      code: 'legacy_harness_retired', message: '此会话已归档。'}],
+    pending_permissions: [], usage: {input_tokens: 0, output_tokens: 0, cached_tokens: 0},
+  };
+  assert.deepEqual(snapshotToChatEvents(snapshot), []);
+});
