@@ -120,9 +120,7 @@ export interface ObservationEvent {
 }
 
 // Conversation state changes
-// The agent-server only ever serializes this as `key` (see
-// ConversationStateUpdateEvent in openhands-sdk). `field` is kept optional
-// for backward compatibility with any older payloads.
+// State updates use `key`; `field` remains optional for older payloads.
 export interface ConversationStateUpdateEvent {
   kind: 'ConversationStateUpdateEvent';
   id: string;
@@ -452,11 +450,7 @@ export function getContextCondensationState(
   return event.value as ContextCondensationState;
 }
 
-// Key used by the agent-server when pushing workflow.py updates via
-// ConversationStateUpdateEvent (see PYROMIND_WORKFLOW_EVENT_KEY in
-// openhands-agent-server/openhands/agent_server/pyromind_constants.py).
-// This push is independent of any specific tool call - the server emits it
-// whenever workflow.py changes during a run.
+// Key identifying workflow file updates in historical state events.
 const WORKFLOW_EVENT_KEY = 'pyromind_workflow';
 
 function isWorkflowFileObservationValue(

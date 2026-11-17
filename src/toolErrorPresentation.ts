@@ -1,6 +1,6 @@
 import type { BaseObservation, ContentItem } from './types';
 
-const OPENHANDS_ERROR_HEADER = '[An error occurred during execution.]';
+const LEGACY_TOOL_ERROR_HEADER = '[An error occurred during execution.]';
 
 const ERROR_CODE_LABELS: Record<string, string> = {
   sample_selection_limit: '采样路径数量超过限制',
@@ -62,7 +62,7 @@ function meaningfulText(observation: BaseObservation): string {
   return preferred
     .filter(isTextContent)
     .map((item) => item.text.trim())
-    .filter((text) => text && text !== OPENHANDS_ERROR_HEADER)
+    .filter((text) => text && text !== LEGACY_TOOL_ERROR_HEADER)
     .join('\n')
     .trim();
 }
