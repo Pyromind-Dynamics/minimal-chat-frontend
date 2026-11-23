@@ -250,6 +250,7 @@ export interface TimelineMessage {
   command_id?: string | null;
   item_id: string;
   started_seq: number;
+  started_at?: string | null;
   completed_seq?: number | null;
   role: 'user' | 'assistant' | 'system';
   content: ProductContent[];
@@ -417,6 +418,7 @@ export interface ProductEvent {
 export interface PendingOutboundMessage {
   commandId: string;
   text: string;
+  timestamp: string;
   status: 'pending' | 'acknowledged' | 'failed';
 }
 

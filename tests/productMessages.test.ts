@@ -73,3 +73,13 @@ test('callback steering acknowledges commands across SSE replay and refreshed sn
   assert.deepEqual(projectMessageEvents(refreshed, updates), refreshed);
   assert.equal(receivedUserCommandIds(refreshed).has('callback:graph'), false);
 });
+
+test('streamed messages keep the first event time through completion and snapshot refresh', () => {
+  const start = { ...event(2, 'message.started', 'reply'), occurred_at: '2026-11-23T10:05:14Z' };
+  const finish = { ...event(3, 'message.completed', 'reply', 'done'), occurred_at: '2026-11-23T10:05:28Z' };
+  const streamed = projectMessageEvents(snapshot, [start, finish]);
+  const reply = streamed.timeline[1];
+  assert.equal(reply.kind, 'message');
+  assert.equal(reply.started_at, start.occurred_at);
+  assert.deepEqual(projectMessageEvents({ ...streamed, through_seq: 3 }, [start, finish]).timeline, streamed.timeline);
+});

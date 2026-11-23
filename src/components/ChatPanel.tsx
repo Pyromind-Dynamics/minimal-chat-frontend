@@ -155,7 +155,7 @@ export function ChatPanel({
           event={{
             kind: 'MessageEvent',
             id: `pending:${message.commandId}`,
-            timestamp: '',
+            timestamp: message.timestamp,
             source: 'user',
             run_id: message.commandId,
             delivery_status: message.status,

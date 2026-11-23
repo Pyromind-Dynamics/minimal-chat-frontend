@@ -121,6 +121,7 @@ function AgentChat({
     setBusy(true);
     setError('');
     const commandId = crypto.randomUUID();
+    const timestamp = new Date().toISOString();
     try {
       const id = managerId ?? await ensureManager();
       if (!mounted.current) return;
@@ -129,7 +130,7 @@ function AgentChat({
         if (!mounted.current) return;
         apply(id, snapshot);
       }
-      dispatch({ type: 'ADD_PENDING_OUTBOUND', message: { commandId, text, status: 'pending' } });
+      dispatch({ type: 'ADD_PENDING_OUTBOUND', message: { commandId, text, timestamp, status: 'pending' } });
       const receipt = await client.command(id, {
         type: 'user_message', command_id: commandId, content: [{ type: 'text', text }],
       }, options);

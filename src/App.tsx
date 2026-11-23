@@ -418,7 +418,7 @@ function ChatApp() {
       const commandId = crypto.randomUUID();
       dispatch({
         type: 'ADD_PENDING_OUTBOUND',
-        message: { commandId, text, status: 'pending' },
+        message: { commandId, text, timestamp: new Date().toISOString(), status: 'pending' },
       });
       setIsSending(true);
       let sendDeferredUntilStreamOpens = false;

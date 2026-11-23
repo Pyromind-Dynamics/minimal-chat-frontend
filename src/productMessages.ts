@@ -24,7 +24,7 @@ export function projectMessageEvents(
     const existing = index < 0 ? undefined : timeline[index];
     const role = event.payload.role;
     let message: TimelineMessage & Pick<TimelineItem, 'turn_id' | 'task_id'> = existing?.kind === 'message' ? existing : {
-      kind: 'message', item_id: id, started_seq: event.seq,
+      kind: 'message', item_id: id, started_seq: event.seq, started_at: event.occurred_at,
       role: role === 'user' || role === 'system' ? role : 'assistant',
       run_id: event.run_id, turn_id: event.turn_id, task_id: event.task_id,
       content: [], status: 'streaming',
