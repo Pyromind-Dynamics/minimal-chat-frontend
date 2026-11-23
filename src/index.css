@@ -9,6 +9,10 @@ body {
   --text-h: #08060d;
   --bg: #fff;
   --border: #e5e4e7;
+  --data-table-border: #d1d5db;
+  --data-table-header: #e5e7eb;
+  --data-table-surface: var(--color-gray-100, #f3f4f6);
+  --data-table-alternate: rgba(255, 255, 255, 0.6);
   --code-bg: #f4f3ec;
   --accent: #aa3bff;
   --accent-bg: rgba(170, 59, 255, 0.1);
@@ -284,16 +288,35 @@ code {
 .markdown-body th,
 .markdown-body td {
   padding: 0.35rem 0.6rem;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--data-table-border);
   text-align: left;
   vertical-align: top;
 }
 
 .markdown-body thead th {
-  background: #e5e7eb;
+  background: var(--data-table-header);
   font-weight: 600;
 }
 
 .markdown-body tbody tr:nth-child(even) {
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--data-table-alternate);
 }
+
+.project-observations { display: grid; gap: 12px; padding: 16px; color: #334155; font-size: 12px; }
+.project-observations h2 { font-size: 17px; font-weight: 650; color: #0f172a; }
+.project-observations h3 { font-size: 14px; font-weight: 600; color: #1e293b; }
+.project-observations h4 { font-weight: 600; overflow-wrap: anywhere; }
+.observation-card { min-width: 0; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; }
+.observation-card-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.observation-muted { font-size: 11px; color: #64748b; overflow-wrap: anywhere; margin-top: 5px; }
+.observation-badge { font-size: 10px; color: #475569; background: #f1f5f9; padding: 3px 7px; border-radius: 12px; }
+.observation-resources, .observation-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 12px; }
+.observation-metric { min-width: 0; padding: 12px; background: #f8fafc; border-radius: 7px; margin-top: 10px; }
+.observation-metric svg { width: 100%; height: auto; }
+.observation-empty { padding: 22px 8px; text-align: center; color: #64748b; }
+.observation-error { padding: 8px; background: #fff1f2; color: #be123c; border-radius: 6px; overflow-wrap: anywhere; }
+.observation-field { display: grid; gap: 4px; font-size: 11px; color: #64748b; margin: 8px 0; min-width: 0; }
+.observation-field input, .observation-field select { min-width: 0; max-width: 100%; padding: 6px 8px; background: white; border: 1px solid #cbd5e1; border-radius: 5px; color: #334155; }
+.observation-actions { display: flex; gap: 6px; }
+.observation-facts { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 10px; }
+.observation-facts dd { overflow-wrap: anywhere; }

@@ -18,6 +18,7 @@ import { StatusBar } from './StatusBar';
 import { PreparationWelcome } from './PreparationWelcome';
 import { PreparationPlanMessage } from './PreparationPlanMessage';
 import { StageWorkspace } from './StageWorkspace';
+import { ProjectOverview } from './observations/ProjectOverview';
 import { ProjectConfirmationPanel } from './ProjectConfirmationPanel';
 import { managerChatEvents } from '../preparation';
 
@@ -395,6 +396,9 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
 
   const isProject = Boolean(state.snapshot?.project);
   const currentProjectId = state.snapshot?.project?.project_id ?? null;
+  const pendingCount = (state.snapshot?.pending_inputs?.length ?? 0) + (state.snapshot?.pending_permissions.length ?? 0);
+  const [confirmationsOpen, setConfirmationsOpen] = useState(false);
+  useEffect(() => { setConfirmationsOpen(pendingCount > 0); }, [currentProjectId, pendingCount]);
 
   return <div className="product-planning-chat flex h-screen flex-col bg-white text-left text-slate-900">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
@@ -452,6 +456,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
     </div>}
     {error && <div role="alert" className="border-b bg-red-50 p-3 text-sm text-red-700">{error}<button type="button" className="ml-3 underline" onClick={() => setError(null)}>关闭</button></div>}
     {notice && <div role="status" className="border-b bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</div>}
+    <div className="rsi-content-with-sidebar">
     <main className={`grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:overflow-hidden ${isProject ? 'project-workbench lg:grid-cols-[320px_minmax(0,1fr)_360px] 2xl:grid-cols-[340px_minmax(0,1fr)_420px]' : 'lg:grid-cols-[320px_minmax(0,1fr)]'}`}>
       <nav aria-label="EchoMind 导航" className="min-h-0 overflow-hidden border-r bg-slate-50 lg:grid lg:grid-cols-2">
         <div className="flex border-b p-2 lg:hidden">
@@ -467,7 +472,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
             <span className="block truncate font-medium">{project.name}</span>
             <span className="mt-1 block truncate font-mono text-[10px] text-slate-500">{project.cluster}</span>
             <span className="mt-1 flex items-center justify-between gap-2 text-[10px] text-slate-500">
-              <span>{project.lifecycle === 'development' ? '开发中' : '已发布'} · {project.node_count} 节点</span>
+              <span>{project.lifecycle === 'development' ? '开发中' : '已固化'} · {project.node_count} 节点</span>
               <time className="shrink-0">{new Date(project.updated_at).toLocaleDateString()}</time>
             </span>
           </button>)}
@@ -509,13 +514,17 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
         }} />
         </section>
       </section>
-      {state.snapshot?.project && <ProjectConfirmationPanel snapshot={state.snapshot} onRespond={respondToInput}
+      {state.snapshot?.project && <details className="project-confirmation-slot" open={confirmationsOpen} onToggle={event => setConfirmationsOpen(event.currentTarget.open)}>
+        <summary>待确认 <span>{pendingCount} 项</span></summary>
+        <ProjectConfirmationPanel snapshot={state.snapshot} onRespond={respondToInput}
         onPermission={async (permissionId, decision, commandId) => {
           const id = activeId.current; if (!id) throw new Error('会话未打开');
           await client.command(id, {type: 'permission_response', command_id: commandId, permission_id: permissionId, decision}, options);
           await refresh();
         }}
-        readMedia={readInputMedia} />}
+        readMedia={readInputMedia} /></details>}
     </main>
+    <ProjectOverview snapshot={state.snapshot} client={client} projectId={currentProjectId} projectName={projects.find(project => project.project_id === currentProjectId)?.name} options={options} />
+    </div>
   </div>;
 }

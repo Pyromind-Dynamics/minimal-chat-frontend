@@ -381,11 +381,13 @@ export interface ConversationSnapshot {
   through_seq: number;
   updated_at?: string | null;
   status: ExecutionStatus;
+  active_run_id?: string | null;
   capabilities: HarnessCapabilities;
   timeline: TimelineItem[];
   current_workflow?: ProductWorkflowState | null;
   plan?: ProductPlanState | null;
   experiment_executions?: import('./experimentExecutions').ExperimentExecution[] | null;
+  external_tasks?: { task_id: string; status: string }[];
   pending_permissions: ProductPermission[];
   pending_inputs?: PendingUserInput[];
   automatic_turns_suspended?: boolean;

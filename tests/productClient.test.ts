@@ -9,7 +9,7 @@ test('workbench client loads summaries and resolves projects independently', asy
   try {
     const {createProductClient} = await server.ssrLoadModule('/src/productClient.ts');
     const client = createProductClient(ECHOMIND_CONVERSATIONS_PATH);
-    assert.deepEqual(Object.keys(client).sort(), ['command', 'create', 'eventsUrl', 'inputMedia', 'list', 'listProjects', 'project', 'snapshot']);
+    assert.deepEqual(Object.keys(client).sort(), ['baselineReport', 'command', 'configureObservations', 'create', 'datasetFiles', 'evaluationHistory', 'eventsUrl', 'inputMedia', 'list', 'listProjects', 'observations', 'project', 'snapshot', 'trainingSeries']);
     const requests: string[] = [];
     const originalFetch = globalThis.fetch;
     const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
@@ -23,7 +23,8 @@ test('workbench client loads summaries and resolves projects independently', asy
       };
       await client.list({});
       await client.project('project/id', {});
-      assert.deepEqual(requests, [`${ECHOMIND_CONVERSATIONS_PATH}/summaries`, `${PROJECTS_PATH}/project%2Fid`]);
+      await client.baselineReport('project/id', 'task/id', {});
+      assert.deepEqual(requests, [`${ECHOMIND_CONVERSATIONS_PATH}/summaries`, `${PROJECTS_PATH}/project%2Fid`, `${PROJECTS_PATH}/project%2Fid/observations/baselines/task%2Fid`]);
     } finally {
       globalThis.fetch = originalFetch;
       if (originalStorage) Object.defineProperty(globalThis, 'localStorage', originalStorage);

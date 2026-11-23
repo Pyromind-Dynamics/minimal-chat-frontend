@@ -188,6 +188,11 @@ async function submitProductCommand(
   );
 }
 
+export class ProductApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) { super(message); this.status = status; }
+}
+
 export async function productRequest<T>(
   url: string,
   init: RequestInit,
@@ -201,7 +206,7 @@ export async function productRequest<T>(
   });
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(formatApiError(response.status, detail));
+    throw new ProductApiError(response.status, formatApiError(response.status, detail));
   }
   return response.json() as Promise<T>;
 }

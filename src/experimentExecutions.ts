@@ -25,10 +25,12 @@ export interface ExperimentExecution {
   proposal: Record<string, unknown> | null;
   metrics: Record<string, unknown> | null;
   platform_task_id: string | null;
+  platform_task_ids?: string[];
   artifacts: { name: string; uri: string; sha256: string }[];
 }
 
 const labels: Record<string, string> = {
+  paused: '已暂停',
   prepared: '方案已准备 · 未提交平台',
   needs_input: '执行受阻', queued: '排队中', preparing: '准备执行', awaiting_confirmation: '等待执行确认',
   waiting_user: '等待用户确认', waiting_confirmation: '等待工作流确认',
