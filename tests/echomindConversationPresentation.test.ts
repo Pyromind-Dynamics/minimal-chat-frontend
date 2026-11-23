@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { groupEchoMindTurns } from '../src/echomindConversationPresentation.ts';
+import { groupEchoMindTurns, visibleExecutionEvents } from '../src/echomindConversationPresentation.ts';
 import { snapshotToChatEvents } from '../src/productSnapshot.ts';
+import { projectMessageEvents } from '../src/productMessages.ts';
 import type { ConversationSnapshot, TimelineItem, TimelineMessage, TimelineOperation } from '../src/types.ts';
 
 function snapshot(items: TimelineItem[], extra: Partial<ConversationSnapshot> = {}): ConversationSnapshot {
@@ -35,6 +36,33 @@ function receipt(taskId: string, seq: number): TimelineOperation {
 function group(chat: ConversationSnapshot, execution: ConversationSnapshot) {
   return groupEchoMindTurns(snapshotToChatEvents(chat), snapshotToChatEvents(execution), execution);
 }
+
+test('late notices follow chat arrival order and keep execution details with the original turn', () => {
+  const chat = snapshot([
+    { ...message('task', 1, 'user', 'a'), turn_id: 'a' },
+    { ...message('other', 2, 'user', 'b'), turn_id: 'b' },
+    { ...message('reply', 3, 'assistant', 'b'), turn_id: 'b' },
+  ], { through_seq: 3 });
+  const projected = projectMessageEvents(chat, [{
+    schema_version: 1, conversation_id: chat.conversation_id, event_id: 'notice', seq: 4,
+    occurred_at: '2026-11-23T12:00:00Z', type: 'message.completed',
+    payload: {
+      message_id: 'notice', role: 'assistant', content: [{type: 'text', text: '报告已生成'}],
+      execution_notice: {origin_turn_id: 'a'},
+    },
+  }, {
+    schema_version: 1, conversation_id: chat.conversation_id, event_id: 'continuation', seq: 5,
+    occurred_at: '2026-11-23T12:00:01Z', type: 'message.completed', turn_id: 'b',
+    payload: {message_id: 'continuation', role: 'assistant', content: [{type: 'text', text: '补充回复'}]},
+  }]);
+  const { entries, turns } = group(projected, snapshot([], {task_origins: {task: 'a'}}));
+  assert.deepEqual(entries.map(entry => entry.kind === 'notice'
+    ? [entry.message.id, entry.message.execution_notice?.origin_turn_id]
+    : entry.messages.map(event => 'id' in event ? event.id : '')), [
+    ['task'], ['other', 'reply'], ['notice', 'a'], ['continuation'],
+  ]);
+  assert.deepEqual(turns.map(turn => [turn.id, turn.progress.length]), [['a', 1], ['b', 0]]);
+});
 
 test('interleaved execution and delayed callbacks remain under the originating turn', () => {
   const first = 'requirement:chat:first';
@@ -77,7 +105,7 @@ test('a queued requirement has a status before it has any execution events', () 
   const chat = snapshot([message('user', 1, 'user', 'shared-chat-run'), receipt(taskId, 2)]);
   const execution = snapshot([], { experiment_queue: [{ task_id: taskId, kind: 'requirement' }] });
   const { turns } = group(chat, execution);
-  assert.equal(turns[0].queued, true);
+  assert.equal(turns[0].progress[0].status, '排队中');
   assert.deepEqual(turns[0].execution, []);
 });
 
@@ -100,7 +128,89 @@ test('server turn ownership joins delayed events without a readable run ID or to
   const { turns, background } = group(chat, execution);
   assert.deepEqual(turns[0].messages.map(event => 'id' in event ? event.id : ''), ['first-input', 'late-first-reply']);
   assert.equal(turns[0].execution.length, 5);
-  assert.equal(turns[1].queued, true);
+  assert.equal(turns[1].progress[0].status, '排队中');
   assert.deepEqual(turns[1].execution, []);
   assert.deepEqual(background, []);
+});
+
+test('a silent execution updates its original turn from queue through the platform callback', () => {
+  const root = 'requirement:chat:one';
+  const chat = snapshot([
+    { ...message('start', 1, 'user', 'chat-a'), turn_id: 'first' },
+    { ...message('check', 2, 'user', 'chat-b'), turn_id: 'second' },
+  ]);
+  function status(extra: Partial<ConversationSnapshot>) {
+    const { turns } = group(chat, snapshot([], { task_origins: { [root]: 'first' }, ...extra }));
+    assert.deepEqual(turns[1].progress, []);
+    assert.equal(turns[0].progress[0].id, root);
+    return turns[0].progress[0];
+  }
+  const originalRuns = { 'worker-run': { task_id: root, status: 'running' as const, seq: 3 } };
+  assert.equal(status({ experiment_queue: [{ task_id: root, kind: 'requirement' }] }).status, '排队中');
+  assert.equal(status({ task_runs: originalRuns }).status, '执行中');
+  const task = { task_id: 'platform', run_id: 'worker-run', status: 'running' };
+  assert.equal(status({ task_runs: originalRuns, external_tasks: [task] }).status, '等待平台结果');
+  const ended = { 'worker-run': { ...originalRuns['worker-run'], status: 'idle' as const, seq: 4 } };
+  assert.equal(status({ task_runs: ended, external_tasks: [{ ...task, status: 'succeeded' }] }).status,
+    '结果已返回 · 等待分析与交付');
+  const callback = { ...ended, 'analysis-run': { task_id: 'platform', status: 'idle' as const, seq: 7 } };
+  assert.equal(status({ task_runs: callback, external_tasks: [{ ...task, status: 'succeeded' }] }).status,
+    '本轮执行已结束');
+  const failure = status({ task_runs: ended, external_tasks: [{ ...task, status: 'failed', error_summary: '数据缺失' }] });
+  assert.equal(failure.status, '执行失败');
+  assert.equal(failure.reason, '数据缺失');
+});
+
+test('project stage callbacks use shared execution status and automatic runs stay in stage history', () => {
+  const root = 'requirement:chat:one';
+  const chat = snapshot([{ ...message('start', 1, 'user', 'chat'), turn_id: 'first' }]);
+  const execution = snapshot([
+    operation('automatic', 1, 'project-start'),
+    { ...operation('manual-callback', 3, 'receipt-analysis'), task_id: 't-1' },
+  ], {
+    task_origins: { [root]: 'first' },
+    project: { project_id: 'p', conversation_id: 'session', plan_sequence: 1, creation_command_id: 'created',
+      plan: { goal: 'Project', stages: ['train', 'eval'].map(stage => ({ id: stage, name: stage, description: '', enabled: true, placeholder: false })),
+        constraints: [], resources: [], edges: [], blockers: [], conclusions: [], next_steps: [], status: 'active' } },
+    task_runs: { 'work': { task_id: root, status: 'idle', seq: 4 } },
+    external_tasks: [
+      { task_id: 't-0', run_id: 'work', status: 'failed' },
+      { task_id: 't-1', run_id: 'work', status: 'succeeded' },
+      { task_id: 't-2', run_id: 'project-start', status: 'succeeded' },
+    ],
+    experiment_executions: [
+      { run_id: 'manual-attempt-1', task_id: 'evaluation', project_id: 'p', stage_id: 'eval', task_name: '评测', role_id: 'main',
+        state: 'failed', report_state: 'not_started', waiting_reason: '平台执行失败', platform_task_id: 't-0',
+        plan_revision: null, fingerprint: null, proposal: null, metrics: null, artifacts: [] },
+      { run_id: 'manual', task_id: 'evaluation', project_id: 'p', stage_id: 'eval', task_name: '评测', role_id: 'main',
+        state: 'needs_input', report_state: 'not_started', waiting_reason: '缺少推理回执', platform_task_id: 't-1',
+        plan_revision: null, fingerprint: null, proposal: null, metrics: null, artifacts: [] },
+      { run_id: 'automatic', task_id: 'training', project_id: 'p', stage_id: 'train', task_name: '训练', role_id: 'main',
+        state: 'reported', report_state: 'ready', platform_task_id: 't-2',
+        plan_revision: null, fingerprint: null, proposal: null, metrics: null, artifacts: [] },
+    ],
+    pending_inputs: [{ request_id: 'confirmation', run_id: 'work', questions: [] }],
+  });
+  const { turns, background } = group(chat, execution);
+  assert.deepEqual(background, []);
+  assert.equal(turns[0].execution.length, 2);
+  assert.equal(turns[0].progress[0].status, '执行受阻');
+  assert.equal(turns[0].progress[0].reason, '缺少推理回执');
+  assert.deepEqual(turns[0].progress[0].attempts?.map(item => item.status), ['已失败', '执行受阻']);
+  assert.equal(turns[0].needsConfirmation, true);
+});
+
+
+test('the main activity view omits model text and tool thoughts, preserving user inputs and errors', () => {
+  const privateText = 'private reasoning';
+  const execution = snapshot([
+    message('original-user-message', 1, 'user', 'run'),
+    message(privateText, 2, 'assistant', 'run'),
+    operation('visible-tool', 3, 'run', { thought: [{ type:'text', text:privateText }] }),
+    { kind: 'notice', item_id: 'failed', started_seq: 4, severity: 'error', code: 'failed', message: '任务失败' },
+  ]);
+  const visible = visibleExecutionEvents(snapshotToChatEvents(execution));
+  assert.deepEqual(visible.map(event => event.kind), ['MessageEvent', 'ActionEvent', 'ObservationEvent', 'ServerErrorEvent']);
+  assert.equal(JSON.stringify(visible).includes(privateText), false);
+  assert.match(JSON.stringify(visible), /任务失败/);
 });

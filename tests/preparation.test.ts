@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
-import { canCreateProject, managerChatEvents, stageOperations, stageRunOperations } from '../src/preparation.ts';
+import { canCreateProject, managerChatEvents, preparationPlanStatus, stageOperations, stageRunOperations } from '../src/preparation.ts';
 import type { ChatEvent, ConversationSnapshot, TimelineOperation } from '../src/types.ts';
 
 const snapshot = {
@@ -35,13 +35,23 @@ test('review plan and creation remain available without the checklist panel', as
     const prep = {...snapshot, preparation: {...snapshot.preparation!, plan: {goal: 'Evaluate', resources: [], stages: [{id: 'eval', name: 'Eval', enabled: true}], tasks: [], edges: []}}};
     const {PreparationPlanMessage} = await server.ssrLoadModule('/src/components/PreparationPlanMessage.tsx');
     const {ChatPanel} = await server.ssrLoadModule('/src/components/ChatPanel.tsx');
-    const planMessage = createElement(PreparationPlanMessage, {snapshot: prep, busy: false, onCreate: () => {}});
+    const props = {snapshot: prep, busy: false, onCreate: () => {}, onReview: () => {}};
+    const planMessage = createElement(PreparationPlanMessage, props);
     const chat = renderToStaticMarkup(createElement(ChatPanel, {events: [], requestOptions: {}, status: 'idle'}, planMessage));
     assert.match(chat, /workflowPLAN/); assert.match(chat, /创建并启动/); assert.match(chat, /尚未创建 Project/);
     assert.doesNotMatch(chat, /准备 Checklist|信息收集进度|查看信息与依据/);
     assert.match(chat, /计划阶段 · 未启动/);
-    const updating = renderToStaticMarkup(createElement(PreparationPlanMessage, {snapshot: {...prep, preparation: {...prep.preparation, review_pending: true}}, busy: false, onCreate: () => {}}));
-    assert.match(updating, /正在更新草稿/); assert.doesNotMatch(updating, /<button/);
+    const stale = {...prep, preparation: {...prep.preparation, phase: 'planning' as const, review_pending: true}};
+    const requiresReview = renderToStaticMarkup(createElement(PreparationPlanMessage, {...props, snapshot: stale}));
+    assert.match(requiresReview, /草稿需要重新核对/);
+    assert.match(requiresReview, /重新核对计划/);
+    assert.doesNotMatch(requiresReview, /创建并启动|等待本轮结束/);
+    const running = renderToStaticMarkup(createElement(PreparationPlanMessage, {...props, snapshot: {...stale, status: 'running'}}));
+    assert.match(running, /正在核对草稿/);
+    assert.doesNotMatch(running, /创建并启动|重新核对计划/);
+    assert.equal(preparationPlanStatus({...stale, experiment_queue: [{task_id: 'supplement', kind: 'requirement'}]}), 'queued');
+    assert.equal(preparationPlanStatus({...stale, automatic_turns_suspended: true}), 'paused');
+    assert.equal(preparationPlanStatus({...stale, pending_inputs: [{request_id: 'question', questions: []}]}), 'input');
     const {StageWorkspace} = await server.ssrLoadModule('/src/components/StageWorkspace.tsx');
     const state = {...snapshot, project: {project_id: 'project', plan: {goal: 'Evaluate', resources: [], stages: [{id: 'init', name: 'Init', enabled: true}, {id: 'eval', name: 'Eval', enabled: true}], edges: [{source: 'init', target: 'eval'}]}}};
     const workspace = renderToStaticMarkup(createElement(StageWorkspace, {snapshot: state}));

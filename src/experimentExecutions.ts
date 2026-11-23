@@ -46,6 +46,6 @@ export function executionProgressLabel(run: ExperimentExecution): string {
   if (run.state === 'waiting_artifacts') return run.report_state === 'failed' ? '产物登记失败' : '正在整理产物';
   if (run.report_state === 'failed') return `${executionLabel(run.state)} · 报告失败`;
   if (run.state === 'succeeded' && run.report_state === 'not_started') return '已完成';
-  if (run.state === 'succeeded' && run.report_state !== 'ready') return '执行已完成 · 正在生成报告';
+  if (run.state === 'succeeded') return run.report_state === 'ready' ? '已交付报告' : '执行已完成 · 正在生成报告';
   return executionLabel(run.state);
 }

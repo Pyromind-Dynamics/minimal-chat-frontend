@@ -13,14 +13,14 @@ import {
   type RequestOverrideFields,
 } from '../requestOverrides';
 import { ChatPanel } from './ChatPanel';
-import { hasVisibleMessage, presentEchoMindMessage } from '../echomindConversationPresentation';
+import { visibleExecutionEvents } from '../echomindConversationPresentation';
 import { EchoMindAgentChat } from './EchoMindAgentChat';
 import { deriveDisplayConnectionState } from '../productStreamState';
 import { PreparationPlanMessage } from './PreparationPlanMessage';
 import { StageWorkspace } from './StageWorkspace';
 import { ProjectOverview } from './observations/ProjectOverview';
 import { ProjectConfirmationPanel } from './ProjectConfirmationPanel';
-import { managerChatEvents } from '../preparation';
+import { managerChatEvents, preparationPlanStatus } from '../preparation';
 
 function updateWorkbenchUrl(projectId: string | null, conversationId: string | null) {
   const url = new URL(window.location.href);
@@ -68,9 +68,8 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const inFlight = useRef<Promise<number> | null>(null);
   const refreshAgain = useRef(false);
   const lastRefresh = useRef(0);
-  const deltaFrame = useRef<number | null>(null);
-  const deltas = useRef<ProductEvent[]>([]);
   const createRequest = useRef<{conversation: string; revision: number; command: string} | null>(null);
+  const reviewRequest = useRef<{conversation: string; revision: number; command: string} | null>(null);
 
   const apply = useCallback((snapshot: ConversationSnapshot) => {
     if (activeId.current !== snapshot.conversation_id) return;
@@ -101,9 +100,6 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     inFlight.current = null;
     refreshAgain.current = false;
     lastRefresh.current = 0;
-    if (deltaFrame.current !== null) window.cancelAnimationFrame(deltaFrame.current);
-    deltaFrame.current = null;
-    deltas.current = [];
   }, []);
 
   const refresh = useCallback(async function refresh(): Promise<number> {
@@ -246,14 +242,6 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
 
   useEffect(() => resetRequests, [resetRequests]);
 
-  const flushDeltas = useCallback(() => {
-    if (deltaFrame.current !== null) window.cancelAnimationFrame(deltaFrame.current);
-    deltaFrame.current = null;
-    const events = deltas.current;
-    deltas.current = [];
-    if (events.length) dispatch({ type: 'APPLY_MESSAGE_EVENTS', events });
-  }, [dispatch]);
-
   const scheduleRefresh = useCallback(() => {
     if (inFlight.current) {
       refreshAgain.current = true;
@@ -268,13 +256,9 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
 
   const onEvent = useCallback((event: ProductEvent) => {
     if (event.conversation_id !== activeId.current) return;
-    if (event.type === 'message.delta') {
-      deltas.current.push(event);
-      if (deltaFrame.current === null) deltaFrame.current = window.requestAnimationFrame(flushDeltas);
-      return;
-    }
+    if (event.type === 'message.delta') return;
     if (event.type === 'message.started' || event.type === 'message.completed') {
-      flushDeltas();
+      if (event.payload.role !== 'user') return;
       dispatch({ type: 'APPLY_MESSAGE_EVENTS', events: [event] });
       if (event.type === 'message.started') return;
     }
@@ -282,7 +266,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
       void refreshProjects().catch(failure => setError(String(failure)));
     }
     scheduleRefresh();
-  }, [dispatch, flushDeltas, refreshProjects, scheduleRefresh]);
+  }, [dispatch, refreshProjects, scheduleRefresh]);
 
   const connection = useProductEventStream({
     conversationId: loading || openError ? null : state.conversationId,
@@ -388,6 +372,30 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
       }).catch(failure => { setError(String(failure)); void refresh(); }).finally(() => setBusy(false));
   };
 
+  const reviewPreparation = async () => {
+    const snapshot = state.snapshot, id = activeId.current;
+    if (!snapshot?.preparation || !id || busy || preparationPlanStatus(snapshot) !== 'review_required') return;
+    const revision = snapshot.preparation.revision;
+    if (reviewRequest.current?.conversation !== id || reviewRequest.current.revision !== revision) {
+      reviewRequest.current = {conversation: id, revision, command: crypto.randomUUID()};
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const receipt = await client.command(id, {
+        type: 'review_preparation', command_id: reviewRequest.current.command, expected_preparation_revision: revision,
+      }, options);
+      reviewRequest.current = null;
+      if (receipt.status === 'failed') throw new Error(String(receipt.response.message || '计划核对未提交，请重试。'));
+      await refresh();
+    } catch (failure) {
+      setError(String(failure));
+      scheduleRefresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const respondToInput = async (requestId: string, status: 'answered' | 'cancelled', answers: import('../types').UserInputAnswer[], commandId: string) => {
     const id = activeId.current; if (!id) throw new Error('会话未打开');
     await client.command(id, {type: 'input_response', command_id: commandId, request_id: requestId, status, answers}, options);
@@ -424,13 +432,45 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     deleting: '正在删除',
     closed: '已关闭',
   }[state.status];
-  const executionEvents = useMemo(() => (isProject ? managerChatEvents(state.events) : state.events)
-    .filter(event => event.kind !== 'MessageEvent' || hasVisibleMessage(event))
-    .map(presentEchoMindMessage), [isProject, state.events]);
+  const executionEvents = useMemo(() => visibleExecutionEvents(
+    isProject ? managerChatEvents(state.events) : state.events,
+  ), [isProject, state.events]);
   const progressConnection = deriveDisplayConnectionState({
     conversationId: state.conversationId, isCreating: false, connectionState: connection, hasConnected,
   });
   const [confirmationsOpen, setConfirmationsOpen] = useState(false);
+  const confirmationsRef = useRef<HTMLDetailsElement>(null);
+  const chatAreaRef = useRef<HTMLElement>(null);
+  const executionWorkspaceRef = useRef<HTMLDivElement>(null);
+  const openConfirmation = (targetId?: string) => {
+    const targetSelector = targetId ? `[data-confirmation-id="${CSS.escape(targetId)}"]` : null;
+    if (isProject) {
+      const panel = confirmationsRef.current;
+      setConfirmationsOpen(true);
+      window.requestAnimationFrame(() => {
+        const target = targetSelector ? panel?.querySelector(targetSelector) : null;
+        (target ?? panel)?.scrollIntoView({ block: 'nearest' });
+        (target?.querySelector<HTMLElement>('input, button, textarea') ?? panel?.querySelector('summary'))
+          ?.focus({ preventScroll: true });
+      });
+      return;
+    }
+    const input = chatAreaRef.current?.querySelector<HTMLElement>(targetSelector ?? 'form[aria-label="回答问题"], [role="dialog"][aria-modal="true"]')
+      ?? chatAreaRef.current?.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]');
+    if (input?.tagName === 'FORM') input.scrollIntoView({ block: 'nearest' });
+    input?.querySelector<HTMLElement>('button, input, textarea')?.focus({ preventScroll: true });
+  };
+  const openPlan = () => {
+    const plan = chatAreaRef.current?.querySelector<HTMLElement>('section[aria-label="工作流计划草稿"]');
+    plan?.scrollIntoView({ block: 'start' });
+    plan?.focus({ preventScroll: true });
+  };
+  const openExecution = () => {
+    const toggle = executionWorkspaceRef.current?.querySelector<HTMLButtonElement>('button[aria-expanded]');
+    if (toggle?.getAttribute('aria-expanded') === 'false') toggle.click();
+    toggle?.scrollIntoView({ block: 'nearest' });
+    toggle?.focus({ preventScroll: true });
+  };
   useEffect(() => { setConfirmationsOpen(pendingCount > 0); }, [currentProjectId, pendingCount]);
 
   return <div className="product-planning-chat flex h-screen flex-col bg-white text-left text-slate-900">
@@ -521,8 +561,8 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         </section>
       </nav>
       <section className="flex min-h-[480px] min-w-0 flex-col lg:min-h-0">
-        {state.snapshot?.project && <StageWorkspace snapshot={state.snapshot} />}
-        <section aria-label="聊天区" className="flex min-h-0 flex-1 flex-col bg-white">
+        {state.snapshot?.project && <div ref={executionWorkspaceRef} className="contents"><StageWorkspace snapshot={state.snapshot} events={executionEvents} options={options} /></div>}
+        <section ref={chatAreaRef} aria-label="聊天区" className="flex min-h-0 flex-1 flex-col bg-white">
         {state.snapshot && <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-slate-50 px-4 py-2">
           <span className="flex items-center gap-2 text-sm text-slate-700" role="status">
             {(state.status === 'running' || platformTaskRunning) && <span aria-hidden="true" className="size-2 rounded-full bg-blue-500" />}
@@ -545,7 +585,8 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         </> : <EchoMindAgentChat key={generation.current} client={chatClient} managerId={state.conversationId}
             ensureManager={ensureManager} options={options} disabled={loading || !!openError}
             executionEvents={executionEvents} executionSnapshot={state.snapshot}
-            executionIsCondensing={state.isCondensing}
+            executionIsCondensing={state.isCondensing} onOpenConfirmation={openConfirmation} onOpenPlan={openPlan}
+            onOpenExecution={openExecution}
             panel={{
               contentKey: state.snapshot?.preparation?.plan ? state.snapshot.preparation.revision : undefined,
               pendingInputs: isProject ? undefined : state.snapshot?.pending_inputs,
@@ -556,11 +597,12 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
               onRespondToUserInput: isProject ? undefined : respondToInput,
               readInputMedia,
               children: state.snapshot?.preparation?.plan && !isProject ? <PreparationPlanMessage
-                snapshot={state.snapshot} busy={busy || loading} onCreate={createProject} /> : undefined,
+                snapshot={state.snapshot} busy={busy || loading} onCreate={createProject}
+                onReview={() => { void reviewPreparation(); }} /> : undefined,
             }} />}
         </section>
       </section>
-      {state.snapshot?.project && <details className="project-confirmation-slot" open={confirmationsOpen} onToggle={event => setConfirmationsOpen(event.currentTarget.open)}>
+      {state.snapshot?.project && <details ref={confirmationsRef} className="project-confirmation-slot" open={confirmationsOpen} onToggle={event => setConfirmationsOpen(event.currentTarget.open)}>
         <summary>待确认 <span>{pendingCount} 项</span></summary>
         <ProjectConfirmationPanel snapshot={state.snapshot} onRespond={respondToInput}
         onPermission={async (permissionId, decision, commandId) => {

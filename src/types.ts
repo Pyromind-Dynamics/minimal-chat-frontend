@@ -17,6 +17,13 @@ export interface OpenAIImageContent {
 
 export type ContentItem = TextContent | ImageContent | OpenAIImageContent;
 
+export interface ExecutionNoticeLink {
+  has_result?: boolean;
+  origin_turn_id?: string;
+  action?: 'plan' | 'confirmation' | 'report';
+  target_id?: string;
+}
+
 // Message from user or agent
 export interface MessageEvent {
   kind: 'MessageEvent';
@@ -26,6 +33,7 @@ export interface MessageEvent {
   run_id?: string | null;
   command_id?: string | null;
   delivery_status?: PendingOutboundMessage['status'];
+  execution_notice?: ExecutionNoticeLink;
   llm_message: {
     role: string;
     content: ContentItem[];
@@ -158,6 +166,8 @@ export interface CondensationEvent {
 // Server error
 export interface ServerErrorEvent {
   kind: 'ServerErrorEvent';
+  id?: string;
+  severity?: 'info' | 'warning' | 'error';
   source: 'environment';
   code: string;
   detail: string;
@@ -248,6 +258,7 @@ export type ProductContent =
 export interface TimelineMessage {
   kind: 'message';
   command_id?: string | null;
+  execution_notice?: ExecutionNoticeLink;
   item_id: string;
   started_seq: number;
   started_at?: string | null;
@@ -393,7 +404,11 @@ export interface ConversationSnapshot {
   experiment_executions?: import('./experimentExecutions').ExperimentExecution[] | null;
   experiment_queue?: { task_id: string; kind: string }[] | null;
   task_origins?: Record<string, string>;
-  external_tasks?: { task_id: string; status: string; run_id?: string | null }[];
+  task_runs?: Record<string, { task_id: string; status: ExecutionStatus; seq: number }>;
+  external_tasks?: {
+    task_id: string; status: string; run_id?: string | null;
+    error_summary?: string | null; resume_auto_run?: boolean;
+  }[];
   pending_permissions: ProductPermission[];
   pending_inputs?: PendingUserInput[];
   automatic_turns_suspended?: boolean;

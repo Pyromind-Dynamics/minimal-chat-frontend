@@ -40,7 +40,7 @@ export function UserInputCard({ request, onRespond, readMedia }: {
   }
 
   return (
-    <form aria-label="回答问题" aria-busy={busy}
+    <form aria-label="回答问题" aria-busy={busy} data-confirmation-id={request.request_id}
       className="relative my-5 min-w-0 rounded-2xl border border-slate-200 bg-white text-left text-sm text-slate-800 shadow-sm"
       onSubmit={(event) => { event.preventDefault(); void submit('answered'); }}>
       <div className="flex items-start gap-3 rounded-t-2xl border-b border-slate-100 bg-slate-50/70 px-5 py-4 sm:px-6">

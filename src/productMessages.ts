@@ -1,4 +1,4 @@
-import type { ConversationSnapshot, ProductContent, ProductEvent, TimelineItem, TimelineMessage } from './types';
+import type { ConversationSnapshot, ExecutionNoticeLink, ProductContent, ProductEvent, TimelineItem, TimelineMessage } from './types';
 
 export function pendingMessageEvents(
   snapshot: ConversationSnapshot,
@@ -43,6 +43,10 @@ export function projectMessageEvents(
         ...message, status: 'completed', completed_seq: event.seq,
         content: 'content' in event.payload ? content(event.payload.content) : message.content,
       };
+      const notice = event.payload.execution_notice;
+      if (notice && typeof notice === 'object' && !Array.isArray(notice)) {
+        message.execution_notice = notice as ExecutionNoticeLink;
+      }
     }
     if (typeof event.payload.command_id === 'string') {
       message = { ...message, command_id: event.payload.command_id };

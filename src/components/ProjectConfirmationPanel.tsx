@@ -37,7 +37,7 @@ function PermissionCard({permission, onRespond}: {permission: ProductPermission;
     catch (failure) { setError(failure instanceof Error ? failure.message : '提交失败，请重试'); }
     finally { setBusy(false); }
   }
-  return <section aria-label="执行确认" aria-busy={busy} className="my-3 rounded-xl border bg-white p-4">
+  return <section aria-label="执行确认" aria-busy={busy} data-confirmation-id={permission.permission_id} className="my-3 rounded-xl border bg-white p-4">
     <h3 className="text-sm font-semibold">执行确认</h3>
     <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600">{permission.description}</p>
     {error && <p role="alert" className="mt-2 text-xs text-red-700">{error}</p>}

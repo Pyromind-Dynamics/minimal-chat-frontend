@@ -32,6 +32,18 @@ export function canCreateProject(snapshot: ConversationSnapshot): boolean {
     && !snapshot.experiment_queue?.length
     && snapshot.pending_permissions.length === 0;
 }
+
+export function preparationPlanStatus(snapshot: ConversationSnapshot | null) {
+  const view = snapshot?.preparation;
+  if (!snapshot || !view?.plan || snapshot.project) return null;
+  if (snapshot.pending_inputs?.length || snapshot.pending_permissions.length) return 'input';
+  if (snapshot.automatic_turns_suspended) return 'paused';
+  if (snapshot.status === 'running') return 'running';
+  if (snapshot.experiment_queue?.length) return 'queued';
+  if (snapshot.capabilities?.read_only || snapshot.status === 'deleting' || snapshot.status === 'closed') return null;
+  if (canCreateProject(snapshot)) return 'ready';
+  return view.review_pending ? 'review_required' : 'incomplete';
+}
 export function stageOperations(snapshot: ConversationSnapshot, stageId: string): TimelineOperation[] {
   return snapshot.timeline.filter((item): item is TimelineOperation => item.kind === 'operation'
     && item.category === 'subagent' && item.execution?.project_id === snapshot.project?.project_id

@@ -1,12 +1,30 @@
-import type { ConversationSnapshot } from '../types';
-import { useState } from 'react';
+import type { ChatEvent, ConversationSnapshot } from '../types';
+import type { RequestOptions } from '../api';
+import { useMemo, useState } from 'react';
 import { executionProgressLabel } from '../experimentExecutions';
 import { stageOperations, stageRunOperations } from '../preparation';
 import { SubagentRunsPanel } from './SubagentRunsPanel';
 import { WorkflowStageRow } from './WorkflowPlanPreview';
-export function StageWorkspace({ snapshot }: { snapshot: ConversationSnapshot }) {
+import { executionLineage } from '../echomindConversationPresentation';
+import { ExecutionDetails } from './ExecutionDetails';
+export function StageWorkspace({ snapshot, events, options }: {
+  snapshot: ConversationSnapshot; events?: ChatEvent[]; options?: RequestOptions;
+}) {
   const [selectedRuns, setSelectedRuns] = useState<Record<string, string>>({});
   const [stageRunExpanded, setStageRunExpanded] = useState(false);
+  const history = useMemo(() => {
+    const result = new Map<string, ChatEvent[]>();
+    if (!events?.length) return result;
+    const lineage = executionLineage(snapshot);
+    for (const event of events) {
+      const run = lineage.experimentForEvent(event);
+      if (!run?.stage_id) continue;
+      const existing = result.get(run.run_id) ?? [];
+      existing.push(event);
+      result.set(run.run_id, existing);
+    }
+    return result;
+  }, [events, snapshot]);
   const project = snapshot.project;
   if (!project) return null;
   const executions = snapshot.experiment_executions ?? [];
@@ -82,6 +100,7 @@ export function StageWorkspace({ snapshot }: { snapshot: ConversationSnapshot })
             </select>
           </label>}
           {selected?.role_id === 'main' && <p className="mt-1 text-xs text-slate-500">{selected.platform_task_id ? `Studio 任务 #${selected.platform_task_id}` : '无 Studio 任务号'}</p>}
+          {selected && options && <ExecutionDetails key={selected.run_id} label="任务执行详情" events={history.get(selected.run_id) ?? []} options={options} />}
           {selected?.waiting_reason && <p role={selected.report_state === 'failed' ? 'alert' : 'status'} className="mt-2 break-words whitespace-pre-wrap text-xs text-amber-800">{selected.waiting_reason}</p>}
         </section>;
       })}

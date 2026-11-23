@@ -41,6 +41,9 @@ export function createEchoMindChatClient(path: string) {
       body: JSON.stringify({ model: LLM_MODEL || undefined, api_key: LLM_API_KEY || undefined, base_url: LLM_BASE_URL || undefined }),
     }, options),
     snapshot: (id: string, options: RequestOptions, signal?: AbortSignal) => productRequest<ConversationSnapshot | null>(`${chatUrl(id)}/snapshot`, { signal }, options),
+    report: (id: string, artifactId: string, options: RequestOptions, signal?: AbortSignal) => productRequest<{text: string}>(
+      `${chatUrl(id)}/reports/${encodeURIComponent(artifactId)}`, { signal, cache: 'no-store' }, options,
+    ),
     command: (id: string, command: Record<string, unknown>, options: RequestOptions) => productRequest<CommandReceipt>(`${chatUrl(id)}/commands`, { method: 'POST', body: JSON.stringify(command) }, options),
     eventsUrl: (id: string, afterSeq: number) => `${chatUrl(id)}/events?afterSeq=${afterSeq}`,
   };

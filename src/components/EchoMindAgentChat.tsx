@@ -3,13 +3,14 @@ import type { RequestOptions } from '../api';
 import { ChatProvider, useChatContext } from '../ChatContext';
 import { useProductEventStream } from '../hooks/useProductEventStream';
 import type { EchoMindChatClient } from '../productClient';
-import { getLatestPlan, type ChatEvent, type ConversationSnapshot, type ProductEvent } from '../types';
+import { type ChatEvent, type ConversationSnapshot, type ProductEvent } from '../types';
 import { ChatEventList, ChatPanel } from './ChatPanel';
-import { groupEchoMindTurns, hasVisibleMessage } from '../echomindConversationPresentation';
+import { groupEchoMindTurns, type EchoMindTurn } from '../echomindConversationPresentation';
+import { preparationPlanStatus } from '../preparation';
 import { MessageInput } from './MessageInput';
 import { PreparationWelcome } from './PreparationWelcome';
-import { MessageBubble } from './MessageBubble';
-import { PlanBlock } from './PlanBlock';
+import { ExecutionDetails } from './ExecutionDetails';
+import { MarkdownContent } from './MarkdownContent';
 
 interface AgentChatProps {
   client: EchoMindChatClient;
@@ -20,6 +21,9 @@ interface AgentChatProps {
   executionEvents: ChatEvent[];
   executionSnapshot: ConversationSnapshot | null;
   executionIsCondensing: boolean;
+  onOpenConfirmation: (targetId?: string) => void;
+  onOpenPlan: () => void;
+  onOpenExecution: () => void;
   panel: Pick<ComponentProps<typeof ChatPanel>,
     'children' | 'contentKey' | 'pendingPermission' | 'pendingInputs' | 'isRespondingToConfirmation'
     | 'onRespondToConfirmation' | 'onRespondToUserInput' | 'readInputMedia'>;
@@ -31,7 +35,7 @@ export function EchoMindAgentChat(props: AgentChatProps) {
 
 function AgentChat({
   client, managerId, ensureManager, options, disabled,
-  executionEvents, executionSnapshot, executionIsCondensing, panel,
+  executionEvents, executionSnapshot, executionIsCondensing, onOpenConfirmation, onOpenPlan, onOpenExecution, panel,
 }: AgentChatProps) {
   const { state, dispatch } = useChatContext();
   const [stream, setStream] = useState<{ managerId: string; afterSeq: number } | null>(null);
@@ -161,12 +165,49 @@ function AgentChat({
 
   const groups = useMemo(() => groupEchoMindTurns(state.events, executionEvents, executionSnapshot),
     [state.events, executionEvents, executionSnapshot]);
-  const timeline = groups.turns.length || groups.leading.length || groups.background.length ? <>
-    <ChatEventList events={groups.leading} requestOptions={options} />
-    {groups.turns.map(turn => <article key={turn.id} className="mb-5 last:mb-0">
-      <ChatEventList events={turn.messages} requestOptions={options} />
-      <TurnExecution events={turn.execution} queued={turn.queued} options={options} />
-    </article>)}
+  const turnElements = useRef(new Map<string, HTMLElement>());
+  const turnIds = new Set(groups.turns.map(turn => turn.id));
+  const planStatus = preparationPlanStatus(executionSnapshot);
+  const timeline = groups.entries.length || groups.background.length ? <>
+    {groups.entries.map(entry => {
+      if (entry.kind === 'notice') {
+        const link = entry.message.execution_notice;
+        const origin = link?.origin_turn_id;
+        const target = link?.target_id;
+        const currentPlan = link?.action === 'plan' && planStatus === 'ready'
+          && String(executionSnapshot?.preparation?.revision) === target;
+        const pending = link?.action === 'confirmation' && (
+          executionSnapshot?.pending_inputs?.some(item => item.request_id === target)
+          || executionSnapshot?.pending_permissions.some(item => item.permission_id === target)
+        );
+        return <div key={entry.message.id} className="mb-5">
+          <ChatEventList events={[entry.message]} requestOptions={options} />
+          <div className="flex flex-wrap gap-3 pl-2 text-xs font-medium text-violet-700">
+            {currentPlan && <button type="button" className="underline" onClick={onOpenPlan}>查看工作流计划</button>}
+            {pending && <button type="button" className="underline" onClick={() => onOpenConfirmation(target)}>查看待确认事项</button>}
+            {link?.action === 'report' && target && managerId && <ReportPreview
+              artifactId={target} managerId={managerId} client={client} options={options} />}
+            {origin && turnIds.has(origin) && <button type="button" className="underline" onClick={() => {
+              const element = turnElements.current.get(origin);
+              element?.scrollIntoView({ block: 'start' });
+              element?.focus({ preventScroll: true });
+            }}>查看原任务</button>}
+            {(!origin || !turnIds.has(origin)) && executionSnapshot?.project && !pending
+              && <button type="button" className="underline" onClick={onOpenExecution}>查看执行阶段</button>}
+          </div>
+        </div>;
+      }
+      const turn = entry.turn;
+      const first = turn && entry.messages[0] === turn.messages[0];
+      if (!first) return <ChatEventList key={entry.id} events={entry.messages} requestOptions={options} />;
+      return <article key={entry.id} tabIndex={-1} className="mb-5 last:mb-0" ref={element => {
+        if (element) turnElements.current.set(turn.id, element);
+        else turnElements.current.delete(turn.id);
+      }}>
+        <ChatEventList events={entry.messages} requestOptions={options} />
+        <TurnExecution turn={turn} options={options} onOpenConfirmation={() => onOpenConfirmation()} />
+      </article>;
+    })}
     {groups.background.length > 0 && (
       <ExecutionDetails label="会话执行记录" events={groups.background} options={options} />
     )}
@@ -178,6 +219,8 @@ function AgentChat({
       conversationId={state.conversationId} isCondensing={state.isCondensing || executionIsCondensing}
       pendingOutboundMessages={state.pendingOutboundMessages} />}
     {error && <p role="alert" className="px-4 py-2 text-sm text-red-700">{error}</p>}
+    {executionSnapshot && <ExecutionActions
+      snapshot={executionSnapshot} onOpenPlan={onOpenPlan} onOpenConfirmation={() => onOpenConfirmation()} />}
     <MessageInput
       runningMode="send" interruptLabel="停止回复"
       onSend={text => { void send(text); }} status={state.status} sending={busy}
@@ -186,36 +229,103 @@ function AgentChat({
   </section>;
 }
 
-function TurnExecution({ events, queued, options }: {
-  events: ChatEvent[]; queued: boolean; options: RequestOptions;
+function ReportPreview({ artifactId, managerId, client, options }: {
+  artifactId: string; managerId: string; client: EchoMindChatClient; options: RequestOptions;
 }) {
-  if (!queued && !events.length) return null;
-  const latest = events.filter(hasVisibleMessage).findLast(event => event.source === 'agent');
-  return (
-    <section aria-label="本轮执行" className="mb-3 ml-2 border-l-2 border-slate-200 pl-3">
-      {latest && <MessageBubble event={latest} />}
-      <ExecutionDetails label="执行详情" events={events.filter(event => event !== latest)} options={options} />
-      {queued && <p className="px-2 py-1 text-xs text-slate-600">等待执行</p>}
-    </section>
-  );
+  const [open, setOpen] = useState(false);
+  const [report, setReport] = useState<{ text: string } | 'error' | null>(null);
+  useEffect(() => {
+    if (!open || report !== null) return;
+    const controller = new AbortController();
+    void client.report(managerId, artifactId, options, controller.signal).then(result => {
+      if (!controller.signal.aborted) setReport(result);
+    }).catch(() => {
+      if (!controller.signal.aborted) setReport('error');
+    });
+    return () => controller.abort();
+  }, [open, report, client, managerId, artifactId, options]);
+  return <details open={open} onToggle={event => setOpen(event.currentTarget.open)} className="max-w-full open:basis-full">
+    <summary className="cursor-pointer underline">查看报告</summary>
+    {open && <section aria-label="报告内容" className="my-2 max-h-[55vh] overflow-auto rounded-lg border bg-slate-50 p-4 text-sm font-normal text-slate-800">
+      {report === 'error' ? <p role="alert">暂时无法读取报告。 <button type="button" className="underline" onClick={() => setReport(null)}>重试</button></p>
+        : report ? <MarkdownContent imageClassName="max-h-72 max-w-full rounded-lg">{report.text}</MarkdownContent>
+          : <p role="status">正在加载报告…</p>}
+    </section>}
+  </details>;
 }
 
-function ExecutionDetails({ label, events, options }: {
-  label: string; events: ChatEvent[]; options: RequestOptions;
+function ExecutionActions({ snapshot, onOpenPlan, onOpenConfirmation }: {
+  snapshot: ConversationSnapshot;
+  onOpenPlan: () => void; onOpenConfirmation: () => void;
 }) {
-  if (!events.length) return null;
-  const steps = events.filter(event => event.kind === 'ActionEvent').length;
-  const plan = getLatestPlan(events);
+  const pending = (snapshot.pending_inputs?.length ?? 0) + snapshot.pending_permissions.length;
+  const planStatus = preparationPlanStatus(snapshot);
+  const planLabel = planStatus === 'ready' ? '工作流计划待确认' : planStatus === 'review_required' ? '工作流计划需要重新核对' : null;
+  if (!pending && !planLabel) return null;
+  return <aside aria-label="任务提醒" className="shrink-0 space-y-1 border-t bg-slate-50 px-4 py-2 text-xs">
+    <div className="flex flex-wrap items-center justify-between gap-2 text-amber-900">
+      <span role="status">{pending ? `有 ${pending} 项待处理，执行需要你的回复` : planLabel}</span>
+      <button type="button" onClick={pending ? onOpenConfirmation : onOpenPlan} className="font-medium underline">
+        {pending ? '查看待确认事项' : '查看工作流计划'}
+      </button>
+    </div>
+  </aside>;
+}
+
+function TurnExecution({ turn, options, onOpenConfirmation }: {
+  turn: EchoMindTurn; options: RequestOptions; onOpenConfirmation: () => void;
+}) {
+  const { execution: events, progress, needsConfirmation } = turn;
+  if (!progress.length && !events.length && !needsConfirmation) return null;
+  const primary = progress.find(item => item.needsAttention)
+    ?? progress.find(item => !item.settled) ?? progress.at(-1);
+  const title = primary?.stage ?? primary?.title;
+  const shownGenericStatuses = new Set(title === '执行进度' && primary ? [primary.status] : []);
+  const taskDetails = progress.filter(item => {
+    if (item.stage || item.attempts?.length) return true;
+    if (item.title !== '执行进度') return item !== primary;
+    if (shownGenericStatuses.has(item.status)) return false;
+    shownGenericStatuses.add(item.status);
+    return true;
+  });
+  const summary = primary && <span className="flex min-w-0 flex-1 items-center gap-2 whitespace-nowrap" aria-live="polite">
+    <span className="min-w-0 truncate font-medium" title={title}>{title}</span>
+    <span aria-hidden="true" className="shrink-0 text-slate-400">·</span>
+    <span title={primary.status} className={`min-w-0 truncate ${primary.needsAttention ? 'font-medium text-amber-800' : 'text-slate-600'}`}>
+      {primary.status}
+    </span>
+    {progress.length > 1 && <span className="ml-auto shrink-0 text-slate-500">{progress.length} 项</span>}
+  </span>;
   return (
-    <details className="mb-3 rounded-md border border-slate-200 bg-slate-50">
-      <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-slate-700 focus-visible:outline-2 focus-visible:outline-blue-600">
-        {label}
-        {steps > 0 && <span className="ml-2 font-normal text-slate-500">{steps} 个步骤</span>}
-      </summary>
-      <div className="max-h-64 overflow-auto border-t border-slate-200 p-3">
-        <ChatEventList events={events} requestOptions={options} />
-        {plan && <PlanBlock plan={plan.plan} />}
-      </div>
-    </details>
+    <section aria-label="本轮执行" className="mb-3 ml-2 border-l-2 border-slate-200 pl-3">
+      {(primary || needsConfirmation) && <div role="group" aria-label="本轮进度">
+        {primary && (events.length > 0 || taskDetails.length > 0) ? (
+          <ExecutionDetails summary={summary} events={events} options={options}>
+            {taskDetails.length > 0 && <ul className="mb-2 space-y-2 text-xs text-slate-700">
+              {taskDetails.map(item => <li key={item.id} className="break-words border-b border-slate-200 pb-2">
+                <span className="font-medium">{item.stage && `${item.stage} · `}{item.title}</span>
+                <span className="ml-2 text-slate-600">{item.status}</span>
+                {item.attempts && <ol aria-label="重试记录" className="mt-1 space-y-1 pl-3 text-slate-600">
+                  {item.attempts.map((attempt, index) => <li key={attempt.id}>
+                    第 {index + 1} 次 · {attempt.status}{attempt.reason && ` · ${attempt.reason}`}
+                  </li>)}
+                </ol>}
+              </li>)}
+            </ul>}
+          </ExecutionDetails>
+        ) : primary && <div className="mb-3 flex min-w-0 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">{summary}</div>}
+        {progress.map(item => {
+          if (item.reason) return <p key={item.id} className="mb-2 break-words text-xs text-amber-800">
+            {item !== primary && <span className="font-medium">{item.title} · {item.status} · </span>}{item.reason}
+          </p>;
+          if (item === primary || (!item.needsAttention && !item.reportReady)) return null;
+          return <p key={item.id} className={`mb-2 break-words text-xs ${item.needsAttention ? 'text-amber-800' : 'text-slate-700'}`}>
+            {item.title} · {item.status}
+          </p>;
+        })}
+        {needsConfirmation && <button type="button" onClick={onOpenConfirmation} className="mb-2 text-xs font-medium text-violet-700 underline">查看待确认事项</button>}
+      </div>}
+      {!primary && <ExecutionDetails label="执行详情" events={events} options={options} />}
+    </section>
   );
 }
