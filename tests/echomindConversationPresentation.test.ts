@@ -155,10 +155,36 @@ test('a silent execution updates its original turn from queue through the platfo
     '结果已返回 · 等待分析与交付');
   const callback = { ...ended, 'analysis-run': { task_id: 'platform', status: 'idle' as const, seq: 7 } };
   assert.equal(status({ task_runs: callback, external_tasks: [{ ...task, status: 'succeeded' }] }).status,
-    '本轮执行已结束');
+    '已结束');
   const failure = status({ task_runs: ended, external_tasks: [{ ...task, status: 'failed', error_summary: '数据缺失' }] });
   assert.equal(failure.status, '执行失败');
   assert.equal(failure.reason, '数据缺失');
+});
+
+test('a finished requirement and an active project on the same turn have separate labels', () => {
+  const chat = snapshot([{ ...message('input', 1, 'user', 'a'), turn_id: 'a' }]);
+  const task = 'requirement:chat:one';
+  const start = 'project-start:project';
+  const execution = snapshot([], {
+    task_origins: { [task]: 'a', [start]: 'a' },
+    task_runs: {
+      request: { task_id: task, status: 'idle', seq: 5 },
+      start: { task_id: start, status: 'running', seq: 6 },
+    },
+  });
+  const progress = group(chat, execution).turns[0].progress;
+  assert.deepEqual(progress.map(item => [item.title, item.status, !!item.settled]), [
+    ['需求处理', '已结束', true], ['项目启动', '执行中', false],
+  ]);
+});
+
+test('multiple requests on one turn remain individually identifiable', () => {
+  const chat = snapshot([{ ...message('input', 1, 'user', 'a'), turn_id: 'a' }]);
+  const execution = snapshot([], {
+    task_origins: { 'requirement:chat:1': 'a', 'requirement:chat:2': 'a' },
+  });
+  assert.deepEqual(group(chat, execution).turns[0].progress.map(item => item.title),
+    ['需求处理 1', '需求处理 2']);
 });
 
 test('project stage callbacks use shared execution status and automatic runs stay in stage history', () => {
@@ -213,4 +239,20 @@ test('the main activity view omits model text and tool thoughts, preserving user
   assert.deepEqual(visible.map(event => event.kind), ['MessageEvent', 'ActionEvent', 'ObservationEvent', 'ServerErrorEvent']);
   assert.equal(JSON.stringify(visible).includes(privateText), false);
   assert.match(JSON.stringify(visible), /任务失败/);
+});
+
+test('a late submission receipt shows the actual terminal status of just its own jobs', () => {
+  const chat = snapshot(['submitted', 'callback'].map((run, index) => ({
+    ...message(run, index + 1, 'assistant', run), execution_notice: { has_result: true },
+  })));
+  const submit = (id: string, task: string, status: TimelineOperation['status'] = 'completed') =>
+    operation(id, 3, 'submitted', { name: 'submit_workflow', status, details: { task_id: task } });
+  const manager = snapshot([
+    submit('a', '1291'), submit('b', '1291'), submit('c', '1292', 'failed'), submit('d', '1293'),
+  ], { external_tasks: [
+    { task_id: '1291', status: 'failed' }, { task_id: '1292', status: 'succeeded' },
+    { task_id: '1293', status: 'pending' },
+  ] });
+  const statuses = group(chat, manager).entries.flatMap(entry => entry.kind === 'notice' ? [entry.receiptStatuses] : []);
+  assert.deepEqual(statuses, [['平台任务 1291 已失败'], []]);
 });

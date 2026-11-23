@@ -181,6 +181,9 @@ function AgentChat({
           || executionSnapshot?.pending_permissions.some(item => item.permission_id === target)
         );
         return <div key={entry.message.id} className="mb-5">
+          {entry.receiptStatuses.length > 0 && <p className="mb-1 pl-2 text-xs text-slate-600">
+            {entry.receiptStatuses.join('、')}。以下为提交时的回执。
+          </p>}
           <ChatEventList events={[entry.message]} requestOptions={options} />
           <div className="flex flex-wrap gap-3 pl-2 text-xs font-medium text-violet-700">
             {currentPlan && <button type="button" className="underline" onClick={onOpenPlan}>查看工作流计划</button>}
@@ -280,14 +283,7 @@ function TurnExecution({ turn, options, onOpenConfirmation }: {
   const primary = progress.find(item => item.needsAttention)
     ?? progress.find(item => !item.settled) ?? progress.at(-1);
   const title = primary?.stage ?? primary?.title;
-  const shownGenericStatuses = new Set(title === '执行进度' && primary ? [primary.status] : []);
-  const taskDetails = progress.filter(item => {
-    if (item.stage || item.attempts?.length) return true;
-    if (item.title !== '执行进度') return item !== primary;
-    if (shownGenericStatuses.has(item.status)) return false;
-    shownGenericStatuses.add(item.status);
-    return true;
-  });
+  const taskDetails = progress.filter(item => item !== primary || item.stage || item.attempts?.length);
   const summary = primary && <span className="flex min-w-0 flex-1 items-center gap-2 whitespace-nowrap" aria-live="polite">
     <span className="min-w-0 truncate font-medium" title={title}>{title}</span>
     <span aria-hidden="true" className="shrink-0 text-slate-400">·</span>

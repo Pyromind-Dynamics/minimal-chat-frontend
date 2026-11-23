@@ -44,7 +44,7 @@ export interface EchoMindTurn {
 
 type ConversationEntry =
   | { kind: 'messages'; id: string; turn?: EchoMindTurn; messages: ChatEvent[] }
-  | { kind: 'notice'; message: MessageEvent };
+  | { kind: 'notice'; message: MessageEvent; receiptStatuses: string[] };
 
 interface TurnProgress {
   id: string;
@@ -60,6 +60,25 @@ interface TurnProgress {
 
 type ExternalTask = NonNullable<ConversationSnapshot['external_tasks']>[number];
 type TaskRun = NonNullable<ConversationSnapshot['task_runs']>[string];
+
+function terminalSubmissionStatuses(snapshot: ConversationSnapshot | null) {
+  const statusLabels: Record<string, string> = {
+    failed: '已失败', succeeded: '已成功', stopped: '已停止', terminated: '已终止',
+  };
+  const platform = new Map(snapshot?.external_tasks?.map(task => [task.task_id, task]));
+  const byRun = new Map<string, Set<string>>();
+  for (const op of snapshot?.timeline ?? []) {
+    if (op.kind !== 'operation' || op.status !== 'completed' || !op.run_id
+      || !['submit_workflow', 'df_submit_evaluation'].includes(op.name)
+      || !op.details || typeof op.details !== 'object' || !('task_id' in op.details)) continue;
+    const task = typeof op.details.task_id === 'string' ? platform.get(op.details.task_id) : undefined;
+    if (!task || !Object.hasOwn(statusLabels, task.status)) continue;
+    const labels = byRun.get(op.run_id) ?? new Set<string>();
+    labels.add(`平台任务 ${task.task_id} ${statusLabels[task.status]}`);
+    byRun.set(op.run_id, labels);
+  }
+  return byRun;
+}
 
 function legacyQueuedRequirement(event: ChatEvent): string | undefined {
   if (event.kind !== 'ObservationEvent' || event.tool_name !== 'queue_echomind_requirement'
@@ -96,6 +115,7 @@ export function groupEchoMindTurns(
     turns.push(turn);
   }
 
+  const submissionStatuses = terminalSubmissionStatuses(executionSnapshot);
   let current: EchoMindTurn | undefined;
   for (const event of chatEvents) {
     if (hasVisibleMessage(event) && event.llm_message.role === 'user') {
@@ -104,7 +124,9 @@ export function groupEchoMindTurns(
     const owner = event.turn_id ? turnsById.get(event.turn_id) : current;
     if ((hasVisibleMessage(event) && event.llm_message.role !== 'system') || event.kind === 'ServerErrorEvent') {
       if (event.kind === 'MessageEvent' && event.execution_notice) {
-        entries.push({ kind: 'notice', message: event });
+        const statuses = event.execution_notice.has_result && event.run_id
+          ? submissionStatuses.get(event.run_id) : undefined;
+        entries.push({ kind: 'notice', message: event, receiptStatuses: [...(statuses ?? [])] });
         continue;
       }
       const message = presentEchoMindMessage(event);
@@ -197,6 +219,7 @@ export function groupEchoMindTurns(
     }
   }
 
+  const fallbackTitles = new Map<EchoMindTurn, Map<string, TurnProgress[]>>();
   for (const [taskId, state] of progress) {
     const { turn } = state;
     if (state.runs.size) {
@@ -215,10 +238,31 @@ export function groupEchoMindTurns(
         });
       }
     } else {
-      turn.progress.push({ id: taskId, title: '执行进度', ...requirementProgress(queuedTasks.has(taskId), state) });
+      const title = taskProgressTitle(taskId, executionSnapshot?.project);
+      const item = { id: taskId, title, ...requirementProgress(queuedTasks.has(taskId), state) };
+      turn.progress.push(item);
+      const titles = fallbackTitles.get(turn) ?? new Map<string, TurnProgress[]>();
+      const siblings = titles.get(title) ?? [];
+      siblings.push(item);
+      if (siblings.length === 2) siblings[0].title = `${title} 1`;
+      if (siblings.length > 1) item.title = `${title} ${siblings.length}`;
+      titles.set(title, siblings);
+      fallbackTitles.set(turn, titles);
     }
   }
   return { leading, turns, background, entries };
+}
+
+function taskProgressTitle(taskId: string, project: ConversationSnapshot['project']): string {
+  if (taskId.startsWith('requirement:chat:')) return '需求处理';
+  if (taskId.startsWith('project-start:')) return '项目启动';
+  if (taskId.startsWith('project-continue:')) {
+    const prefix = `project-continue:${project?.project_id}:`;
+    const task = project && taskId.startsWith(prefix)
+      ? project.plan.tasks?.find(item => item.id === taskId.slice(prefix.length)) : undefined;
+    return task?.name || '后续任务';
+  }
+  return '任务执行';
 }
 
 function requirementProgress(queued: boolean, { latest, external, hasActivity, reason }: {
@@ -240,7 +284,7 @@ function requirementProgress(queued: boolean, { latest, external, hasActivity, r
     return { status: '结果已返回 · 等待分析与交付' };
   }
   if (latest?.status === 'idle' || latest?.status === 'finished' || task?.status === 'succeeded') {
-    return { status: '本轮执行已结束', settled: true };
+    return { status: '已结束', settled: true };
   }
   return { status: hasActivity ? '已开始执行' : '准备执行' };
 }
