@@ -1,4 +1,4 @@
-import type { ConversationSnapshot, ProductContent, ProductEvent, TimelineMessage } from './types';
+import type { ConversationSnapshot, ProductContent, ProductEvent, TimelineItem, TimelineMessage } from './types';
 
 export function pendingMessageEvents(
   snapshot: ConversationSnapshot,
@@ -23,10 +23,11 @@ export function projectMessageEvents(
     const index = timeline.findIndex((item) => item.kind === 'message' && item.item_id === id);
     const existing = index < 0 ? undefined : timeline[index];
     const role = event.payload.role;
-    let message: TimelineMessage = existing?.kind === 'message' ? existing : {
+    let message: TimelineMessage & Pick<TimelineItem, 'turn_id' | 'task_id'> = existing?.kind === 'message' ? existing : {
       kind: 'message', item_id: id, started_seq: event.seq,
       role: role === 'user' || role === 'system' ? role : 'assistant',
-      run_id: event.run_id, content: [], status: 'streaming',
+      run_id: event.run_id, turn_id: event.turn_id, task_id: event.task_id,
+      content: [], status: 'streaming',
     };
     if (event.type === 'message.started' && !existing) {
       message = { ...message, content: content(event.payload.content) };

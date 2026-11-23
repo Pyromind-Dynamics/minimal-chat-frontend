@@ -32,3 +32,18 @@ export function createProductClient(path: string) {
 }
 
 export type ProductClient = ReturnType<typeof createProductClient>;
+
+export function createEchoMindChatClient(path: string) {
+  const chatUrl = (id: string) => `${BACKEND_URL}${path}/${encodeURIComponent(id)}/chat`;
+  return {
+    open: (id: string, options: RequestOptions) => productRequest<ConversationSnapshot>(chatUrl(id), {
+      method: 'POST',
+      body: JSON.stringify({ model: LLM_MODEL || undefined, api_key: LLM_API_KEY || undefined, base_url: LLM_BASE_URL || undefined }),
+    }, options),
+    snapshot: (id: string, options: RequestOptions, signal?: AbortSignal) => productRequest<ConversationSnapshot | null>(`${chatUrl(id)}/snapshot`, { signal }, options),
+    command: (id: string, command: Record<string, unknown>, options: RequestOptions) => productRequest<CommandReceipt>(`${chatUrl(id)}/commands`, { method: 'POST', body: JSON.stringify(command) }, options),
+    eventsUrl: (id: string, afterSeq: number) => `${chatUrl(id)}/events?afterSeq=${afterSeq}`,
+  };
+}
+
+export type EchoMindChatClient = ReturnType<typeof createEchoMindChatClient>;

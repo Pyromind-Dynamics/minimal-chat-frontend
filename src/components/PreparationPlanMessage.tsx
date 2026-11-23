@@ -12,7 +12,7 @@ export function PreparationPlanMessage({snapshot, busy, onCreate}: {
     <p className="mt-2 text-xs text-slate-500">尚未创建 Project。你可以在对话中调整阶段、任务和执行范围。</p>
     <WorkflowPlanPreview plan={view.plan} entryTaskId={view.entry_task?.request_id} catalog={view.policy.workflow_nodes} />
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-      <p className="text-xs text-slate-500">{canCreateProject(snapshot) ? '确认此计划后，将创建 Project 并排队启动首个任务。' : view.review_pending ? '正在根据最新对话核对信息与计划，请等待本轮结束。' : '请先完成信息核对与待回答问题。'}</p>
+      <p className="text-xs text-slate-500">{canCreateProject(snapshot) ? '确认此计划后，将创建 Project 并排队启动首个任务。' : snapshot.experiment_queue?.length ? '正在等待处理补充需求。' : view.review_pending ? '正在根据最新对话核对信息与计划，请等待本轮结束。' : '请先完成信息核对与待回答问题。'}</p>
       {canCreateProject(snapshot) && <button type="button" disabled={busy} onClick={onCreate} className="rounded-lg bg-violet-700 px-4 py-2 text-sm text-white disabled:opacity-50">{busy ? '正在创建…' : '创建并启动'}</button>}
     </div>
   </section>;

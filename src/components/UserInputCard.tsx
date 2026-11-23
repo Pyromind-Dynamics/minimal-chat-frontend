@@ -40,7 +40,7 @@ export function UserInputCard({ request, onRespond, readMedia }: {
   }
 
   return (
-    <form aria-label="回答 Agent 的问题" aria-busy={busy}
+    <form aria-label="回答问题" aria-busy={busy}
       className="relative my-5 min-w-0 rounded-2xl border border-slate-200 bg-white text-left text-sm text-slate-800 shadow-sm"
       onSubmit={(event) => { event.preventDefault(); void submit('answered'); }}>
       <div className="flex items-start gap-3 rounded-t-2xl border-b border-slate-100 bg-slate-50/70 px-5 py-4 sm:px-6">
@@ -52,7 +52,7 @@ export function UserInputCard({ request, onRespond, readMedia }: {
         </span>
         <div className="min-w-0 flex-1">
           <h3 className="text-base font-semibold tracking-tight text-slate-900">{request.presentation?.title || '需要你确认'}</h3>
-          <p className="mt-1 text-xs leading-5 text-slate-500">{request.task_run_id ? '回答会返回给发问的子 Agent。' : '回答后，Agent 会继续当前任务。等待不会自动超时。'}</p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">回答后将继续相关任务。等待不会自动超时。</p>
         </div>
         <span role="status" aria-live="polite" className="shrink-0 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs tabular-nums text-slate-500">
           已回答 {completed.size}/{request.questions.length}
@@ -141,7 +141,7 @@ export function UserInputCard({ request, onRespond, readMedia }: {
             </button>
           </div>
         </div>
-        <p className="mt-2 text-xs leading-5 text-slate-500">{request.task_run_id ? '回答或取消会返回给发问的子 Agent。' : '取消会停止本轮 Agent，已提交的后台任务仍会保留。'}</p>
+        <p className="mt-2 text-xs leading-5 text-slate-500">{request.task_run_id ? '回答或取消会更新这项待确认事项。' : '取消会停止本轮处理，已提交的后台任务仍会保留。'}</p>
       </div>
     </form>
   );

@@ -14,6 +14,7 @@ const snapshot = {
 test('creation is offered only for the current ready draft after the turn ends', () => {
   assert.equal(canCreateProject(snapshot), true);
   assert.equal(canCreateProject({...snapshot, status: 'running'}), false);
+  assert.equal(canCreateProject({...snapshot, experiment_queue: [{task_id: 'requirement:1', kind: 'requirement'}]}), false);
   assert.equal(canCreateProject({...snapshot, preparation: {...snapshot.preparation!, review_pending: true}}), false);
   assert.equal(canCreateProject({...snapshot, preparation: {...snapshot.preparation!, phase: 'planning'}}), false);
   assert.equal(canCreateProject({...snapshot, pending_inputs: [{request_id: 'question', questions: []}]}), false);

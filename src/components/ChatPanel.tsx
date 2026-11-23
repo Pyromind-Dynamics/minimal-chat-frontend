@@ -32,6 +32,7 @@ interface ChatPanelProps {
   logLabel?: string;
   emptyText?: string;
   children?: ReactNode;
+  timeline?: ReactNode;
   contentKey?: string | number;
   events: ChatEvent[];
   isCondensing?: boolean;
@@ -55,6 +56,7 @@ export function ChatPanel({
   logLabel,
   emptyText = 'Start a conversation by sending a message below.',
   children,
+  timeline,
   contentKey,
   events,
   isCondensing = false,
@@ -98,7 +100,7 @@ export function ChatPanel({
     previousContentKey.current = contentKey;
     if (changed && contentKey !== undefined) contentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     else bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [visibleEvents, isCondensing, pendingOutboundMessages.length, textLength, pendingInputIds, contentKey, autoScroll]);
+  }, [visibleEvents, isCondensing, pendingOutboundMessages.length, textLength, pendingInputIds, contentKey, autoScroll, timeline]);
 
   useEffect(() => {
     if (pendingInputIds) inputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -111,6 +113,7 @@ export function ChatPanel({
     && !isCondensing
     && !pendingPermission
     && !children
+    && !timeline
   ) {
     return (
       <div className="flex flex-1 items-center justify-center px-4 text-center text-gray-400 text-sm">
@@ -119,15 +122,7 @@ export function ChatPanel({
     );
   }
 
-  const actionIds = new Set<string>();
-  const observationsByActionId = new Map<string, ObservationEvent>();
-  for (const event of visibleEvents) {
-    if (event.kind === 'ActionEvent') {
-      actionIds.add(event.id);
-    } else if (event.kind === 'ObservationEvent' && event.action_id) {
-      observationsByActionId.set(event.action_id, event);
-    }
-  }
+  const observationsByActionId = observationsFor(visibleEvents);
   const pendingActions = visibleEvents.filter(
     (event): event is ActionEvent =>
       event.kind === 'ActionEvent' && (
@@ -138,6 +133,88 @@ export function ChatPanel({
       ),
   );
 
+  return (
+    <>
+    <div ref={scrollRef} role={logLabel ? 'log' : undefined} aria-label={logLabel} tabIndex={logLabel ? 0 : undefined} onScroll={autoScroll === 'follow' ? () => {
+      const element = scrollRef.current;
+      if (!element) return;
+      const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 40;
+      followRef.current = atBottom;
+      setFollowing(atBottom);
+    } : undefined} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+      {timeline ?? <ChatEventList
+        events={visibleEvents}
+        requestOptions={requestOptions}
+        onRollbackWorkflow={onRollbackWorkflow}
+        rollbackWorkflowDisabled={rollbackWorkflowDisabled}
+        rollingBackWorkflowEventId={rollingBackWorkflowEventId}
+      />}
+      {pendingOutboundMessages.map((message) => (
+        <MessageBubble
+          key={message.commandId}
+          event={{
+            kind: 'MessageEvent',
+            id: `pending:${message.commandId}`,
+            timestamp: '',
+            source: 'user',
+            run_id: message.commandId,
+            delivery_status: message.status,
+            llm_message: {
+              role: 'user',
+              content: [{ type: 'text', text: message.text }],
+            },
+          }}
+        />
+      ))}
+      {latestPlan && <PlanBlock plan={latestPlan.plan} />}
+      {children && <div ref={contentRef}>{children}</div>}
+      {isCondensing && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="mb-3 ml-2 flex items-center gap-2 text-xs text-gray-500"
+        >
+          <span
+            aria-hidden="true"
+            className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600"
+          />
+          <span>正在压缩上下文，请稍候…</span>
+        </div>
+      )}
+      {(pendingPermission || status === 'waiting_for_confirmation') && onRespondToConfirmation && (
+        <ConfirmationDialog
+          actions={pendingActions}
+          description={pendingPermission?.description}
+          isSubmitting={isRespondingToConfirmation}
+          onRespond={onRespondToConfirmation}
+        />
+      )}
+      {onRespondToUserInput && pendingInputs.length > 0 && (
+        <div ref={inputRef} className="mx-auto w-full max-w-3xl">
+          {pendingInputs.map((request) => (
+            <UserInputCard key={`${conversationId}:${request.request_id}`} request={request} onRespond={onRespondToUserInput} readMedia={readInputMedia} />
+          ))}
+        </div>
+      )}
+      <div ref={bottomRef} />
+    </div>
+    {autoScroll === 'follow' && !following && <button type="button" className="shrink-0 border-t bg-violet-50 py-2 text-xs text-violet-700" onClick={() => {
+      followRef.current = true; setFollowing(true);
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }}>查看最新消息 ↓</button>}
+    </>
+  );
+}
+
+export function ChatEventList({
+  events: visibleEvents,
+  requestOptions,
+  onRollbackWorkflow,
+  rollbackWorkflowDisabled,
+  rollingBackWorkflowEventId,
+}: Pick<ChatPanelProps, 'events' | 'requestOptions' | 'onRollbackWorkflow' | 'rollbackWorkflowDisabled' | 'rollingBackWorkflowEventId'>) {
+  const actionIds = new Set(visibleEvents.flatMap(event => event.kind === 'ActionEvent' ? [event.id] : []));
+  const observationsByActionId = observationsFor(visibleEvents);
   // Pair actions and observations by id; parallel tool calls are not adjacent.
   const rendered: React.ReactNode[] = [];
   for (let i = 0; i < visibleEvents.length; i++) {
@@ -223,71 +300,15 @@ export function ChatPanel({
     }
   }
 
-  return (
-    <>
-    <div ref={scrollRef} role={logLabel ? 'log' : undefined} aria-label={logLabel} tabIndex={logLabel ? 0 : undefined} onScroll={autoScroll === 'follow' ? () => {
-      const element = scrollRef.current;
-      if (!element) return;
-      const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 40;
-      followRef.current = atBottom;
-      setFollowing(atBottom);
-    } : undefined} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
-      {rendered}
-      {pendingOutboundMessages.map((message) => (
-        <MessageBubble
-          key={message.commandId}
-          event={{
-            kind: 'MessageEvent',
-            id: `pending:${message.commandId}`,
-            timestamp: '',
-            source: 'user',
-            run_id: message.commandId,
-            delivery_status: message.status,
-            llm_message: {
-              role: 'user',
-              content: [{ type: 'text', text: message.text }],
-            },
-          }}
-        />
-      ))}
-      {latestPlan && <PlanBlock plan={latestPlan.plan} />}
-      {children && <div ref={contentRef}>{children}</div>}
-      {isCondensing && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="mb-3 ml-2 flex items-center gap-2 text-xs text-gray-500"
-        >
-          <span
-            aria-hidden="true"
-            className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600"
-          />
-          <span>正在压缩上下文，请稍候…</span>
-        </div>
-      )}
-      {(pendingPermission || status === 'waiting_for_confirmation') && onRespondToConfirmation && (
-        <ConfirmationDialog
-          actions={pendingActions}
-          description={pendingPermission?.description}
-          isSubmitting={isRespondingToConfirmation}
-          onRespond={onRespondToConfirmation}
-        />
-      )}
-      {onRespondToUserInput && pendingInputs.length > 0 && (
-        <div ref={inputRef} className="mx-auto w-full max-w-3xl">
-          {pendingInputs.map((request) => (
-            <UserInputCard key={`${conversationId}:${request.request_id}`} request={request} onRespond={onRespondToUserInput} readMedia={readInputMedia} />
-          ))}
-        </div>
-      )}
-      <div ref={bottomRef} />
-    </div>
-    {autoScroll === 'follow' && !following && <button type="button" className="shrink-0 border-t bg-violet-50 py-2 text-xs text-violet-700" onClick={() => {
-      followRef.current = true; setFollowing(true);
-      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }}>查看最新消息 ↓</button>}
-    </>
-  );
+  return <>{rendered}</>;
+}
+
+function observationsFor(events: ChatEvent[]): Map<string, ObservationEvent> {
+  const byActionId = new Map<string, ObservationEvent>();
+  for (const event of events) {
+    if (event.kind === 'ObservationEvent' && event.action_id) byActionId.set(event.action_id, event);
+  }
+  return byActionId;
 }
 
 function getObsText(obs: ObservationEvent): string {

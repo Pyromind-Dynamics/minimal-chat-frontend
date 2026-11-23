@@ -6,11 +6,12 @@ interface MessageInputProps {
   onInterrupt: () => void;
   canInterrupt: boolean;
   interrupting?: boolean;
+  interruptLabel?: string;
   status: ExecutionStatus;
   sending?: boolean;
   disabled?: boolean;
   guidanceStatus?: GuidanceStatus | null;
-  queueWhileRunning?: boolean;
+  runningMode?: 'guide' | 'send';
 }
 
 export function MessageInput({
@@ -18,17 +19,18 @@ export function MessageInput({
   onInterrupt,
   canInterrupt,
   interrupting = false,
+  interruptLabel,
   status,
   sending = false,
   disabled = false,
   guidanceStatus = null,
-  queueWhileRunning = false,
+  runningMode = 'guide',
 }: MessageInputProps) {
   const [text, setText] = useState('');
   const isRunning = status === 'running';
   const isPaused = status === 'paused';
-  const queueing = isRunning && queueWhileRunning;
-  const placeholder = queueing ? '输入新需求…' : isRunning
+  const guiding = isRunning && runningMode === 'guide';
+  const placeholder = guiding
     ? '输入引导，将在当前步骤结束后应用…'
     : isPaused
       ? '输入新要求并继续…'
@@ -46,10 +48,10 @@ export function MessageInput({
     helperText = '引导发送失败，请重试。';
   } else if (sending) {
     helperText = '正在发送消息…';
-  } else if (queueing) {
-    helperText = '新需求将排队，当前任务结束本轮后处理。';
-  } else if (isRunning) {
+  } else if (guiding) {
     helperText = '输入时 Enter 换行，点击“引导”后在下一次 Agent 决策前生效。';
+  } else if (isRunning) {
+    helperText = '消息会在当前步骤结束后处理。';
   } else if (isPaused) {
     helperText = '发送消息后，Agent 会按新要求继续运行。';
   }
@@ -78,18 +80,18 @@ export function MessageInput({
           disabled={disabled || sending || interrupting || !text.trim()}
           className="h-10 rounded-lg bg-blue-600 px-5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
         >
-          {queueing ? '加入队列' : isRunning ? '引导' : '发送'}
+          {guiding ? '引导' : '发送'}
         </button>
         <button
           type="button"
           onClick={onInterrupt}
           disabled={!canInterrupt || interrupting}
-          aria-label={interrupting ? '正在中断当前会话' : '中断当前会话'}
+          aria-label={interrupting ? '正在中断当前会话' : interruptLabel ?? '中断当前会话'}
           aria-busy={interrupting}
           className="flex h-10 shrink-0 items-center gap-2 rounded-lg border border-red-200 px-3 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400 disabled:hover:bg-transparent"
         >
           <span aria-hidden="true" className="h-3 w-3 rounded-sm bg-current" />
-          {interrupting ? '中断中…' : '中断'}
+          {interrupting ? '中断中…' : interruptLabel ?? '中断'}
         </button>
       </div>
       {helperText && (

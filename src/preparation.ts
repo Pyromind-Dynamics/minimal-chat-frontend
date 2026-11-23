@@ -29,6 +29,7 @@ export function canCreateProject(snapshot: ConversationSnapshot): boolean {
   return !!preparation && !snapshot.project && preparation.phase === 'ready'
     && !preparation.review_pending
     && snapshot.status !== 'running' && !(snapshot.pending_inputs?.length)
+    && !snapshot.experiment_queue?.length
     && snapshot.pending_permissions.length === 0;
 }
 export function stageOperations(snapshot: ConversationSnapshot, stageId: string): TimelineOperation[] {

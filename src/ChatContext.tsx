@@ -37,6 +37,7 @@ type ChatAction =
   | { type: 'SET_WS_STATE'; wsState: StreamConnectionState }
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'ADD_PENDING_OUTBOUND'; message: PendingOutboundMessage }
+  | { type: 'SET_PENDING_OUTBOUND_STATUS'; commandId: string; status: PendingOutboundMessage['status'] }
   | { type: 'MARK_PENDING_OUTBOUND_FAILED'; commandId: string }
   | { type: 'APPLY_MESSAGE_EVENTS'; events: ProductEvent[] };
 
@@ -153,12 +154,13 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
           action.message,
         ],
       };
+    case 'SET_PENDING_OUTBOUND_STATUS':
     case 'MARK_PENDING_OUTBOUND_FAILED':
       return {
         ...state,
         pendingOutboundMessages: state.pendingOutboundMessages.map((message) =>
           message.commandId === action.commandId
-            ? { ...message, status: 'failed' }
+            ? { ...message, status: action.type === 'MARK_PENDING_OUTBOUND_FAILED' ? 'failed' : action.status }
             : message,
         ),
       };

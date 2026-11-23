@@ -24,7 +24,8 @@ export interface MessageEvent {
   timestamp: string;
   source: 'user' | 'agent';
   run_id?: string | null;
-  delivery_status?: 'pending' | 'failed';
+  command_id?: string | null;
+  delivery_status?: PendingOutboundMessage['status'];
   llm_message: {
     role: string;
     content: ContentItem[];
@@ -162,13 +163,14 @@ export interface ServerErrorEvent {
   detail: string;
 }
 
-export type ChatEvent =
+export type ChatEvent = (
   | MessageEvent
   | ActionEvent
   | ObservationEvent
   | CondensationEvent
   | ConversationStateUpdateEvent
-  | ServerErrorEvent;
+  | ServerErrorEvent
+) & { turn_id?: string | null; task_id?: string | null };
 
 // Conversation info returned from POST /api/conversations
 export interface ConversationInfo {
@@ -304,12 +306,13 @@ export interface TimelineNotice {
   message: string;
 }
 
-export type TimelineItem =
+export type TimelineItem = (
   | TimelineMessage
   | TimelineOperation
   | TimelineWorkflow
   | TimelineCompaction
-  | TimelineNotice;
+  | TimelineNotice
+) & { turn_id?: string | null; task_id?: string | null };
 
 export interface ProductPlanState {
   explanation?: string | null;
@@ -387,7 +390,9 @@ export interface ConversationSnapshot {
   current_workflow?: ProductWorkflowState | null;
   plan?: ProductPlanState | null;
   experiment_executions?: import('./experimentExecutions').ExperimentExecution[] | null;
-  external_tasks?: { task_id: string; status: string }[];
+  experiment_queue?: { task_id: string; kind: string }[] | null;
+  task_origins?: Record<string, string>;
+  external_tasks?: { task_id: string; status: string; run_id?: string | null }[];
   pending_permissions: ProductPermission[];
   pending_inputs?: PendingUserInput[];
   automatic_turns_suspended?: boolean;
@@ -403,6 +408,8 @@ export interface ProductEvent {
   occurred_at: string;
   type: string;
   run_id?: string | null;
+  turn_id?: string | null;
+  task_id?: string | null;
   payload: Record<string, unknown>;
   source_event_id?: string | null;
 }
@@ -410,7 +417,7 @@ export interface ProductEvent {
 export interface PendingOutboundMessage {
   commandId: string;
   text: string;
-  status: 'pending' | 'failed';
+  status: 'pending' | 'acknowledged' | 'failed';
 }
 
 export interface CommandReceipt {

@@ -17,13 +17,16 @@ export function snapshotToChatEvents(
   const events: ChatEvent[] = [];
   const { hidden, related, runs } = groupSubagentOperations(snapshot.timeline.filter((item): item is TimelineOperation => item.kind === 'operation'));
   for (const item of snapshot.timeline) {
+    const ownership = { turn_id: item.turn_id, task_id: item.task_id };
     if (item.kind === 'message') {
       events.push({
+        ...ownership,
         kind: 'MessageEvent',
         id: item.item_id,
         timestamp: '',
         source: item.role === 'assistant' ? 'agent' : 'user',
         run_id: item.run_id,
+        command_id: item.command_id,
         llm_message: {
           role: item.role,
           content: item.content.map(toLegacyContent),
@@ -35,11 +38,12 @@ export function snapshotToChatEvents(
       if (hidden.has(item.item_id)) continue;
       const history = runs.get(item.item_id);
       const { action, observation } = operationCard(item, history, related);
-      events.push(action, observation);
+      events.push({ ...action, ...ownership }, { ...observation, ...ownership });
       continue;
     }
     if (item.kind === 'workflow') {
       events.push({
+        ...ownership,
         kind: 'ConversationStateUpdateEvent',
         id: item.item_id,
         timestamp: '',
@@ -68,12 +72,13 @@ export function snapshotToChatEvents(
         summary_offset: null,
         llm_response_id: item.item_id,
       };
-      events.push(event);
+      events.push({ ...event, ...ownership });
       continue;
     }
     if (item.kind === 'notice') {
       if (item.code === 'legacy_harness_retired' && snapshot.capabilities.read_only) continue;
       events.push({
+        ...ownership,
         kind: 'ServerErrorEvent',
         source: 'environment',
         code: item.code,

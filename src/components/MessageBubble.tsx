@@ -21,7 +21,7 @@ export function MessageBubble({ event }: MessageBubbleProps) {
           <div
             className={`mt-1 text-[10px] ${isUser ? 'text-blue-100' : 'text-gray-400'}`}
           >
-            {event.delivery_status === 'pending' ? 'Sending…' : 'Failed to send'}
+            {event.delivery_status === 'pending' ? 'Sending…' : event.delivery_status === 'acknowledged' ? '已接收，等待处理' : 'Failed to send'}
           </div>
         )}
       </div>

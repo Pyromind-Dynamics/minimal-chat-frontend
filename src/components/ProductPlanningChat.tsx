@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RequestOptions } from '../api';
 import { useChatContext } from '../ChatContext';
 import { useProductEventStream } from '../hooks/useProductEventStream';
-import type { ProductClient } from '../productClient';
+import type { EchoMindChatClient, ProductClient } from '../productClient';
 import type { ConversationSnapshot, ConversationSummary, ProductEvent } from '../types';
 import type { ProjectSummary } from '../echomindContract';
 import { resolveEchoMindSelection } from '../echomindNavigation';
@@ -13,9 +13,9 @@ import {
   type RequestOverrideFields,
 } from '../requestOverrides';
 import { ChatPanel } from './ChatPanel';
-import { MessageInput } from './MessageInput';
-import { StatusBar } from './StatusBar';
-import { PreparationWelcome } from './PreparationWelcome';
+import { hasVisibleMessage, presentEchoMindMessage } from '../echomindConversationPresentation';
+import { EchoMindAgentChat } from './EchoMindAgentChat';
+import { deriveDisplayConnectionState } from '../productStreamState';
 import { PreparationPlanMessage } from './PreparationPlanMessage';
 import { StageWorkspace } from './StageWorkspace';
 import { ProjectOverview } from './observations/ProjectOverview';
@@ -31,8 +31,8 @@ function updateWorkbenchUrl(projectId: string | null, conversationId: string | n
   window.history.replaceState(null, '', url);
 }
 
-export function ProductPlanningChat({ client, title, storageNamespace }: {
-  client: ProductClient; title: string; storageNamespace: string;
+export function ProductPlanningChat({ client, chatClient, title, storageNamespace }: {
+  client: ProductClient; chatClient: EchoMindChatClient; title: string; storageNamespace: string;
 }) {
   const { state, dispatch } = useChatContext();
   const [userId] = useState(() => new URLSearchParams(window.location.search).get('userId')?.trim() || localStorage.getItem(`${storageNamespace}.userId`) || '42');
@@ -295,30 +295,22 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
     return () => window.removeEventListener('focus', scheduleRefresh);
   }, [scheduleRefresh]);
 
-  const send = async (text: string) => {
-    if (busy || loading || openError) return;
-    setBusy(true); setError(null); setNotice(null);
-    const commandId = crypto.randomUUID();
-    dispatch({ type: 'ADD_PENDING_OUTBOUND', message: { commandId, text, status: 'pending' } });
-    try {
-      let id = activeId.current;
-      if (!id) {
-        const snapshot = await client.create(options);
-        id = snapshot.conversation_id;
-        activeId.current = id;
-        request.current = new AbortController();
-        dispatch({ type: 'SET_CONVERSATION_ID', id });
-        dispatch({ type: 'ADD_PENDING_OUTBOUND', message: { commandId, text, status: 'pending' } });
-        apply(snapshot); setAfterSeq(snapshot.through_seq); setHasConnected(false);
-        localStorage.setItem(selectedKey, id); localStorage.removeItem(newKey);
-        updateWorkbenchUrl(null, id);
-      }
-      await client.command(id, { type: 'user_message', command_id: commandId, content: [{ type: 'text', text }] }, options);
-      await refresh();
-    } catch (failure) {
-      setError(String(failure));
-      dispatch({ type: 'MARK_PENDING_OUTBOUND_FAILED', commandId });
-    } finally { setBusy(false); }
+  const ensureManager = async () => {
+    if (activeId.current) return activeId.current;
+    const epoch = generation.current;
+    const snapshot = await client.create(options);
+    if (epoch !== generation.current) throw new Error('会话已切换');
+    const id = snapshot.conversation_id;
+    activeId.current = id;
+    request.current = new AbortController();
+    dispatch({ type: 'SET_CONVERSATION_ID', id });
+    apply(snapshot);
+    setAfterSeq(snapshot.through_seq);
+    setHasConnected(false);
+    localStorage.setItem(selectedKey, id);
+    localStorage.removeItem(newKey);
+    updateWorkbenchUrl(null, id);
+    return id;
   };
 
   const respondToPermission = async (accept: boolean) => {
@@ -356,6 +348,25 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
     updateWorkbenchUrl(null, null);
     dispatch({ type: 'RESET_CONVERSATION' });
     setError(null); setNotice(null); setAfterSeq(0); setHasConnected(false);
+  };
+
+  const controlManager = async (type: 'cancel' | 'user_message') => {
+    const id = activeId.current;
+    if (!id || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const commandId = crypto.randomUUID();
+      const receipt = await client.command(id, type === 'cancel'
+        ? { type, command_id: commandId }
+        : { type, command_id: commandId, content: [{ type: 'text', text: '用户要求继续已授权的任务。' }] }, options);
+      if (receipt.status === 'failed') throw new Error(JSON.stringify(receipt.response));
+      await refresh();
+    } catch (failure) {
+      setError(String(failure));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const createProject = () => {
@@ -397,12 +408,34 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
   const isProject = Boolean(state.snapshot?.project);
   const currentProjectId = state.snapshot?.project?.project_id ?? null;
   const pendingCount = (state.snapshot?.pending_inputs?.length ?? 0) + (state.snapshot?.pending_permissions.length ?? 0);
+  const queuedCount = state.snapshot?.experiment_queue?.length ?? 0;
+  const platformTaskRunning = state.snapshot?.external_tasks?.some(task => task.status === 'running');
+  const platformTaskPending = state.snapshot?.external_tasks?.some(task => task.status === 'pending' || task.status === 'waiting');
+  const restingStatus = platformTaskRunning ? '项目任务运行中' : platformTaskPending ? '等待任务结果' : queuedCount > 0 ? '等待执行' : null;
+  const executionStatus = {
+    idle: restingStatus ?? '空闲',
+    running: isProject ? '正在执行项目' : '正在准备项目',
+    paused: '已暂停',
+    waiting_for_confirmation: '等待确认',
+    waiting_for_input: '等待回答',
+    finished: restingStatus ?? '已结束',
+    error: '执行失败',
+    stuck: '执行等待超时',
+    deleting: '正在删除',
+    closed: '已关闭',
+  }[state.status];
+  const executionEvents = useMemo(() => (isProject ? managerChatEvents(state.events) : state.events)
+    .filter(event => event.kind !== 'MessageEvent' || hasVisibleMessage(event))
+    .map(presentEchoMindMessage), [isProject, state.events]);
+  const progressConnection = deriveDisplayConnectionState({
+    conversationId: state.conversationId, isCreating: false, connectionState: connection, hasConnected,
+  });
   const [confirmationsOpen, setConfirmationsOpen] = useState(false);
   useEffect(() => { setConfirmationsOpen(pendingCount > 0); }, [currentProjectId, pendingCount]);
 
   return <div className="product-planning-chat flex h-screen flex-col bg-white text-left text-slate-900">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
-      <div><h1 className="font-semibold">{title}</h1><p className="text-xs text-slate-500">对话准备 → 审阅 workflowPLAN → 创建并启动 → 阶段工作台</p></div>
+      <div><h1 className="font-semibold">{title}</h1></div>
       <div className="flex items-center gap-3 text-sm"><span>用户 {userId}</span><a href="./" className="text-blue-700">Workbench</a><button type="button" onClick={newConversation} disabled={busy || loading} className="rounded border px-3 py-1 disabled:opacity-40">新会话</button></div>
     </header>
     <details className="shrink-0 border-b bg-slate-50 px-4 py-2 text-xs text-slate-500">
@@ -449,8 +482,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
       </button>
     </form>
     </details>
-    {loading ? <div role="status" className="border-b px-4 py-2 text-xs text-gray-600">加载会话…</div> :
-    <StatusBar wsState={connection} status={state.status} conversationId={state.conversationId} isCreating={busy && !state.conversationId} hasConnected={hasConnected} />}
+    {loading && <div role="status" className="border-b px-4 py-2 text-xs text-gray-600">加载会话…</div>}
     {openError && <div role="alert" className="border-b bg-red-50 p-3 text-sm text-red-700">{openError}
       <button type="button" className="ml-3 underline" onClick={() => { if (target.current) void open(target.current); }}>重试</button>
     </div>}
@@ -491,27 +523,41 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
       <section className="flex min-h-[480px] min-w-0 flex-col lg:min-h-0">
         {state.snapshot?.project && <StageWorkspace snapshot={state.snapshot} />}
         <section aria-label="聊天区" className="flex min-h-0 flex-1 flex-col bg-white">
-        {state.snapshot?.project && <header className="flex shrink-0 items-center gap-3 border-b bg-white px-4 py-3">
-          <span className="rounded bg-violet-100 px-2 py-1 text-xs font-semibold text-violet-800">Chat</span><h2 className="font-semibold">Manager 对话</h2>
-        </header>}
-        {!state.conversationId && state.pendingOutboundMessages.length === 0 ? <PreparationWelcome /> : <ChatPanel events={state.snapshot?.project ? managerChatEvents(state.events) : state.events} requestOptions={options} status={state.status} conversationId={state.conversationId} isCondensing={state.isCondensing} pendingOutboundMessages={state.pendingOutboundMessages}
-          contentKey={state.snapshot?.preparation?.plan ? state.snapshot.preparation.revision : undefined}
-          pendingInputs={isProject ? undefined : state.snapshot?.pending_inputs}
-          pendingPermission={isProject ? undefined : state.snapshot?.pending_permissions[0]}
-          isRespondingToConfirmation={respondingPermission}
-          onRespondToConfirmation={isProject ? undefined : accept => { void respondToPermission(accept); }}
-          onRespondToUserInput={isProject ? undefined : async (requestId, status, answers, commandId) => {
-            const id = activeId.current; if (!id) return;
-            await client.command(id, {type: 'input_response', command_id: commandId, request_id: requestId, status, answers}, options);
-            await refresh();
-          }}>
-          {state.snapshot?.preparation?.plan && !state.snapshot.project && <PreparationPlanMessage snapshot={state.snapshot} busy={busy || loading} onCreate={createProject} />}
-        </ChatPanel>}
-        {state.snapshot?.capabilities.read_only && <p className="border-t bg-amber-50 px-4 py-2 text-xs text-amber-800">此会话已归档，仅可查看历史记录和产物。请新建会话继续。</p>}
-        <MessageInput queueWhileRunning={isProject && state.snapshot?.preparation?.policy.allowed_roles.length === 0} onSend={text => { void send(text); }} status={state.status} sending={busy} disabled={loading || busy || !!openError || state.snapshot?.capabilities.read_only} canInterrupt={state.status === 'running' && !busy} onInterrupt={() => {
-          const id = activeId.current;
-          if (id) void client.command(id, { type: 'cancel', command_id: crypto.randomUUID() }, options).then(() => refresh()).catch(failure => setError(String(failure)));
-        }} />
+        {state.snapshot && <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-slate-50 px-4 py-2">
+          <span className="flex items-center gap-2 text-sm text-slate-700" role="status">
+            {(state.status === 'running' || platformTaskRunning) && <span aria-hidden="true" className="size-2 rounded-full bg-blue-500" />}
+            {executionStatus}
+            {queuedCount > 0 && <span className="text-xs text-slate-500">待处理 {queuedCount} 项</span>}
+            {pendingCount > 0 && <span className="text-xs text-amber-700">待确认 {pendingCount} 项</span>}
+            {progressConnection === 'connecting' && <span className="text-xs text-slate-500">正在同步进度</span>}
+            {progressConnection === 'reconnecting' && <span className="text-xs text-amber-700">正在重新连接</span>}
+          </span>
+          {!state.snapshot.capabilities.read_only && (state.status === 'running' || state.snapshot.automatic_turns_suspended) && (
+            <button type="button" disabled={busy} className="rounded border bg-white px-3 py-1 text-xs disabled:opacity-50"
+              onClick={() => void controlManager(state.status === 'running' ? 'cancel' : 'user_message')}>
+              {state.status === 'running' ? '中断执行' : '继续执行'}
+            </button>
+          )}
+        </div>}
+        {state.snapshot?.capabilities.read_only ? <>
+          <ChatPanel events={executionEvents} requestOptions={options} status={state.status} conversationId={state.conversationId} />
+          <p className="border-t bg-amber-50 px-4 py-2 text-xs text-amber-800">此会话已归档，仅可查看历史记录和产物。请新建会话继续。</p>
+        </> : <EchoMindAgentChat key={generation.current} client={chatClient} managerId={state.conversationId}
+            ensureManager={ensureManager} options={options} disabled={loading || !!openError}
+            executionEvents={executionEvents} executionSnapshot={state.snapshot}
+            executionIsCondensing={state.isCondensing}
+            panel={{
+              contentKey: state.snapshot?.preparation?.plan ? state.snapshot.preparation.revision : undefined,
+              pendingInputs: isProject ? undefined : state.snapshot?.pending_inputs,
+              pendingPermission: isProject ? undefined : state.snapshot?.pending_permissions[0],
+              isRespondingToConfirmation: respondingPermission,
+              onRespondToConfirmation: !isProject && state.snapshot?.pending_permissions[0]
+                ? accept => { void respondToPermission(accept); } : undefined,
+              onRespondToUserInput: isProject ? undefined : respondToInput,
+              readInputMedia,
+              children: state.snapshot?.preparation?.plan && !isProject ? <PreparationPlanMessage
+                snapshot={state.snapshot} busy={busy || loading} onCreate={createProject} /> : undefined,
+            }} />}
         </section>
       </section>
       {state.snapshot?.project && <details className="project-confirmation-slot" open={confirmationsOpen} onToggle={event => setConfirmationsOpen(event.currentTarget.open)}>
