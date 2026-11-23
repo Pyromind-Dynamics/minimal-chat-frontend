@@ -10,6 +10,7 @@ interface MessageInputProps {
   sending?: boolean;
   disabled?: boolean;
   guidanceStatus?: GuidanceStatus | null;
+  queueWhileRunning?: boolean;
 }
 
 export function MessageInput({
@@ -21,11 +22,13 @@ export function MessageInput({
   sending = false,
   disabled = false,
   guidanceStatus = null,
+  queueWhileRunning = false,
 }: MessageInputProps) {
   const [text, setText] = useState('');
   const isRunning = status === 'running';
   const isPaused = status === 'paused';
-  const placeholder = isRunning
+  const queueing = isRunning && queueWhileRunning;
+  const placeholder = queueing ? '输入新需求…' : isRunning
     ? '输入引导，将在当前步骤结束后应用…'
     : isPaused
       ? '输入新要求并继续…'
@@ -43,6 +46,8 @@ export function MessageInput({
     helperText = '引导发送失败，请重试。';
   } else if (sending) {
     helperText = '正在发送消息…';
+  } else if (queueing) {
+    helperText = '新需求将排队，当前任务结束本轮后处理。';
   } else if (isRunning) {
     helperText = '输入时 Enter 换行，点击“引导”后在下一次 Agent 决策前生效。';
   } else if (isPaused) {
@@ -73,7 +78,7 @@ export function MessageInput({
           disabled={disabled || sending || interrupting || !text.trim()}
           className="h-10 rounded-lg bg-blue-600 px-5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
         >
-          {isRunning ? '引导' : '发送'}
+          {queueing ? '加入队列' : isRunning ? '引导' : '发送'}
         </button>
         <button
           type="button"

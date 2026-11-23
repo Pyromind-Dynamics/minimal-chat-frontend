@@ -24,6 +24,7 @@ test('stage states distinguish platform waiting, analysis and delivery', () => {
   ]) {
     assert.equal(executionProgressLabel({...run, state}), expected);
   }
+  assert.equal(executionProgressLabel({...run, state: 'succeeded', report_state: 'not_started'}), '已完成');
   assert.equal(executionProgressLabel({...run, state: 'succeeded', report_state: 'queued'}), '执行已完成 · 正在生成报告');
   assert.equal(executionProgressLabel({...run, state: 'succeeded', report_state: 'failed'}), '已成功 · 报告失败');
 });

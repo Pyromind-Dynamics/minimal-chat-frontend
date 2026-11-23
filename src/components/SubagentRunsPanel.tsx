@@ -1,8 +1,6 @@
 import { useMemo } from 'react';
-import { operationCard } from '../productSnapshot';
 import { groupSubagentOperations, subagentDisplay, subagentStatus, subagentStatusLabel } from '../subagentPresentation';
 import type { TimelineOperation } from '../types';
-import { SubAgentBlock } from './SubAgentBlock';
 import { executionProgressLabel, type ExperimentExecution } from '../experimentExecutions';
 
 function runState(history: TimelineOperation[], executions: readonly ExperimentExecution[]) {
@@ -17,17 +15,14 @@ function runState(history: TimelineOperation[], executions: readonly ExperimentE
 export function SubagentRunsPanel({ operations, executions = [] }: {
   operations: TimelineOperation[]; executions?: readonly ExperimentExecution[];
 }) {
-  const { histories, related } = useMemo(() => {
+  const histories = useMemo(() => {
     const groups = groupSubagentOperations(operations);
     const priority = (history: TimelineOperation[]) => {
       const { state } = runState(history, executions);
       return ({ running: 0, analyzing: 0, queued: 1, waiting_platform: 1, waiting_analysis: 1, paused: 2, unknown: 3 } as Record<string, number>)[state] ?? 4;
     };
-    return {
-      histories: [...groups.runs.values()].sort((a, b) =>
-        priority(a) - priority(b) || b.at(-1)!.started_seq - a.at(-1)!.started_seq),
-      related: groups.related,
-    };
+    return [...groups.runs.values()].sort((a, b) =>
+      priority(a) - priority(b) || b.at(-1)!.started_seq - a.at(-1)!.started_seq);
   }, [operations, executions]);
   const current = histories[0]?.at(-1);
   if (!current) return null;
@@ -41,9 +36,13 @@ export function SubagentRunsPanel({ operations, executions = [] }: {
         {display?.task || '未记录任务说明'}
       </span>
     </summary>
-    <div className="mt-3 max-h-72 overflow-y-auto">
-      {histories.map(history => <SubAgentBlock key={history[0].item_id} statusText={runState(history, executions).label}
-        {...operationCard(history[0], history, related)} />)}
-    </div>
+    <ul className="mt-3 max-h-72 space-y-2 overflow-y-auto text-xs text-slate-700">
+      {histories.map(history => {
+        const latest = history.at(-1)!;
+        return <li key={history[0].item_id}>
+          {subagentDisplay(latest.details)?.task || latest.name} · {runState(history, executions).label}
+        </li>;
+      })}
+    </ul>
   </details>;
 }

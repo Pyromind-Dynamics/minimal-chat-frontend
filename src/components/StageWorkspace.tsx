@@ -1,14 +1,10 @@
 import type { ConversationSnapshot } from '../types';
-import type { RequestOptions } from '../api';
 import { useState } from 'react';
 import { executionProgressLabel } from '../experimentExecutions';
 import { stageOperations, stageRunOperations } from '../preparation';
-import { StageAgentConversation } from './StageAgentConversation';
 import { SubagentRunsPanel } from './SubagentRunsPanel';
 import { WorkflowStageRow } from './WorkflowPlanPreview';
-export function StageWorkspace({ snapshot, requestOptions = {} }: {
-  snapshot: ConversationSnapshot; requestOptions?: RequestOptions;
-}) {
+export function StageWorkspace({ snapshot }: { snapshot: ConversationSnapshot }) {
   const [selectedRuns, setSelectedRuns] = useState<Record<string, string>>({});
   const [stageRunExpanded, setStageRunExpanded] = useState(false);
   const project = snapshot.project;
@@ -35,7 +31,7 @@ export function StageWorkspace({ snapshot, requestOptions = {} }: {
       ? runs.reduce((current, run) =>
         (lastActivity.get(run.run_id) ?? -1) > (lastActivity.get(current.run_id) ?? -1) ? run : current, last)
       : last;
-    return [stage.id, { runs, operations, latest }];
+    return [stage.id, { runs, latest }];
   }));
   const stageWidth = 360;
   const columns = { gridTemplateColumns: `repeat(${Math.max(stages.length, 1)}, ${stageWidth}px)`, width: 'max-content' };
@@ -54,21 +50,20 @@ export function StageWorkspace({ snapshot, requestOptions = {} }: {
       }} />
     <div className="mt-3 grid items-start gap-3" style={columns}>
       {stages.map(stage => {
-        const { runs, latest, operations: allOperations } = stageActivity.get(stage.id)!;
+        const { runs, latest } = stageActivity.get(stage.id)!;
         const selectionKey = `${project.project_id}:${stage.id}`;
         const selected = runs.find(run => run.run_id === selectedRuns[selectionKey]) ?? latest;
-        const operations = allOperations.filter(operation => !selected || operation.execution?.task_run_id === selected.run_id);
         const runOperations = stageRunOperations(snapshot, stage.id);
         return <section key={stage.id} data-stage-id={stage.id} aria-label={`阶段 ${stage.name}`} className="min-w-0 overflow-hidden break-words rounded-lg border bg-white p-3">
           <SubagentRunsPanel key={`${snapshot.conversation_id}:${stage.id}`} operations={runOperations} executions={runs} />
           {runs.length === 0 && runOperations.length === 0 && <p className="my-6 text-center text-xs text-slate-400">{stage.enabled ? '尚未执行' : '此阶段未启用'}</p>}
+          {runs.length === 1 && selected && !runOperations.length && <p className="text-xs text-slate-700">{selected.task_name} · {statusLabel(selected)}</p>}
           {runs.length > 1 && <label className="mt-3 block text-xs text-slate-500">执行历史
             <select aria-label={`${stage.name} 的执行记录`} value={selected?.run_id} onChange={event => setSelectedRuns(current => ({...current, [selectionKey]: event.target.value}))} className="mt-1 block w-full rounded border bg-white p-2 text-xs text-slate-700">
               {runs.map((run, index) => <option key={run.run_id} value={run.run_id}>第 {index + 1} 次 · {run.task_name} · {statusLabel(run)}</option>)}
             </select>
           </label>}
           {selected?.waiting_reason && <p role={selected.report_state === 'failed' ? 'alert' : 'status'} className="mt-2 break-words whitespace-pre-wrap text-xs text-amber-800">{selected.waiting_reason}</p>}
-          {(selected || operations.length > 0) && <StageAgentConversation key={selected?.run_id ?? selectionKey} operations={operations} requestOptions={requestOptions} status={selected ? statusLabel(selected) : undefined} />}
         </section>;
       })}
     </div>

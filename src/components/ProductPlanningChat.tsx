@@ -489,7 +489,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
         </section>
       </nav>
       <section className="flex min-h-[480px] min-w-0 flex-col lg:min-h-0">
-        {state.snapshot?.project && <StageWorkspace snapshot={state.snapshot} requestOptions={options} />}
+        {state.snapshot?.project && <StageWorkspace snapshot={state.snapshot} />}
         <section aria-label="聊天区" className="flex min-h-0 flex-1 flex-col bg-white">
         {state.snapshot?.project && <header className="flex shrink-0 items-center gap-3 border-b bg-white px-4 py-3">
           <span className="rounded bg-violet-100 px-2 py-1 text-xs font-semibold text-violet-800">Chat</span><h2 className="font-semibold">Manager 对话</h2>
@@ -508,7 +508,7 @@ export function ProductPlanningChat({ client, title, storageNamespace }: {
           {state.snapshot?.preparation?.plan && !state.snapshot.project && <PreparationPlanMessage snapshot={state.snapshot} busy={busy || loading} onCreate={createProject} />}
         </ChatPanel>}
         {state.snapshot?.capabilities.read_only && <p className="border-t bg-amber-50 px-4 py-2 text-xs text-amber-800">此会话已归档，仅可查看历史记录和产物。请新建会话继续。</p>}
-        <MessageInput onSend={text => { void send(text); }} status={state.status} sending={busy} disabled={loading || busy || !!openError || state.snapshot?.capabilities.read_only} canInterrupt={state.status === 'running' && !busy} onInterrupt={() => {
+        <MessageInput queueWhileRunning={isProject && state.snapshot?.preparation?.policy.allowed_roles.length === 0} onSend={text => { void send(text); }} status={state.status} sending={busy} disabled={loading || busy || !!openError || state.snapshot?.capabilities.read_only} canInterrupt={state.status === 'running' && !busy} onInterrupt={() => {
           const id = activeId.current;
           if (id) void client.command(id, { type: 'cancel', command_id: crypto.randomUUID() }, options).then(() => refresh()).catch(failure => setError(String(failure)));
         }} />

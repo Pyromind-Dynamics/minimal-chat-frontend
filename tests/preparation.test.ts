@@ -97,7 +97,7 @@ test('review plan and creation remain available without the checklist panel', as
     const logTurns = ['execute', 'report'].map((phase, index) => ({
       kind: 'operation', category: 'subagent', item_id: phase, name: 'eval', started_seq: index + 1,
       status: 'completed', output: [], thought: [], arguments: {}, execution: {project_id: 'project', stage_id: 'eval', task_run_id: 'latest'},
-      details: {subagent: {version: 1, phase}},
+      details: {subagent: {version: 1, phase, trace: {text: '内部执行日志'}}},
       activity: {truncated: false, items: [{
         kind: 'message', item_id: `message-${phase}`, started_seq: 1, role: 'assistant', status: 'completed',
         content: [{type: 'text', text: index ? '**报告已保存**' : '预测已完成'}],
@@ -107,10 +107,9 @@ test('review plan and creation remain available without the checklist panel', as
       }])]},
     }));
     const continuous = renderToStaticMarkup(createElement(StageWorkspace, {snapshot: {...state, experiment_executions: runs, timeline: logTurns}}));
-    assert.equal((continuous.match(/role="log"/g) ?? []).length, 1);
-    assert.match(continuous, /预测已完成/); assert.match(continuous, /报告已保存/);
-    assert.match(continuous, /<strong>报告已保存<\/strong>/);
-    assert.match(continuous, /read/); assert.match(continuous, /已读取四条数据/);
+    assert.doesNotMatch(continuous, /role="log"|子 Agent 会话|预测已完成|报告已保存|已读取四条数据|内部执行日志/);
+    assert.match(continuous, /workflowPLAN · 阶段状态/);
+    assert.match(continuous, /等待平台结果/);
     assert.doesNotMatch(continuous, /此前运行|第 2 轮|任务与报告/);
     const resumed = renderToStaticMarkup(createElement(StageWorkspace, {snapshot: {
       ...state,
@@ -124,7 +123,8 @@ test('review plan and creation remain available without the checklist panel', as
       ],
     }}));
     assert.match(resumed, /<option value="old" selected="">/);
-    assert.match(resumed, /报告已保存/);
+    assert.match(resumed, /已交付报告/);
+    assert.doesNotMatch(resumed, /子 Agent 会话|报告已保存|内部执行日志/);
     assert.match(resumed, /第 2 次 · Failed launch · 已失败/);
     const {ToolCallBlock} = await server.ssrLoadModule('/src/components/ToolCallBlock.tsx');
     const tool = renderToStaticMarkup(createElement(ToolCallBlock, {
