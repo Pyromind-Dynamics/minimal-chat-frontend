@@ -45,5 +45,25 @@ test('current stage workspace displays blocked artifact delivery without old con
     assert.match(html, /role="alert"/);
     assert.match(html, /\/workspace\/val.jsonl/);
     assert.doesNotMatch(html, /仅重试报告|核对并绑定|后台工作队列/);
+
+    const model = {...run, role_id: 'main', task_id: 'model', task_name: '评测合并模型',
+      state: 'needs_input', platform_task_id: '1272'};
+    const analysis = {...run, role_id: 'main', run_id: 'run2', task_id: 'analysis', task_name: '评测结果分析',
+      state: 'succeeded', platform_task_id: null};
+    const snapshot = {conversation_id: 'chat', timeline: [],
+      project: {project_id: 'project', plan: {goal: 'Evaluate', edges: [],
+        stages: [{id: 'stage', name: 'Eval', enabled: true}],
+        tasks: [model, analysis].map(r => ({id: r.task_id, stage_id: 'stage'}))}},
+      experiment_executions: [model, analysis]};
+    const evaluation = renderToStaticMarkup(createElement(StageWorkspace, {snapshot}));
+    assert.match(evaluation.split('<select')[0], /执行受阻/);
+    assert.match(evaluation, /评测结果分析 · 已完成/);
+    assert.doesNotMatch(evaluation, /第 [12] 次/);
+    const retry = {...model, run_id: 'retry', state: 'succeeded', platform_task_id: '1273'};
+    const repaired = renderToStaticMarkup(createElement(StageWorkspace, {
+      snapshot: {...snapshot, experiment_executions: [model, analysis, retry]}}));
+    assert.match(repaired, /第 2 次 · 评测合并模型 · 已完成/);
+    assert.match(repaired, /Studio 任务 #1273/);
+    assert.doesNotMatch(repaired.split('<select')[0], /执行受阻/);
   } finally { await server.close(); }
 });

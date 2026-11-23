@@ -31,7 +31,21 @@ export function StageWorkspace({ snapshot }: { snapshot: ConversationSnapshot })
       ? runs.reduce((current, run) =>
         (lastActivity.get(run.run_id) ?? -1) > (lastActivity.get(current.run_id) ?? -1) ? run : current, last)
       : last;
-    return [stage.id, { runs, latest }];
+    const byTask = new Map<string, typeof runs>();
+    for (const run of runs) {
+      const attempts = byTask.get(run.task_id) ?? [];
+      attempts.push(run);
+      byTask.set(run.task_id, attempts);
+    }
+    const planned = (project.plan.tasks ?? []).filter(task => task.stage_id === stage.id);
+    const current = planned.map(task => byTask.get(task.id)?.at(-1));
+    const unfinished = current.find(run => run && run.state !== 'succeeded' && run.state !== 'reported');
+    let status = latest ? statusLabel(latest) : '待执行';
+    if (planned.length > 1 && latest) {
+      if (unfinished) status = statusLabel(unfinished);
+      else if (current.some(run => !run)) status = '部分完成';
+    }
+    return [stage.id, { runs, latest, byTask, status }];
   }));
   const stageWidth = 360;
   const columns = { gridTemplateColumns: `repeat(${Math.max(stages.length, 1)}, ${stageWidth}px)`, width: 'max-content' };
@@ -45,12 +59,12 @@ export function StageWorkspace({ snapshot }: { snapshot: ConversationSnapshot })
     {project.plan.edges.length > 0 && <p className="mt-2 text-xs text-slate-500">{project.plan.edges.map(edge => `${stages.find(stage => stage.id === edge.source)?.name ?? edge.source} → ${stages.find(stage => stage.id === edge.target)?.name ?? edge.target}`).join('；')}</p>}
     <div className="mt-4 min-w-fit">
     <WorkflowStageRow plan={{...project.plan, stages}} columnWidth={stageWidth} catalog={snapshot.preparation?.policy.workflow_nodes} status={stage => {
-        const { latest } = stageActivity.get(stage.id)!;
-        return historical.some(item => item.id === stage.id) ? '历史阶段' : !stage.enabled ? '未启用' : latest ? statusLabel(latest) : '待执行';
+        const { status } = stageActivity.get(stage.id)!;
+        return historical.some(item => item.id === stage.id) ? '历史阶段' : !stage.enabled ? '未启用' : status;
       }} />
     <div className="mt-3 grid items-start gap-3" style={columns}>
       {stages.map(stage => {
-        const { runs, latest } = stageActivity.get(stage.id)!;
+        const { runs, latest, byTask } = stageActivity.get(stage.id)!;
         const selectionKey = `${project.project_id}:${stage.id}`;
         const selected = runs.find(run => run.run_id === selectedRuns[selectionKey]) ?? latest;
         const runOperations = stageRunOperations(snapshot, stage.id);
@@ -60,9 +74,14 @@ export function StageWorkspace({ snapshot }: { snapshot: ConversationSnapshot })
           {runs.length === 1 && selected && !runOperations.length && <p className="text-xs text-slate-700">{selected.task_name} · {statusLabel(selected)}</p>}
           {runs.length > 1 && <label className="mt-3 block text-xs text-slate-500">执行历史
             <select aria-label={`${stage.name} 的执行记录`} value={selected?.run_id} onChange={event => setSelectedRuns(current => ({...current, [selectionKey]: event.target.value}))} className="mt-1 block w-full rounded border bg-white p-2 text-xs text-slate-700">
-              {runs.map((run, index) => <option key={run.run_id} value={run.run_id}>第 {index + 1} 次 · {run.task_name} · {statusLabel(run)}</option>)}
+              {runs.map(run => {
+                const attempts = byTask.get(run.task_id)!;
+                const attempt = attempts.length > 1 ? `第 ${attempts.indexOf(run) + 1} 次 · ` : '';
+                return <option key={run.run_id} value={run.run_id}>{attempt}{run.task_name} · {statusLabel(run)}</option>;
+              })}
             </select>
           </label>}
+          {selected?.role_id === 'main' && <p className="mt-1 text-xs text-slate-500">{selected.platform_task_id ? `Studio 任务 #${selected.platform_task_id}` : '无 Studio 任务号'}</p>}
           {selected?.waiting_reason && <p role={selected.report_state === 'failed' ? 'alert' : 'status'} className="mt-2 break-words whitespace-pre-wrap text-xs text-amber-800">{selected.waiting_reason}</p>}
         </section>;
       })}
