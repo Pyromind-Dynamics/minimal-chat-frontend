@@ -617,7 +617,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         }}
         readMedia={readInputMedia} /></details>}
     </main>
-    <ProjectOverview snapshot={state.snapshot} client={client} projectId={currentProjectId} projectName={projects.find(project => project.project_id === currentProjectId)?.name} options={options} />
+    <ProjectOverview snapshot={state.snapshot} client={client} projectId={currentProjectId} options={options} />
     </div>
   </div>;
 }

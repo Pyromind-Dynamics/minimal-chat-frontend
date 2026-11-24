@@ -42,9 +42,29 @@ export interface EchoMindTurn {
   needsConfirmation: boolean;
 }
 
+interface ReportVersion {
+  id: string;
+  logicalKey: string;
+  version: number;
+}
+
+function reportVersions(snapshot: ConversationSnapshot | null) {
+  const versions = new Map<string, ReportVersion>();
+  for (const item of snapshot?.timeline ?? []) {
+    if (item.kind !== 'operation' || item.name !== 'product_versions' || item.status !== 'completed') continue;
+    const value = item.details;
+    if (!value || typeof value !== 'object' || !('kind' in value) || value.kind !== 'report'
+      || !('id' in value) || typeof value.id !== 'string'
+      || !('logical_key' in value) || typeof value.logical_key !== 'string' || !value.logical_key
+      || !('version_no' in value) || typeof value.version_no !== 'number') continue;
+    versions.set(value.id, { id: value.id, logicalKey: value.logical_key, version: value.version_no });
+  }
+  return versions;
+}
+
 type ConversationEntry =
   | { kind: 'messages'; id: string; turn?: EchoMindTurn; messages: ChatEvent[] }
-  | { kind: 'notice'; message: MessageEvent; receiptStatuses: string[] };
+  | { kind: 'notice'; message: MessageEvent; receiptStatuses: string[]; reports?: ReportVersion[] };
 
 interface TurnProgress {
   id: string;
@@ -137,6 +157,7 @@ export function groupEchoMindTurns(
     turns.push(turn);
   }
 
+  const versions = reportVersions(executionSnapshot);
   const submissionStatuses = terminalSubmissionStatuses(executionSnapshot);
   let current: EchoMindTurn | undefined;
   for (const event of withRecoveredMessages(chatEvents)) {
@@ -152,7 +173,19 @@ export function groupEchoMindTurns(
         const receiptStatuses = [...(statuses ?? [])].filter(([id]) =>
           !event.execution_notice?.source_message_id || text.split(/[^\w-]+/u).includes(id)
         ).map(([, label]) => label);
-        entries.push({ kind: 'notice', message: event, receiptStatuses });
+        const link = event.execution_notice;
+        const report = link.action === 'report' && link.target_id ? versions.get(link.target_id) : undefined;
+        const last = entries.at(-1);
+        if (report && event.run_id && link.origin_turn_id && last?.kind === 'notice'
+          && last.reports?.[0]?.logicalKey === report.logicalKey && last.message.run_id === event.run_id
+          && last.message.execution_notice?.origin_turn_id === link.origin_turn_id) {
+          if (!last.reports.some(item => item.id === report.id)) {
+            last.reports.push(report);
+            last.reports.sort((a, b) => b.version - a.version);
+          }
+          continue;
+        }
+        entries.push({ kind: 'notice', message: event, receiptStatuses, ...(report ? { reports: [report] } : {}) });
         continue;
       }
       const message = presentEchoMindMessage(event);

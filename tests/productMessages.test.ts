@@ -83,3 +83,19 @@ test('streamed messages keep the first event time through completion and snapsho
   assert.equal(reply.started_at, start.occurred_at);
   assert.deepEqual(projectMessageEvents({ ...streamed, through_seq: 3 }, [start, finish]).timeline, streamed.timeline);
 });
+
+test('a public preview stays attached to its original turn through reload and completion', () => {
+  const first = event(2, 'message.delta', 'public', 'stage');
+  const origin = { origin_turn_id: 'older-turn', source_message_id: 'manager-item', public_copy: true };
+  first.payload.execution_notice = { ...origin, source_seq: 41 };
+  const partial = projectMessageEvents(snapshot, [first]);
+  const row = partial.timeline[1];
+  assert.ok(row.kind === 'message');
+  assert.equal(row.execution_notice?.origin_turn_id, 'older-turn');
+  assert.equal(row.status, 'streaming');
+  const done = event(3, 'message.completed', 'public', 'stage result');
+  done.payload.execution_notice = { ...origin, has_result: true };
+  const result = projectMessageEvents({ ...partial, through_seq: 2 }, [first, done, done]);
+  assert.deepEqual(texts(result), ['hello', 'stage result']);
+  assert.ok(result.timeline[1].kind === 'message' && result.timeline[1].execution_notice?.has_result);
+});

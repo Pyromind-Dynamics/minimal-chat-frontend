@@ -2,7 +2,7 @@ import { useId, useLayoutEffect, useRef, useState } from 'react';
 import type { RequestOptions } from '../../api';
 import type { ProductClient } from '../../productClient';
 import type { MetricConfig, MetricPoint, PanelConfig, RunBinding } from '../../observationsContract';
-import { formatTrainingMetric, pointAxis, trainingCurvePath, observationBusinessStatus, observationMessage, observationStageMessage } from '../../observationsPresentation';
+import { formatTrainingMetric, pointAxis, trainingCurvePath, observationBusinessStatus, observationStageMessage } from '../../observationsPresentation';
 import { useTrainingObservations } from '../../hooks/useProjectObservations';
 
 function MetricChart({ metric, points }: { metric: MetricConfig; points: MetricPoint[] }) {
@@ -19,7 +19,12 @@ function MetricChart({ metric, points }: { metric: MetricConfig; points: MetricP
     observer.observe(tooltip);
     return () => observer.disconnect();
   }, [activeId, metric.key, points]);
-  const data = points.filter(point => point.key === metric.key && Number.isFinite(point.value)).map(point => ({ point, x: pointAxis(point, metric) })).filter((item): item is { point: MetricPoint; x: number } => item.x != null && Number.isFinite(item.x)).sort((a, b) => a.x - b.x);
+  const metricPoints = points.filter(point => point.key === metric.key && Number.isFinite(point.value));
+  const useEpoch = metric.axis === 'training_step' && metric.axis_key === 'step' &&
+    metricPoints.some(point => point.epoch != null) && !metricPoints.some(point => point.training_step != null);
+  const data = metricPoints.map(point => ({ point, x: useEpoch ? point.epoch : pointAxis(point, metric) }))
+    .filter((item): item is { point: MetricPoint; x: number } => item.x != null && Number.isFinite(item.x))
+    .sort((a, b) => a.x - b.x);
   const minX = Math.min(...data.map(item => item.x));
   const maxX = Math.max(...data.map(item => item.x));
   const minY = Math.min(...data.map(item => item.point.value));
@@ -27,15 +32,15 @@ function MetricChart({ metric, points }: { metric: MetricConfig; points: MetricP
   const x = (value: number) => 82 + (maxX === minX ? 0.5 : (value - minX) / (maxX - minX)) * 324;
   const y = (value: number) => 150 - (maxY === minY ? 0.5 : (value - minY) / (maxY - minY)) * 128;
   const curve = trainingCurvePath(data.map(item => ({ x: x(item.x), y: y(item.point.value) })));
-  const axisLabel = metric.axis === 'time' ? 'time' : metric.axis_key || 'step';
+  const axisLabel = useEpoch ? 'epoch' : metric.axis === 'time' ? 'time' : metric.axis_key || 'step';
   const valueLabel = metric.key.replace(/^(train|eval)[/_.]/, '');
   const formatValue = (value: number | null | undefined) => formatTrainingMetric(value, metric);
   const active = data.find(item => item.point.source_point_id === activeId);
   return <section className="observation-metric" aria-label={metric.title}>
     <div className="observation-card-heading"><h4 title={metric.key}>{metric.title}</h4><strong>{formatValue(data.at(-1)?.point.value)}</strong></div>
-    {data.length === 0 ? <p className="observation-empty">暂无历史数据{points.some(point => point.key === metric.key) ? '，来源缺少配置横轴' : ''}</p> : <>
+    {data.length === 0 ? <p className="observation-empty">{points.some(point => point.key === metric.key) ? '数据源未提供当前横轴所需的数据' : '暂无历史指标'}</p> : <>
       <div className="observation-chart" onPointerLeave={() => setActiveId(null)}>
-      <svg viewBox="0 0 420 178" role="group" aria-label={`${metric.title}，${data.length} 个点，${axisLabel}`} onPointerMove={event => {
+      <svg viewBox="0 0 420 178" role="group" aria-label={`${metric.title}, ${data.length} data points, ${axisLabel}`} onPointerMove={event => {
         const bounds = event.currentTarget.getBoundingClientRect();
         const pointerX = (event.clientX - bounds.left) / bounds.width * 420;
         const nearest = data.reduce((best, item) => Math.abs(x(item.x) - pointerX) < Math.abs(x(best.x) - pointerX) ? item : best);
@@ -61,31 +66,26 @@ function MetricChart({ metric, points }: { metric: MetricConfig; points: MetricP
     </>}
   </section>;
 }
-export function TrainingMetricPanel({ client, projectId, panel, bindings, configVersion, options, reportedTaskIds }: { client: ProductClient; projectId: string; panel: PanelConfig; bindings: RunBinding[]; configVersion: string; options: RequestOptions; reportedTaskIds: string[] }) {
-  const [selectedRun, setSelectedRun] = useState('');
-  const runId = bindings.some(run => run.run_id === selectedRun) ? selectedRun : bindings.at(-1)?.run_id ?? '';
-  const binding = bindings.find(run => run.run_id === runId);
-  const metrics = binding?.metrics ?? panel.metrics;
-  const trainingType = binding?.training_type ?? panel.training_type;
-  const result = useTrainingObservations(client, projectId, panel.project_node_id, metrics, runId, configVersion, options, binding);
+export function TrainingMetricPanel({ client, projectId, panel, binding, configVersion, options }: { client: ProductClient; projectId: string; panel: PanelConfig; binding: RunBinding; configVersion: string; options: RequestOptions }) {
+  const metrics = panel.metrics;
+  const result = useTrainingObservations(client, projectId, panel.project_node_id, metrics, binding.run_id, configVersion, options, binding);
   const points = result?.points ?? [];
-  const hasReport = binding && (binding.history_path || reportedTaskIds.includes(binding.task_id));
-  const loading = Boolean(hasReport && metrics.length && !result);
-  const status = binding ? observationBusinessStatus(binding.business_status) : 'idle';
-  let placeholder = observationStageMessage('train', status);
-  if (status === 'pending' || status === 'running') placeholder = '等待训练指标上报';
-  if (status === 'failed') placeholder = '训练失败，暂无可展示的训练指标';
-  if (loading) placeholder = '正在加载训练数据';
-  if (result?.page.observation_status === 'unavailable') placeholder = '训练指标暂不可用';
-  if (result?.page.observation_status === 'forbidden') placeholder = '训练指标需要授权后才能查看';
-  return <section className="observation-card" aria-label={`${trainingType} 训练面板`}>
-    {bindings.length > 0 && <label className="observation-field">{trainingType} 运行版本<select value={runId} onChange={event => setSelectedRun(event.target.value)}>{bindings.map(run => <option key={run.run_id} value={run.run_id}>{run.run_id} · task {run.task_id}</option>)}</select></label>}
-    {result?.error && <p role="alert" className="observation-error">{observationMessage(result.error)}</p>}
+  const loading = metrics.length > 0 && !result;
+  const status = observationBusinessStatus(binding.business_status);
+  let placeholder = observationStageMessage('训练', binding.business_status === 'cancelled' ? 'cancelled' : status);
+  if (status === 'running') placeholder = '训练正在执行，等待指标上报';
+  if (status === 'completed') placeholder = '训练已完成，暂无可展示的历史指标';
+  if (status === 'failed') placeholder = '训练执行失败，暂无指标';
+  if (loading) placeholder = '正在读取训练指标';
+  if (result?.page.observation_status === 'unavailable') placeholder = '暂时无法从数据源读取训练指标';
+  if (result?.page.observation_status === 'forbidden') placeholder = '当前账号无权查看训练指标';
+  return <>
+    {result?.error && <p role="alert" className="observation-error">训练指标请求失败，请稍后再试</p>}
     {points.length > 0
       ? <div className="observation-metrics">{metrics.map(metric => <MetricChart key={metric.key} metric={metric} points={points} />)}</div>
       : !result?.error && <p className="observation-empty" role="status">{placeholder}</p>}
-    {result?.page.message && points.length > 0 && <p className="observation-muted">{observationMessage(result.page.message)}</p>}
-    {result?.page.truncated && <p className="observation-muted">正在继续读取训练历史，最多保留最近 1,000 点</p>}
-    {result?.page.gap && <p className="observation-error">来源报告数据缺口</p>}
-  </section>;
+    {result?.page.observation_status === 'unavailable' && points.length > 0 && <p className="observation-muted">暂时无法读取新指标，当前显示上次取到的数据</p>}
+    {result?.page.truncated && <p className="observation-muted">正在继续读取历史指标，图表保留最近 1,000 个数据点</p>}
+    {result?.page.gap && <p className="observation-error">数据源报告部分训练指标缺失</p>}
+  </>;
 }

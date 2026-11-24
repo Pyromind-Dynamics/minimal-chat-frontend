@@ -19,6 +19,8 @@ export type ContentItem = TextContent | ImageContent | OpenAIImageContent;
 
 export interface ExecutionNoticeLink {
   source_message_id?: string;
+  source_seq?: number;
+  public_copy?: boolean;
   history_timestamp?: string;
   has_result?: boolean;
   origin_turn_id?: string;
@@ -403,6 +405,7 @@ export interface ConversationSnapshot {
   timeline: TimelineItem[];
   current_workflow?: ProductWorkflowState | null;
   plan?: ProductPlanState | null;
+  stage_analyses?: import('./observationsContract').StageAnalysis[];
   experiment_executions?: import('./experimentExecutions').ExperimentExecution[] | null;
   experiment_queue?: { task_id: string; kind: string }[] | null;
   task_origins?: Record<string, string>;

@@ -271,3 +271,16 @@ test('recovered milestones keep their original time across an interleaved chat t
     e.kind === 'notice' ? [e.message.id] : e.messages.map(m => 'id' in m ? m.id : ''));
   assert.deepEqual(rows, ['question', 'report', 'other', 'final']);
 });
+
+test('adjacent revisions of one report share a notice and keep both targets', () => {
+  const notice = (id: string, seq: number, run = 'run') => ({
+    ...message(id, seq, 'assistant', run),
+    execution_notice: { origin_turn_id: 'a', action: 'report' as const, target_id: id },
+  });
+  const manager = snapshot(['v255', 'v256', 'v257'].map((id, i) =>
+    operation(id, i + 1, 'run', { name: 'product_versions', status: 'completed',
+      details: { id, kind: 'report', logical_key: i < 2 ? 'prepare_data/evidence_report' : 'baseline/result', version_no: i + 1 } })));
+  const chat = snapshot([notice('v255', 1), notice('v256', 2), notice('v257', 3), notice('v255', 4, 'other')]);
+  assert.deepEqual(group(chat, manager).entries.map(e => e.kind === 'notice' && e.reports?.map(r => r.id)),
+    [['v256', 'v255'], ['v257'], ['v255']]);
+});

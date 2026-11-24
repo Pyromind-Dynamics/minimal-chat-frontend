@@ -47,7 +47,7 @@ test('source failures back off and preserve the caller last value', async t => {
     t.mock.timers.tick(1); await flush(); assert.equal(calls, 3);
   } finally { poller.stop(); }
 });
-test('observation clients escape scope, use GET, and only configuration writes', async () => {
+test('observation clients escape scope and use GET', async () => {
   const server = await createServer({ define: { 'window.location.host': JSON.stringify('localhost:5173') }, server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom' });
   const originalFetch = globalThis.fetch;
   const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
@@ -60,10 +60,8 @@ test('observation clients escape scope, use GET, and only configuration writes',
     const controller = new AbortController();
     await client.observations('project/id', {}, controller.signal);
     await client.trainingSeries('project/id', { project_node_id: 'node/a', run_id: 'run/b', keys: ['loss/one'], cursor: 'a+=/' }, {}, controller.signal);
-    await client.evaluationHistory('project/id', {}, controller.signal);
-    await client.configureObservations('project/id', 'v1', { schema_version: 1, panels: [], orchestrator_source_id: null }, {});
     assert.ok(requests.every(request => request.url.pathname.startsWith('/api/echomind/projects/project%2Fid/observations/')));
-    assert.deepEqual(requests.map(request => request.init.method ?? 'GET'), ['GET', 'GET', 'GET', 'PUT']);
+    assert.deepEqual(requests.map(request => request.init.method ?? 'GET'), ['GET', 'GET']);
     assert.equal(requests[1].url.searchParams.get('run_id'), 'run/b');
     assert.equal(requests[1].url.searchParams.get('keys'), 'loss/one');
     assert.equal(requests[1].url.searchParams.get('cursor'), 'a+=/');

@@ -25,6 +25,8 @@ test('stage states distinguish platform waiting, analysis and delivery', () => {
     assert.equal(executionProgressLabel({...run, state}), expected);
   }
   assert.equal(executionProgressLabel({...run, state: 'succeeded', report_state: 'not_started'}), '已完成');
+  assert.equal(executionProgressLabel({...run, state: 'succeeded', report_state: 'registering'}), '执行已完成 · 正在登记产物');
+  assert.equal(executionProgressLabel({...run, state: 'succeeded', report_state: 'registration_failed'}), '执行已完成 · 产物登记失败');
   assert.equal(executionProgressLabel({...run, state: 'succeeded', report_state: 'ready'}), '已交付报告');
   assert.equal(executionProgressLabel({...run, state: 'succeeded', report_state: 'queued'}), '执行已完成 · 正在生成报告');
   assert.equal(executionProgressLabel({...run, state: 'succeeded', report_state: 'failed'}), '已成功 · 报告失败');
@@ -46,6 +48,18 @@ test('current stage workspace displays blocked artifact delivery without old con
     assert.match(html, /role="alert"/);
     assert.match(html, /\/workspace\/val.jsonl/);
     assert.doesNotMatch(html, /仅重试报告|核对并绑定|后台工作队列/);
+
+    const {ObservationFormSection} = await server.ssrLoadModule('/src/components/observations/ObservationFormSection.tsx');
+    const sidebar = renderToStaticMarkup(createElement(ObservationFormSection, {
+      section: {id: 'report', label: 'Dataset', selection: 'analysis_version',
+        blocks: [{type: 'status', subject: '数据准备', source: 'report'}]},
+      node: {id: 'stage', type: 'dataset', business_status: 'succeeded', delivery_status: 'failed',
+        delivery_error: 'invalid_report', current_run_ids: ['run1'], report_version_ids: []},
+      status: 'failed', reports: [], bindings: [], configVersion: '1',
+      projectId: 'project', client: {}, options: {},
+    }));
+    assert.match(sidebar, /产物登记失败/);
+    assert.doesNotMatch(sidebar, /数据准备执行失败/);
 
     const model = {...run, role_id: 'main', task_id: 'model', task_name: '评测合并模型',
       state: 'needs_input', platform_task_id: '1272'};

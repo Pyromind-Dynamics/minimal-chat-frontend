@@ -9,22 +9,34 @@ test('workbench client loads summaries and resolves projects independently', asy
   try {
     const {createProductClient} = await server.ssrLoadModule('/src/productClient.ts');
     const client = createProductClient(ECHOMIND_CONVERSATIONS_PATH);
-    assert.deepEqual(Object.keys(client).sort(), ['baselineReport', 'command', 'configureObservations', 'create', 'datasetFiles', 'evaluationHistory', 'eventsUrl', 'inputMedia', 'list', 'listProjects', 'observations', 'project', 'snapshot', 'trainingSeries']);
-    const requests: string[] = [];
+    assert.deepEqual(Object.keys(client).sort(), ['command', 'create', 'eventsUrl', 'inputMedia', 'list', 'listProjects', 'observationReport', 'observations', 'project', 'retryArtifactDelivery', 'snapshot', 'trainingSeries']);
+    const requests: URL[] = [];
     const originalFetch = globalThis.fetch;
     const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
     Object.defineProperty(globalThis, 'localStorage', {
       configurable: true, value: {getItem: () => null, setItem: () => undefined},
     });
     try {
-      globalThis.fetch = async input => {
-        requests.push(new URL(String(input), 'http://localhost').pathname);
+      const retryRequests: RequestInit[] = [];
+      globalThis.fetch = async (input, init) => {
+        const url = new URL(String(input), 'http://localhost');
+        requests.push(url);
+        if (url.pathname.endsWith('/retry-artifact-delivery') && init) retryRequests.push(init);
         return Response.json({});
       };
       await client.list({});
       await client.project('project/id', {});
-      await client.baselineReport('project/id', 'task/id', {});
-      assert.deepEqual(requests, [`${ECHOMIND_CONVERSATIONS_PATH}/summaries`, `${PROJECTS_PATH}/project%2Fid`, `${PROJECTS_PATH}/project%2Fid/observations/baselines/task%2Fid`]);
+      await client.observations('project/id', {});
+      await client.observationReport('project/id', {
+        project_node_id: 'stage/id', analysis_job_id: 'job/id', report_version_id: 'version/id',
+      }, {});
+      await client.retryArtifactDelivery('project/id', 'stage/id', {});
+      assert.deepEqual(requests.map(url => url.pathname), [`${ECHOMIND_CONVERSATIONS_PATH}/summaries`, `${PROJECTS_PATH}/project%2Fid`, `${PROJECTS_PATH}/project%2Fid/observations/overview`, `${PROJECTS_PATH}/project%2Fid/observations/report-details`, `${PROJECTS_PATH}/project%2Fid/observations/retry-artifact-delivery`]);
+      assert.equal(retryRequests[0].method, 'POST');
+      assert.equal(retryRequests[0].body, JSON.stringify({ project_node_id: 'stage/id' }));
+      assert.deepEqual(Object.fromEntries(requests[3].searchParams), {
+        project_node_id: 'stage/id', analysis_job_id: 'job/id', report_version_id: 'version/id',
+      });
     } finally {
       globalThis.fetch = originalFetch;
       if (originalStorage) Object.defineProperty(globalThis, 'localStorage', originalStorage);
