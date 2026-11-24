@@ -10,7 +10,6 @@ import { preparationPlanStatus } from '../preparation';
 import { MessageInput } from './MessageInput';
 import { PreparationWelcome } from './PreparationWelcome';
 import { ExecutionDetails } from './ExecutionDetails';
-import { MarkdownContent } from './MarkdownContent';
 
 interface AgentChatProps {
   client: EchoMindChatClient;
@@ -174,6 +173,15 @@ function AgentChat({
         const link = entry.message.execution_notice;
         const origin = link?.origin_turn_id;
         const target = link?.target_id;
+        const version = entry.reports?.[0]?.version;
+        const message = { ...entry.message };
+        if (link?.action === 'report') {
+          const english = message.llm_message.content.some(b => b.type === 'text' && /\breport\b/i.test(b.text));
+          let text = english ? 'The report is ready.' : '报告已生成。';
+          if (version && version > 1) text = english ? `Report updated to version ${version}.`
+            : `报告已更新，最新为第 ${version} 版。`;
+          message.llm_message = { ...message.llm_message, content: [{ type: 'text', text }] };
+        }
         const currentPlan = link?.action === 'plan' && planStatus === 'ready'
           && String(executionSnapshot?.preparation?.revision) === target;
         const pending = link?.action === 'confirmation' && (
@@ -184,12 +192,10 @@ function AgentChat({
           {entry.receiptStatuses.length > 0 && <p className="mb-1 pl-2 text-xs text-slate-600">
             {entry.receiptStatuses.join('、')}。以下为提交时的回执。
           </p>}
-          <ChatEventList events={[entry.message]} requestOptions={options} />
+          <ChatEventList events={[message]} requestOptions={options} />
           <div className="flex flex-wrap gap-3 pl-2 text-xs font-medium text-violet-700">
             {currentPlan && <button type="button" className="underline" onClick={onOpenPlan}>查看工作流计划</button>}
             {pending && <button type="button" className="underline" onClick={() => onOpenConfirmation(target)}>查看待确认事项</button>}
-            {link?.action === 'report' && target && managerId && <ReportPreview
-              artifactId={target} managerId={managerId} client={client} options={options} />}
             {origin && turnIds.has(origin) && <button type="button" className="underline" onClick={() => {
               const element = turnElements.current.get(origin);
               element?.scrollIntoView({ block: 'start' });
@@ -230,31 +236,6 @@ function AgentChat({
       disabled={disabled || busy} canInterrupt={state.status === 'running' && !busy}
       onInterrupt={() => { void interrupt(); }} />
   </section>;
-}
-
-function ReportPreview({ artifactId, managerId, client, options }: {
-  artifactId: string; managerId: string; client: EchoMindChatClient; options: RequestOptions;
-}) {
-  const [open, setOpen] = useState(false);
-  const [report, setReport] = useState<{ text: string } | 'error' | null>(null);
-  useEffect(() => {
-    if (!open || report !== null) return;
-    const controller = new AbortController();
-    void client.report(managerId, artifactId, options, controller.signal).then(result => {
-      if (!controller.signal.aborted) setReport(result);
-    }).catch(() => {
-      if (!controller.signal.aborted) setReport('error');
-    });
-    return () => controller.abort();
-  }, [open, report, client, managerId, artifactId, options]);
-  return <details open={open} onToggle={event => setOpen(event.currentTarget.open)} className="max-w-full open:basis-full">
-    <summary className="cursor-pointer underline">查看报告</summary>
-    {open && <section aria-label="报告内容" className="my-2 max-h-[55vh] overflow-auto rounded-lg border bg-slate-50 p-4 text-sm font-normal text-slate-800">
-      {report === 'error' ? <p role="alert">暂时无法读取报告。 <button type="button" className="underline" onClick={() => setReport(null)}>重试</button></p>
-        : report ? <MarkdownContent imageClassName="max-h-72 max-w-full rounded-lg">{report.text}</MarkdownContent>
-          : <p role="status">正在加载报告…</p>}
-    </section>}
-  </details>;
 }
 
 function ExecutionActions({ snapshot, onOpenPlan, onOpenConfirmation }: {

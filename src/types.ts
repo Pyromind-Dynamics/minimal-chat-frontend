@@ -19,6 +19,8 @@ export type ContentItem = TextContent | ImageContent | OpenAIImageContent;
 
 export interface ExecutionNoticeLink {
   source_message_id?: string;
+  source_seq?: number;
+  public_copy?: boolean;
   history_timestamp?: string;
   has_result?: boolean;
   origin_turn_id?: string;
