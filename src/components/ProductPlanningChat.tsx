@@ -14,7 +14,8 @@ import {
 } from '../requestOverrides';
 import { PreparationWelcome } from './PreparationWelcome';
 import { ChatPanel } from './ChatPanel';
-import { visibleExecutionEvents } from '../echomindConversationPresentation';
+import { MessageInput } from './MessageInput';
+import { hasVisibleMessage, visibleExecutionEvents } from '../echomindConversationPresentation';
 import { EchoMindAgentChat } from './EchoMindAgentChat';
 import { deriveDisplayConnectionState } from '../productStreamState';
 import { PreparationPlanMessage } from './PreparationPlanMessage';
@@ -257,11 +258,10 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
 
   const onEvent = useCallback((event: ProductEvent) => {
     if (event.conversation_id !== activeId.current) return;
-    if (event.type === 'message.delta') return;
-    if (event.type === 'message.started' || event.type === 'message.completed') {
-      if (event.payload.role !== 'user') return;
+    if (event.type === 'message.started' || event.type === 'message.delta' || event.type === 'message.completed') {
+      if (typeof event.payload.message_id !== 'string') return;
       dispatch({ type: 'APPLY_MESSAGE_EVENTS', events: [event] });
-      if (event.type === 'message.started') return;
+      if (event.type !== 'message.completed') return;
     }
     if (event.type === 'project.changed') {
       void refreshProjects().catch(failure => setError(String(failure)));
@@ -296,6 +296,33 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     localStorage.removeItem(newKey);
     updateWorkbenchUrl(null, id);
     return id;
+  };
+
+  const sendToMain = async (text: string) => {
+    if (busy || loading || openError || state.snapshot?.project) return;
+    const epoch = generation.current;
+    const commandId = crypto.randomUUID();
+    setBusy(true);
+    setError(null);
+    try {
+      const id = await ensureManager();
+      if (generation.current !== epoch) return;
+      dispatch({ type: 'ADD_PENDING_OUTBOUND', message: { commandId, text, timestamp: new Date().toISOString(), status: 'pending' } });
+      const receipt = await client.command(id, {
+        type: 'user_message', command_id: commandId, content: [{ type: 'text', text }],
+      }, options);
+      if (generation.current !== epoch) return;
+      if (receipt.status === 'failed' || receipt.response.accepted === false) throw new Error('Main Agent 未接收消息，请重试。');
+      dispatch({ type: 'SET_PENDING_OUTBOUND_STATUS', commandId, status: 'acknowledged' });
+      scheduleRefresh();
+    } catch (failure) {
+      if (generation.current === epoch) {
+        setError(String(failure));
+        dispatch({ type: 'MARK_PENDING_OUTBOUND_FAILED', commandId });
+      }
+    } finally {
+      setBusy(false);
+    }
   };
 
   const respondToPermission = async (accept: boolean) => {
@@ -436,6 +463,10 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const executionEvents = useMemo(() => visibleExecutionEvents(
     isProject ? managerChatEvents(state.events) : state.events,
   ), [isProject, state.events]);
+  const preparationMessages = useMemo(() => state.events.filter(event =>
+    event.kind === 'ServerErrorEvent' || (hasVisibleMessage(event)
+      && (event.llm_message.role === 'user' || event.llm_message.role === 'assistant'))
+  ), [state.events]);
   const progressConnection = deriveDisplayConnectionState({
     conversationId: state.conversationId, isCreating: false, connectionState: connection, hasConnected,
   });
@@ -574,12 +605,13 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
           )}
         </div>}
         {state.snapshot?.capabilities.read_only ? <>
-          <ChatPanel events={executionEvents} requestOptions={options} status={state.status} conversationId={state.conversationId} />
+          <ChatPanel events={isProject ? executionEvents : preparationMessages} requestOptions={options} status={state.status} conversationId={state.conversationId} />
           <p className="border-t bg-amber-50 px-4 py-2 text-xs text-amber-800">此会话已归档，仅可查看历史记录和产物。请新建会话继续。</p>
         </> : <>
           {!state.conversationId && <PreparationWelcome />}
-          {!isProject && state.snapshot && (state.snapshot.preparation?.plan || pendingCount > 0) && <ChatPanel
-            events={[]} status={state.status} requestOptions={options} conversationId={state.conversationId}
+          {!isProject && state.snapshot && <ChatPanel
+            autoScroll="follow" logLabel="Main Agent 对话记录" emptyText="向 Main Agent 描述任务或补充需求。"
+            events={preparationMessages} pendingOutboundMessages={state.pendingOutboundMessages} status={state.status} requestOptions={options} conversationId={state.conversationId}
             pendingInputs={state.snapshot.pending_inputs} pendingPermission={state.snapshot.pending_permissions[0]}
             isRespondingToConfirmation={respondingPermission} onRespondToUserInput={respondToInput} readInputMedia={readInputMedia}
             onRespondToConfirmation={state.snapshot.pending_permissions[0] ? accept => { void respondToPermission(accept); } : undefined}
@@ -589,8 +621,11 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
           </ChatPanel>}
           {state.snapshot && <ExecutionActions snapshot={state.snapshot} onOpenPlan={openPlan}
             onOpenConfirmation={() => openConfirmation()} />}
-          <EchoMindAgentChat key={generation.current} client={chatClient} managerId={state.conversationId}
-            ensureManager={ensureManager} options={options} disabled={loading || !!openError} />
+          {state.snapshot?.project ? <EchoMindAgentChat key={generation.current} client={chatClient} managerId={state.snapshot.conversation_id}
+            options={options} disabled={loading || !!openError} />
+            : <MessageInput key={generation.current} compact placeholder="向 Main Agent 描述任务或补充需求…"
+                runningMode="send" status={state.status} sending={busy} disabled={loading || busy || !!openError || pendingCount > 0}
+                onSend={text => { void sendToMain(text); }} canInterrupt={false} onInterrupt={() => {}} />}
         </>}
         </section>
       </section>

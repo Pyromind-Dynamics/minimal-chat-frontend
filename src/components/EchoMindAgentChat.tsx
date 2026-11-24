@@ -10,8 +10,7 @@ import { MessageInput } from './MessageInput';
 
 interface AgentChatProps {
   client: EchoMindChatClient;
-  managerId: string | null;
-  ensureManager: () => Promise<string>;
+  managerId: string;
   options: RequestOptions;
   disabled: boolean;
 }
@@ -21,7 +20,7 @@ export function EchoMindAgentChat(props: AgentChatProps) {
 }
 
 function AgentChat({
-  client, managerId, ensureManager, options, disabled,
+  client, managerId, options, disabled,
 }: AgentChatProps) {
   const { state, dispatch } = useChatContext();
   const [stream, setStream] = useState<{ managerId: string; afterSeq: number } | null>(null);
@@ -115,15 +114,13 @@ function AgentChat({
     const commandId = crypto.randomUUID();
     const timestamp = new Date().toISOString();
     try {
-      const id = managerId ?? await ensureManager();
-      if (!mounted.current) return;
       if (!chatId.current) {
-        const snapshot = await client.open(id, options);
+        const snapshot = await client.open(managerId, options);
         if (!mounted.current) return;
-        apply(id, snapshot);
+        apply(managerId, snapshot);
       }
       dispatch({ type: 'ADD_PENDING_OUTBOUND', message: { commandId, text, timestamp, status: 'pending' } });
-      const receipt = await client.command(id, {
+      const receipt = await client.command(managerId, {
         type: 'user_message', command_id: commandId, content: [{ type: 'text', text }],
       }, options);
       if (receipt.status === 'failed' || receipt.response.accepted === false) {
