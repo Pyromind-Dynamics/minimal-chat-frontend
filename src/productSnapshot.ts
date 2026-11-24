@@ -23,7 +23,7 @@ export function snapshotToChatEvents(
         ...ownership,
         kind: 'MessageEvent',
         id: item.item_id,
-        timestamp: item.started_at ?? '',
+        timestamp: item.execution_notice?.history_timestamp ?? item.started_at ?? '',
         source: item.role === 'assistant' ? 'agent' : 'user',
         run_id: item.run_id,
         command_id: item.command_id,

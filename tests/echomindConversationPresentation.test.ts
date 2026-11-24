@@ -256,3 +256,18 @@ test('a late submission receipt shows the actual terminal status of just its own
   const statuses = group(chat, manager).entries.flatMap(entry => entry.kind === 'notice' ? [entry.receiptStatuses] : []);
   assert.deepEqual(statuses, [['平台任务 1291 已失败'], []]);
 });
+
+test('recovered milestones keep their original time across an interleaved chat turn', () => {
+  const at = (i: number) => new Date(1000 * i).toISOString();
+  const chat = snapshot([
+    { ...message('question', 1, 'user', 'a'), started_at: at(1) },
+    { ...message('other', 2, 'user', 'b'), started_at: at(3) },
+    { ...message('final', 3, 'assistant', 'a'), started_at: at(4),
+      execution_notice: { source_message_id: 'main-final' } },
+    { ...message('report', 4, 'assistant', 'a'), started_at: at(6),
+      execution_notice: { source_message_id: 'main-report', history_timestamp: at(2) } },
+  ]);
+  const rows = group(chat, snapshot([])).entries.flatMap(e =>
+    e.kind === 'notice' ? [e.message.id] : e.messages.map(m => 'id' in m ? m.id : ''));
+  assert.deepEqual(rows, ['question', 'report', 'other', 'final']);
+});

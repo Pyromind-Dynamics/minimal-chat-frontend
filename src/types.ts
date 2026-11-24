@@ -18,6 +18,8 @@ export interface OpenAIImageContent {
 export type ContentItem = TextContent | ImageContent | OpenAIImageContent;
 
 export interface ExecutionNoticeLink {
+  source_message_id?: string;
+  history_timestamp?: string;
   has_result?: boolean;
   origin_turn_id?: string;
   action?: 'plan' | 'confirmation' | 'report';

@@ -66,15 +66,15 @@ function terminalSubmissionStatuses(snapshot: ConversationSnapshot | null) {
     failed: '已失败', succeeded: '已成功', stopped: '已停止', terminated: '已终止',
   };
   const platform = new Map(snapshot?.external_tasks?.map(task => [task.task_id, task]));
-  const byRun = new Map<string, Set<string>>();
+  const byRun = new Map<string, Map<string, string>>();
   for (const op of snapshot?.timeline ?? []) {
     if (op.kind !== 'operation' || op.status !== 'completed' || !op.run_id
       || !['submit_workflow', 'df_submit_evaluation'].includes(op.name)
       || !op.details || typeof op.details !== 'object' || !('task_id' in op.details)) continue;
     const task = typeof op.details.task_id === 'string' ? platform.get(op.details.task_id) : undefined;
     if (!task || !Object.hasOwn(statusLabels, task.status)) continue;
-    const labels = byRun.get(op.run_id) ?? new Set<string>();
-    labels.add(`平台任务 ${task.task_id} ${statusLabels[task.status]}`);
+    const labels = byRun.get(op.run_id) ?? new Map<string, string>();
+    labels.set(task.task_id, `平台任务 ${task.task_id} ${statusLabels[task.status]}`);
     byRun.set(op.run_id, labels);
   }
   return byRun;
@@ -92,6 +92,28 @@ function legacyQueuedRequirement(event: ChatEvent): string | undefined {
     // Older tool results may have no structured task receipt.
   }
   return undefined;
+}
+
+// Insert messages recovered on upgrade at their original time. Live events
+// retain chat arrival order even when another user turn is already active.
+function withRecoveredMessages(events: ChatEvent[]): ChatEvent[] {
+  const restored = events.flatMap(event => {
+    const time = event.kind === 'MessageEvent' && event.execution_notice?.history_timestamp;
+    return time ? [{ event, time: Date.parse(time) }] : [];
+  }).sort((a, b) => a.time - b.time);
+  if (!restored.length) return events;
+  const recovered = new Set<ChatEvent>(restored.map(item => item.event));
+  const ordered: ChatEvent[] = [];
+  let index = 0;
+  for (const event of events) {
+    if (recovered.has(event)) continue;
+    const time = 'timestamp' in event ? Date.parse(event.timestamp ?? '') : NaN;
+    while (index < restored.length && restored[index].time < time) {
+      ordered.push(restored[index++].event);
+    }
+    ordered.push(event);
+  }
+  return ordered.concat(restored.slice(index).map(item => item.event));
 }
 
 export function groupEchoMindTurns(
@@ -117,7 +139,7 @@ export function groupEchoMindTurns(
 
   const submissionStatuses = terminalSubmissionStatuses(executionSnapshot);
   let current: EchoMindTurn | undefined;
-  for (const event of chatEvents) {
+  for (const event of withRecoveredMessages(chatEvents)) {
     if (hasVisibleMessage(event) && event.llm_message.role === 'user') {
       current = turnsById.get(event.turn_id ?? event.command_id ?? event.id);
     }
@@ -126,7 +148,11 @@ export function groupEchoMindTurns(
       if (event.kind === 'MessageEvent' && event.execution_notice) {
         const statuses = event.execution_notice.has_result && event.run_id
           ? submissionStatuses.get(event.run_id) : undefined;
-        entries.push({ kind: 'notice', message: event, receiptStatuses: [...(statuses ?? [])] });
+        const text = event.llm_message.content.flatMap(b => b.type === 'text' ? [b.text] : []).join(' ');
+        const receiptStatuses = [...(statuses ?? [])].filter(([id]) =>
+          !event.execution_notice?.source_message_id || text.split(/[^\w-]+/u).includes(id)
+        ).map(([, label]) => label);
+        entries.push({ kind: 'notice', message: event, receiptStatuses });
         continue;
       }
       const message = presentEchoMindMessage(event);
