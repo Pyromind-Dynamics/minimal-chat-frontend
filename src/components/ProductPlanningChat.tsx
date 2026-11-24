@@ -475,7 +475,12 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
 
   return <div className="product-planning-chat flex h-screen flex-col bg-white text-left text-slate-900">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
-      <div><h1 className="font-semibold">{title}</h1></div>
+      <div className="min-w-0">
+        <h1 className="font-semibold">{title}</h1>
+        {state.conversationId && <div className="text-xs text-slate-500">
+          执行会话 ID <code className="select-all break-all">{state.conversationId}</code>
+        </div>}
+      </div>
       <div className="flex items-center gap-3 text-sm"><span>用户 {userId}</span><a href="./" className="text-blue-700">Workbench</a><button type="button" onClick={newConversation} disabled={busy || loading} className="rounded border px-3 py-1 disabled:opacity-40">新会话</button></div>
     </header>
     <details className="shrink-0 border-b bg-slate-50 px-4 py-2 text-xs text-slate-500">
