@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ProductApiError, type RequestOptions } from '../api';
 import type { ProductClient } from '../productClient';
-import type { MetricConfig, MetricPoint, ObservationOverview, RunBinding, SeriesPage } from '../observationsContract';
-import { mergePoints, retainVerifiedModelReport } from '../observationsPresentation';
+import type { MetricConfig, MetricPoint, ObservationOverview, ObservationReportDetails, ObservationReportQuery, RunBinding, SeriesPage } from '../observationsContract';
+import { mergePoints } from '../observationsPresentation';
 import { startObservationPolling } from '../observationsPolling';
 
 function useObservationOptions(options: RequestOptions) {
@@ -25,18 +25,7 @@ export function useProjectObservations(client: ProductClient, projectId: string,
         return overview;
       },
       onData: overview => {
-        setResult(previous => {
-          const prior = previous?.identity === identity ? previous.overview : null;
-          return { identity, overview: {
-            ...overview,
-            baseline: retainVerifiedModelReport(prior?.baseline, overview.baseline),
-            evaluation: retainVerifiedModelReport(prior?.evaluation, overview.evaluation),
-            resources: overview.resources.map(resource => {
-              const cached = prior?.resources.find(item => item.kind === resource.kind);
-              return resource.observation_status === 'unavailable' && cached?.observed_at ? { ...cached, observation_status: resource.observation_status, message: resource.message } : resource;
-            }),
-          } };
-        });
+        setResult({ identity, overview });
         setError(null);
       },
       onError: value => setError(value.message),
@@ -54,7 +43,52 @@ export function useProjectObservations(client: ProductClient, projectId: string,
   return {
     overview: result?.identity === identity ? result.overview : null,
     error,
+    refresh: () => refreshRef.current(),
   };
+}
+
+export function useObservationReport(client: ProductClient, projectId: string, query: ObservationReportQuery, reportIds: string[], options: RequestOptions) {
+  const { project_node_id, analysis_job_id, report_version_id } = query;
+  const auth = useObservationOptions(options);
+  const identity = reportIds.length || analysis_job_id || report_version_id
+    ? JSON.stringify([projectId, project_node_id, analysis_job_id, report_version_id, reportIds, auth]) : null;
+  const [result, setResult] = useState<{ identity: string; report?: ObservationReportDetails; unavailable?: boolean } | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!identity) return;
+    const requestIdentity = identity;
+    const controller = new AbortController();
+    const { signal } = controller;
+    let retries = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    function read() {
+      void client.observationReport(projectId, { project_node_id, analysis_job_id, report_version_id }, auth, signal).then(report => {
+        if (signal.aborted) return;
+        if (report.project_id !== projectId || report.project_node_id !== project_node_id ||
+          (report_version_id && (report.report_version_ids.length !== 1 || report.report_version_ids[0] !== report_version_id))) {
+          setResult({ identity: requestIdentity, unavailable: true });
+          return;
+        }
+        setResult({ identity: requestIdentity, report });
+      }).catch((error: unknown) => {
+        if (signal.aborted) return;
+        const temporary = !(error instanceof ProductApiError) ||
+          error.status >= 500 || [408, 409, 429].includes(error.status);
+        if (temporary && retries < 2) {
+          timer = setTimeout(read, 1000 * 2 ** retries++);
+        } else {
+          setResult({ identity: requestIdentity, unavailable: true });
+        }
+      });
+    }
+    read();
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [analysis_job_id, auth, client, identity, project_node_id, projectId, report_version_id, attempt]);
+  function retry() {
+    setResult(null);
+    setAttempt(value => value + 1);
+  }
+  return { loading: identity !== null && result?.identity !== identity, retry, ...(result?.identity === identity ? result : null) };
 }
 
 type TrainingResult = { identity: string; page: SeriesPage; points: MetricPoint[]; lastSuccess: string | null; error: string | null };
