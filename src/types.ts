@@ -386,6 +386,7 @@ export interface ConversationSummary {
   conversation_id: string;
   status: ExecutionStatus;
   through_seq: number;
+  created_at?: string | null;
   updated_at: string | null;
   title: string | null;
   project_id: string | null;
@@ -398,6 +399,7 @@ export interface ConversationSnapshot {
   schema_version: number;
   conversation_id: string;
   through_seq: number;
+  created_at?: string | null;
   updated_at?: string | null;
   status: ExecutionStatus;
   active_run_id?: string | null;

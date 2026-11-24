@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveEchoMindSelection } from '../src/echomindNavigation.ts';
+import { newestCreatedFirst, resolveEchoMindSelection } from '../src/echomindNavigation.ts';
 import type { ProjectSummary } from '../src/echomindContract.ts';
 import type { ConversationSnapshot } from '../src/types.ts';
 
@@ -46,4 +46,11 @@ test('navigation falls back from Project to URL and saved conversations', () => 
     }),
     { project: null, conversationId: 'first-chat' },
   );
+});
+
+test('navigation sorts by creation instant and puts unknown dates after known dates', () => {
+  const older = { created_at: '2026-11-08T23:00:00Z', updated_at: '2026-11-10T00:00:00Z' };
+  const newer = { ...project, created_at: '2026-11-08T19:00:00-05:00' };
+  const unknown = { created_at: null, updated_at: '2026-11-11T00:00:00Z' };
+  assert.deepEqual([unknown, older, newer].sort(newestCreatedFirst), [newer, older, unknown]);
 });

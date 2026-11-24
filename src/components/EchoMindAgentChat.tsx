@@ -3,31 +3,34 @@ import type { RequestOptions } from '../api';
 import { ChatProvider, useChatContext } from '../ChatContext';
 import { useProductEventStream } from '../hooks/useProductEventStream';
 import type { EchoMindChatClient } from '../productClient';
-import type { ConversationSnapshot, ProductEvent } from '../types';
+import type { ChatEvent, ConversationSnapshot, ProductEvent } from '../types';
 import { ChatPanel } from './ChatPanel';
-import { hasVisibleMessage } from '../echomindConversationPresentation';
+import { ECHOMIND_MESSAGE_PLACEHOLDER, mergeChatHistory, publicChatEvents } from '../echomindConversationPresentation';
 import { MessageInput } from './MessageInput';
 
 interface AgentChatProps {
   client: EchoMindChatClient;
   managerId: string;
+  preparationHistory: ChatEvent[];
   options: RequestOptions;
-  disabled: boolean;
+  initialSnapshot?: ConversationSnapshot | null;
+  active: boolean;
 }
 
 export function EchoMindAgentChat(props: AgentChatProps) {
-  return <ChatProvider><AgentChat {...props} /></ChatProvider>;
+  return <ChatProvider initialSnapshot={props.initialSnapshot}><AgentChat {...props} /></ChatProvider>;
 }
 
 function AgentChat({
-  client, managerId, options, disabled,
+  client, managerId, preparationHistory, options, initialSnapshot, active,
 }: AgentChatProps) {
   const { state, dispatch } = useChatContext();
-  const [stream, setStream] = useState<{ managerId: string; afterSeq: number } | null>(null);
-  const [expanded, setExpanded] = useState(false);
+  const [stream, setStream] = useState<{ managerId: string; afterSeq: number } | null>(() =>
+    initialSnapshot ? { managerId, afterSeq: initialSnapshot.through_seq } : null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const chatId = useRef<string | null>(null);
+  const chatId = useRef(initialSnapshot?.conversation_id ?? null);
+  const preloadedOptions = useRef(initialSnapshot === undefined ? null : options);
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -46,7 +49,7 @@ function AgentChat({
   }, [dispatch]);
 
   useEffect(() => {
-    if (!managerId) return;
+    if (!managerId || options === preloadedOptions.current) return;
     const controller = new AbortController();
     void client.snapshot(managerId, options, controller.signal).then(snapshot => {
       if (!controller.signal.aborted && snapshot) apply(managerId, snapshot);
@@ -107,9 +110,8 @@ function AgentChat({
   });
 
   const send = async (text: string) => {
-    if (disabled || busy) return;
+    if (busy) return;
     setBusy(true);
-    setExpanded(true);
     setError('');
     const commandId = crypto.randomUUID();
     const timestamp = new Date().toISOString();
@@ -148,29 +150,20 @@ function AgentChat({
     }
   };
 
-  const messages = useMemo(() => state.events.filter(event =>
-    event.kind === 'ServerErrorEvent' || (hasVisibleMessage(event) && !event.execution_notice
-      && (event.llm_message.role === 'user' || event.llm_message.role === 'assistant'))
-  ), [state.events]);
-  const hasHistory = messages.length > 0 || state.pendingOutboundMessages.length > 0 || !!error;
-  return <section aria-label="Chat Agent" className={`mt-auto flex min-h-0 flex-col border-t bg-white ${expanded ? 'h-[min(40vh,24rem)]' : 'shrink-0'}`}>
-    {expanded && <>
-      <header className="flex shrink-0 items-center justify-between border-b px-4 py-2 text-sm">
-        <strong>Chat Agent</strong>
-        <button type="button" aria-expanded="true" onClick={() => setExpanded(false)}
-          className="rounded px-2 py-1 text-slate-600 hover:bg-slate-100">最小化</button>
-      </header>
-      <ChatPanel autoScroll="follow" logLabel="Chat Agent 对话记录" emptyText="可以继续提问或补充需求。"
-        events={messages} requestOptions={options} status={state.status}
-        conversationId={state.conversationId} isCondensing={state.isCondensing}
-        pendingOutboundMessages={state.pendingOutboundMessages} />
-    </>}
+  const messages = useMemo(() => mergeChatHistory(preparationHistory, publicChatEvents(state.events)),
+    [preparationHistory, state.events]);
+  return <>
+    <ChatPanel active={active} autoScroll="follow" logLabel="EchoMind 对话记录" emptyText="可以继续提问或补充需求。"
+      events={messages} requestOptions={options} status={state.status}
+      conversationId={state.conversationId} isCondensing={state.isCondensing}
+      pendingOutboundMessages={state.pendingOutboundMessages} />
     {error && <p role="alert" className="px-4 py-2 text-sm text-red-700">{error}</p>}
-    <MessageInput compact placeholder="向 Chat Agent 提问或补充需求…"
-      onExpand={!expanded && hasHistory ? () => setExpanded(true) : undefined}
-      runningMode="send" interruptLabel="停止回复"
-      onSend={text => { void send(text); }} status={state.status} sending={busy}
-      disabled={disabled || busy} canInterrupt={expanded && state.status === 'running' && !busy}
-      onInterrupt={() => { void interrupt(); }} />
-  </section>;
+    <div className="shrink-0 border-t">
+      <MessageInput compact placeholder={ECHOMIND_MESSAGE_PLACEHOLDER}
+        runningMode="send" interruptLabel="停止回复"
+        onSend={text => { void send(text); }} status={state.status} sending={busy}
+        disabled={busy} canInterrupt={state.status === 'running' && !busy}
+        onInterrupt={() => { void interrupt(); }} />
+    </div>
+  </>;
 }

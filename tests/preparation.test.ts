@@ -55,8 +55,11 @@ test('review plan and creation remain available without the checklist panel', as
     const {StageWorkspace} = await server.ssrLoadModule('/src/components/StageWorkspace.tsx');
     const state = {...snapshot, project: {project_id: 'project', plan: {goal: 'Evaluate', resources: [], stages: [{id: 'init', name: 'Init', enabled: true}, {id: 'eval', name: 'Eval', enabled: true}], edges: [{source: 'init', target: 'eval'}]}}};
     const workspace = renderToStaticMarkup(createElement(StageWorkspace, {snapshot: state}));
-    assert.match(workspace, /阶段 Init/); assert.match(workspace, /阶段 Eval/); assert.match(workspace, /repeat\(2, 360px\)/);
-    assert.match(workspace, /展开阶段状态/); assert.match(workspace, /stage-workspace-body/);
+    assert.match(workspace, /阶段 Init/); assert.match(workspace, /阶段 Eval/);
+    assert.match(workspace, /<div role="region" aria-label="工作流阶段与执行详情" tabindex="0" class="stage-workspace-track/);
+    assert.equal((workspace.match(/repeat\(2, 360px\)/g) ?? []).length, 2);
+    assert.equal((workspace.match(/<ol aria-label="工作流阶段"/g) ?? []).length, 1);
+    assert.doesNotMatch(workspace, /展开阶段状态|收起阶段状态|\shidden=""/);
     assert.doesNotMatch(workspace, /<details aria-label="子 Agent 运行"/);
     const queued = {
       kind: 'operation', category: 'subagent', item_id: 'unbound', name: 'search', started_seq: 1,
@@ -85,7 +88,9 @@ test('review plan and creation remain available without the checklist panel', as
     }));
     assert.match(waiting, /等待平台结果/);
     assert.doesNotMatch(waiting, /本轮已结束|已完成/);
-    assert.match(workspace, /工作流阶段依赖关系/); assert.match(workspace, /Init → Eval/);
+    assert.match(workspace, /aria-label="工作流阶段依赖关系"/);
+    assert.match(workspace, /<title>Init → Eval<\/title>/);
+    assert.doesNotMatch(workspace, /Evaluate|<p[^>]*>Init → Eval<\/p>/);
     assert.doesNotMatch(workspace, /开始开发|重新开发/);
     const {WorkflowPlanPreview} = await server.ssrLoadModule('/src/components/WorkflowPlanPreview.tsx');
     const previewPlan = {...state.project.plan, resources: [{id: 'data', name: '验证集', uri: '/eval.jsonl'}], tasks: [{id: 'task-eval', stage_id: 'eval', name: '小样评测', description: '仅评测', inputs: [{name: 'dataset', resource_id: 'data'}], outputs: [{name: 'metrics.json', description: '真实指标'}]}]};

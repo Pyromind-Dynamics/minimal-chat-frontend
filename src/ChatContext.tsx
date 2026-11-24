@@ -189,8 +189,11 @@ interface ChatContextType {
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
-export function ChatProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(chatReducer, initialState);
+export function ChatProvider({ children, initialSnapshot }: {
+  children: ReactNode; initialSnapshot?: ConversationSnapshot | null;
+}) {
+  const [state, dispatch] = useReducer(chatReducer, initialSnapshot, snapshot =>
+    snapshot ? chatReducer(initialState, { type: 'SET_PRODUCT_SNAPSHOT', snapshot }) : initialState);
 
   const handleEvent = useCallback((event: ChatEvent) => {
     const condensationState = getContextCondensationState(event);

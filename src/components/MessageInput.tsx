@@ -4,7 +4,6 @@ import type { ExecutionStatus, GuidanceStatus } from '../types';
 interface MessageInputProps {
   compact?: boolean;
   placeholder?: string;
-  onExpand?: () => void;
   onSend: (text: string) => void;
   onInterrupt: () => void;
   canInterrupt: boolean;
@@ -18,7 +17,7 @@ interface MessageInputProps {
 }
 
 export function MessageInput({
-  onSend, compact = false, placeholder: inputHint, onExpand,
+  onSend, compact = false, placeholder: inputHint,
   onInterrupt,
   canInterrupt,
   interrupting = false,
@@ -82,8 +81,6 @@ export function MessageInput({
           rows={compact ? 1 : 2}
           className={`${compact ? 'min-h-10' : 'min-h-14'} max-h-40 min-w-0 flex-1 resize-y rounded-lg border px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100`}
         />
-        {onExpand && <button type="button" aria-expanded="false" onClick={onExpand}
-          className="h-10 shrink-0 rounded px-2 text-sm text-slate-600 hover:bg-slate-100">展开对话</button>}
         <button
           type="submit"
           disabled={disabled || sending || interrupting || !text.trim()}

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { groupEchoMindTurns, visibleExecutionEvents } from '../src/echomindConversationPresentation.ts';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { createServer } from 'vite';
+import { groupEchoMindTurns, mergeChatHistory, publicChatEvents, visibleExecutionEvents } from '../src/echomindConversationPresentation.ts';
 import { snapshotToChatEvents } from '../src/productSnapshot.ts';
 import { projectMessageEvents } from '../src/productMessages.ts';
 import type { ConversationSnapshot, TimelineItem, TimelineMessage, TimelineOperation } from '../src/types.ts';
@@ -36,6 +39,20 @@ function receipt(taskId: string, seq: number): TimelineOperation {
 function group(chat: ConversationSnapshot, execution: ConversationSnapshot) {
   return groupEchoMindTurns(snapshotToChatEvents(chat), snapshotToChatEvents(execution), execution);
 }
+
+test('opening a saved EchoMind chat renders its history before the stream starts', async () => {
+  const server = await createServer({define: {'window.location.host': JSON.stringify('localhost:5173')},
+    server: {middlewareMode: true, ws: false}, optimizeDeps: {noDiscovery: true, include: []}, appType: 'custom'});
+  try {
+    const { EchoMindAgentChat } = await server.ssrLoadModule('/src/components/EchoMindAgentChat.tsx');
+    const html = renderToStaticMarkup(createElement(EchoMindAgentChat, {
+      client: {}, managerId: 'manager', preparationHistory: [], options: {}, active: true,
+      initialSnapshot: snapshot([message('saved-agent-reply', 1, 'assistant', 'a')]),
+    }));
+    assert.match(html, /saved-agent-reply/);
+    assert.doesNotMatch(html, /可以继续提问或补充需求/);
+  } finally { await server.close(); }
+});
 
 test('late notices follow chat arrival order and keep execution details with the original turn', () => {
   const chat = snapshot([
@@ -283,4 +300,19 @@ test('adjacent revisions of one report share a notice and keep both targets', ()
   const chat = snapshot([notice('v255', 1), notice('v256', 2), notice('v257', 3), notice('v255', 4, 'other')]);
   assert.deepEqual(group(chat, manager).entries.map(e => e.kind === 'notice' && e.reports?.map(r => r.id)),
     [['v256', 'v255'], ['v257'], ['v255']]);
+});
+
+test('joins preparation and saved chat at their original times, keeping both streams’ message IDs distinct', () => {
+  const manager = snapshot([
+    { ...message('question', 1, 'user', 'prepare'), started_at: '2026-11-24T12:00:02Z' },
+  ]);
+  const chat = snapshot([
+    { ...message('question', 1, 'user', 'old'), started_at: '2026-11-24T12:00:01Z' },
+    { ...message('notice', 2, 'assistant', 'old'), started_at: '2026-11-24T12:00:03Z',
+      execution_notice: { public_copy: true } },
+    operation('tool', 3, 'old'),
+  ]);
+  const events = mergeChatHistory(publicChatEvents(snapshotToChatEvents(manager)),
+    publicChatEvents(snapshotToChatEvents(chat)));
+  assert.deepEqual(events.map(e => 'id' in e ? e.id : null), ['chat:question', 'question', 'chat:notice']);
 });

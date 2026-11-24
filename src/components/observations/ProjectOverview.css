@@ -48,40 +48,31 @@
 .rsi-module-body { font-size: 13px; line-height: 1.7; padding: 14px 8px; background: #fafbfe; }
 .rsi-module-body > .observation-card { padding: 0; border: 0; border-radius: 0; background: transparent; }
 .rsi-module-body .observation-card + .observation-card { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rsi-line); }
+.rsi-module-body .observation-section-title { margin: 0 0 8px; font-weight: 600; }
 .rsi-module-body .observation-metrics { display: block; }
 .rsi-module-body .observation-empty, .rsi-detail-help { padding: 8px 0; color: var(--rsi-muted); text-align: left; }
 .observation-report-retry { padding: 4px 8px; border-radius: 5px; color: var(--rsi-accent); background: #f4f0fc; }
-.rsi-no-project { display: grid; gap: 8px; padding: 24px 16px; color: var(--rsi-muted); font-size: 13px; }
 .project-confirmation-slot { min-width: 0; min-height: 0; border-top: 1px solid #e2e8f0; background: #fff; }
 .project-confirmation-slot > summary { padding: 9px 16px; color: #475569; cursor: pointer; font-size: 12px; }
 .project-confirmation-slot > summary > span { margin-left: 8px; color: #7050a6; }
 .project-confirmation-slot[open] { max-height: 34vh; overflow-y: auto; }
 .project-confirmation-slot .project-confirmations { border: 0; }
 .project-confirmation-slot .project-confirmations > header { display: none; }
-@media (min-width: 1024px) {
-  .rsi-content-with-sidebar > main { grid-template-columns: 220px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
-  .rsi-content-with-sidebar > main > nav { grid-area: 1 / 1 / span 2; min-width: 0; }
-  .rsi-content-with-sidebar > main > section { grid-area: 1 / 2; min-width: 0; }
-  .rsi-content-with-sidebar > main > .project-confirmation-slot { grid-area: 2 / 2; }
-}
-@media (min-width: 1600px) { .rsi-content-with-sidebar > main { grid-template-columns: 240px minmax(0, 1fr); } }
 @media (min-width: 761px) and (max-width: 1100px) {
   .rsi-sidebar { width: 380px; }
   .rsi-overview-columns, .rsi-overview-item > button { grid-template-columns: minmax(126px, 1fr) 68px minmax(84px, 1fr); gap: 6px; padding-left: 6px; padding-right: 6px; }
-  .rsi-content-with-sidebar > main > nav { max-height: 140px; overflow-y: auto; }
 }
 @media (max-width: 760px) {
-  .rsi-content-with-sidebar { position: relative; }
-  .rsi-content-with-sidebar:has(> .rsi-sidebar:not(.is-collapsed)) > main { display: none; }
+  .rsi-content-with-sidebar { position: relative; flex-direction: column; }
+  .rsi-content-with-sidebar:has(> .rsi-sidebar:not(.is-collapsed, [hidden])) > main { display: none; }
   .rsi-content-with-sidebar > .rsi-sidebar:not(.is-collapsed) { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 5; border-left: 0; }
-  .rsi-sidebar.is-collapsed { position: absolute; top: 0; right: 0; z-index: 5; width: 126px; height: 48px; overflow: hidden; border: 1px solid var(--rsi-line); border-radius: 0 0 0 8px; }
-  .rsi-sidebar.is-collapsed > header { border: 0; padding: 4px 8px; }
+  .rsi-sidebar.is-collapsed { width: 100%; height: auto; overflow: visible; border-left: 0; border-top: 1px solid var(--rsi-line); }
+  .rsi-sidebar.is-collapsed > header { justify-content: flex-end; min-height: 44px; padding: 4px 8px; border-bottom: 0; }
   .rsi-sidebar .rsi-sidebar-toggle { width: auto; min-width: 76px; min-height: 36px; padding: 0 8px; font-size: 12px; }
   .rsi-desktop-label { display: none; }
   .rsi-mobile-label { display: inline; }
   .rsi-sidebar > header h2 { font-size: 17px; }
   .rsi-overview-columns, .rsi-overview-item > button { grid-template-columns: minmax(126px, 1fr) 68px minmax(64px, 1fr); gap: 6px; }
-  .rsi-content-with-sidebar > main > nav { max-height: 140px; overflow-y: auto; }
 }
 @media (max-width: 360px) {
   .rsi-overview-columns, .rsi-overview-item > button { grid-template-columns: minmax(126px, 1fr) 62px minmax(58px, 1fr); gap: 4px; padding-left: 4px; padding-right: 4px; }
