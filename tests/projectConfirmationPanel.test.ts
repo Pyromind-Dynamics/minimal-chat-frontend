@@ -13,6 +13,8 @@ test('confirmation container renders Agent content without interpreting checkpoi
     const snapshot = {conversation_id:'chat',pending_inputs:pending,pending_permissions:[{permission_id:'run',description:'执行权限',choices:['deny','allow_once']}],experiment_executions:[{run_id:'run',state:'waiting_user',checkpoint:{checkpoint_id:'cp',status:'pending',document:{preview:[{input_records:[{text:'INTERNAL_PAYLOAD_MUST_NOT_RENDER'}]}]}}}]};
     const props = {snapshot,onRespond:async()=>{},onPermission:async()=>{},readMedia:async()=>({url:''})};
     assert.equal(renderToStaticMarkup(createElement(ProjectConfirmationPanel,props)), '');
+    const emptyProject = {...snapshot,project:{project_id:'p'},pending_inputs:[],pending_permissions:[]};
+    assert.equal(renderToStaticMarkup(createElement(ProjectConfirmationPanel,{...props,snapshot:emptyProject})), '');
     const original = renderToStaticMarkup(createElement(UserInputCard,{request:{request_id:'old',questions:pending[1].questions},onRespond:props.onRespond}));
     assert.match(original,/补充说明/);
     assert.doesNotMatch(original,/待确认|确认内容|清洗|小样/);

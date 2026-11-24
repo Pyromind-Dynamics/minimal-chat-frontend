@@ -2,6 +2,8 @@ import { useState, type FormEvent } from 'react';
 import type { ExecutionStatus, GuidanceStatus } from '../types';
 
 interface MessageInputProps {
+  compact?: boolean;
+  placeholder?: string;
   onSend: (text: string) => void;
   onInterrupt: () => void;
   canInterrupt: boolean;
@@ -15,7 +17,7 @@ interface MessageInputProps {
 }
 
 export function MessageInput({
-  onSend,
+  onSend, compact = false, placeholder: inputHint,
   onInterrupt,
   canInterrupt,
   interrupting = false,
@@ -68,15 +70,16 @@ export function MessageInput({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="border-t bg-white p-4">
+    <form onSubmit={handleSubmit} className={compact ? "bg-white px-3 py-2" : "border-t bg-white p-4"}>
       <div className="flex items-end gap-2">
         <textarea
           value={text}
           onChange={(event) => setText(event.target.value)}
-          placeholder={placeholder}
+          aria-label={inputHint}
+          placeholder={inputHint ?? placeholder}
           disabled={disabled}
-          rows={2}
-          className="max-h-40 min-h-14 min-w-0 flex-1 resize-y rounded-lg border px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+          rows={compact ? 1 : 2}
+          className={`${compact ? 'min-h-10' : 'min-h-14'} max-h-40 min-w-0 flex-1 resize-y rounded-lg border px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100`}
         />
         <button
           type="submit"
@@ -85,7 +88,7 @@ export function MessageInput({
         >
           {queueing ? '加入队列' : guiding ? '引导' : '发送'}
         </button>
-        <button
+        {(!compact || canInterrupt) && <button
           type="button"
           onClick={onInterrupt}
           disabled={!canInterrupt || interrupting}
@@ -95,9 +98,9 @@ export function MessageInput({
         >
           <span aria-hidden="true" className="h-3 w-3 rounded-sm bg-current" />
           {interrupting ? '中断中…' : interruptLabel ?? '中断'}
-        </button>
+        </button>}
       </div>
-      {helperText && (
+      {helperText && (!compact || canInterrupt) && (
         <p role="status" aria-live="polite" className="mt-2 text-xs text-gray-500">
           {helperText}
         </p>

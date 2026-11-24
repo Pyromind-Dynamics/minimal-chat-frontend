@@ -6,6 +6,14 @@ export function observationMessage(value: string | null | undefined): string {
   return value?.trim().replace(/[。．.]+$/u, '') ?? '';
 }
 
+export function matchesObservationReportVersions(expected: string[], received?: string[]): boolean {
+  return expected.length > 0 && received?.length === expected.length && expected.every(id => received.includes(id));
+}
+
+export function observationHeadlineMetric(metrics?: NonNullable<StageAnalysis['result']>['metrics']) {
+  return metrics?.find(metric => metric.label === 'result_accuracy') ?? metrics?.[0];
+}
+
 // The labels and tone groups follow the approved RSI HTML demo.
 const statusGroups = {
   running: ['running', 'run', 'serving', 'feeding', 'active', 'busy'],
