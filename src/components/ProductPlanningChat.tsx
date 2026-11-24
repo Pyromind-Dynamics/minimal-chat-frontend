@@ -12,6 +12,7 @@ import {
   saveRequestOverrides,
   type RequestOverrideFields,
 } from '../requestOverrides';
+import { PreparationWelcome } from './PreparationWelcome';
 import { ChatPanel } from './ChatPanel';
 import { visibleExecutionEvents } from '../echomindConversationPresentation';
 import { EchoMindAgentChat } from './EchoMindAgentChat';
@@ -441,7 +442,6 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const [confirmationsOpen, setConfirmationsOpen] = useState(false);
   const confirmationsRef = useRef<HTMLDetailsElement>(null);
   const chatAreaRef = useRef<HTMLElement>(null);
-  const executionWorkspaceRef = useRef<HTMLDivElement>(null);
   const openConfirmation = (targetId?: string) => {
     const targetSelector = targetId ? `[data-confirmation-id="${CSS.escape(targetId)}"]` : null;
     if (isProject) {
@@ -464,12 +464,6 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     const plan = chatAreaRef.current?.querySelector<HTMLElement>('section[aria-label="工作流计划草稿"]');
     plan?.scrollIntoView({ block: 'start' });
     plan?.focus({ preventScroll: true });
-  };
-  const openExecution = () => {
-    const toggle = executionWorkspaceRef.current?.querySelector<HTMLButtonElement>('button[aria-expanded]');
-    if (toggle?.getAttribute('aria-expanded') === 'false') toggle.click();
-    toggle?.scrollIntoView({ block: 'nearest' });
-    toggle?.focus({ preventScroll: true });
   };
   useEffect(() => { setConfirmationsOpen(pendingCount > 0); }, [currentProjectId, pendingCount]);
 
@@ -561,8 +555,8 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         </section>
       </nav>
       <section className="flex min-h-[480px] min-w-0 flex-col lg:min-h-0">
-        {state.snapshot?.project && <div ref={executionWorkspaceRef} className="contents"><StageWorkspace snapshot={state.snapshot} events={executionEvents} options={options} /></div>}
-        <section ref={chatAreaRef} aria-label="聊天区" className="flex min-h-0 flex-1 flex-col bg-white">
+        {state.snapshot?.project && <StageWorkspace snapshot={state.snapshot} events={executionEvents} options={options} />}
+        <section ref={chatAreaRef} aria-label="会话工作区" className="flex min-h-0 flex-1 flex-col bg-white">
         {state.snapshot && <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-slate-50 px-4 py-2">
           <span className="flex items-center gap-2 text-sm text-slate-700" role="status">
             {(state.status === 'running' || platformTaskRunning) && <span aria-hidden="true" className="size-2 rounded-full bg-blue-500" />}
@@ -582,24 +576,22 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         {state.snapshot?.capabilities.read_only ? <>
           <ChatPanel events={executionEvents} requestOptions={options} status={state.status} conversationId={state.conversationId} />
           <p className="border-t bg-amber-50 px-4 py-2 text-xs text-amber-800">此会话已归档，仅可查看历史记录和产物。请新建会话继续。</p>
-        </> : <EchoMindAgentChat key={generation.current} client={chatClient} managerId={state.conversationId}
-            ensureManager={ensureManager} options={options} disabled={loading || !!openError}
-            executionEvents={executionEvents} executionSnapshot={state.snapshot}
-            executionIsCondensing={state.isCondensing} onOpenConfirmation={openConfirmation} onOpenPlan={openPlan}
-            onOpenExecution={openExecution}
-            panel={{
-              contentKey: state.snapshot?.preparation?.plan ? state.snapshot.preparation.revision : undefined,
-              pendingInputs: isProject ? undefined : state.snapshot?.pending_inputs,
-              pendingPermission: isProject ? undefined : state.snapshot?.pending_permissions[0],
-              isRespondingToConfirmation: respondingPermission,
-              onRespondToConfirmation: !isProject && state.snapshot?.pending_permissions[0]
-                ? accept => { void respondToPermission(accept); } : undefined,
-              onRespondToUserInput: isProject ? undefined : respondToInput,
-              readInputMedia,
-              children: state.snapshot?.preparation?.plan && !isProject ? <PreparationPlanMessage
-                snapshot={state.snapshot} busy={busy || loading} onCreate={createProject}
-                onReview={() => { void reviewPreparation(); }} /> : undefined,
-            }} />}
+        </> : <>
+          {!state.conversationId && <PreparationWelcome />}
+          {!isProject && state.snapshot && (state.snapshot.preparation?.plan || pendingCount > 0) && <ChatPanel
+            events={[]} status={state.status} requestOptions={options} conversationId={state.conversationId}
+            pendingInputs={state.snapshot.pending_inputs} pendingPermission={state.snapshot.pending_permissions[0]}
+            isRespondingToConfirmation={respondingPermission} onRespondToUserInput={respondToInput} readInputMedia={readInputMedia}
+            onRespondToConfirmation={state.snapshot.pending_permissions[0] ? accept => { void respondToPermission(accept); } : undefined}
+            contentKey={state.snapshot.preparation?.revision}>
+            {state.snapshot.preparation?.plan && <PreparationPlanMessage snapshot={state.snapshot} busy={busy || loading}
+              onCreate={createProject} onReview={() => { void reviewPreparation(); }} />}
+          </ChatPanel>}
+          {state.snapshot && <ExecutionActions snapshot={state.snapshot} onOpenPlan={openPlan}
+            onOpenConfirmation={() => openConfirmation()} />}
+          <EchoMindAgentChat key={generation.current} client={chatClient} managerId={state.conversationId}
+            ensureManager={ensureManager} options={options} disabled={loading || !!openError} />
+        </>}
         </section>
       </section>
       {state.snapshot?.project && <details ref={confirmationsRef} className="project-confirmation-slot" open={confirmationsOpen} onToggle={event => setConfirmationsOpen(event.currentTarget.open)}>
@@ -615,4 +607,22 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     <ProjectOverview snapshot={state.snapshot} client={client} projectId={currentProjectId} projectName={projects.find(project => project.project_id === currentProjectId)?.name} options={options} />
     </div>
   </div>;
+}
+
+function ExecutionActions({ snapshot, onOpenPlan, onOpenConfirmation }: {
+  snapshot: ConversationSnapshot;
+  onOpenPlan: () => void; onOpenConfirmation: () => void;
+}) {
+  const pending = (snapshot.pending_inputs?.length ?? 0) + snapshot.pending_permissions.length;
+  const planStatus = preparationPlanStatus(snapshot);
+  const planLabel = planStatus === 'ready' ? '工作流计划待确认' : planStatus === 'review_required' ? '工作流计划需要重新核对' : null;
+  if (!pending && !planLabel) return null;
+  return <aside aria-label="任务提醒" className="shrink-0 space-y-1 border-t bg-slate-50 px-4 py-2 text-xs">
+    <div className="flex flex-wrap items-center justify-between gap-2 text-amber-900">
+      <span role="status">{pending ? `有 ${pending} 项待处理，执行需要你的回复` : planLabel}</span>
+      <button type="button" onClick={pending ? onOpenConfirmation : onOpenPlan} className="font-medium underline">
+        {pending ? '查看待确认事项' : '查看工作流计划'}
+      </button>
+    </div>
+  </aside>;
 }
