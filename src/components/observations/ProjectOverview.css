@@ -12,6 +12,9 @@
 .rsi-expansion-actions { display: flex; justify-content: flex-start; margin: 0 0 8px; }
 .rsi-expansion-actions .rsi-expand-all { min-height: 32px; padding: 5px 8px; background: #f4f0fc; color: var(--rsi-accent); border-radius: 5px; font-size: 12px; white-space: nowrap; }
 .rsi-sidebar .rsi-toolbar { display: block; flex: 1 0 auto; padding: 16px; }
+.rsi-phase-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0; font-size: 13px; }
+.rsi-phase-row > span { color: var(--rsi-muted); }
+.rsi-phase-row > strong { padding: 5px 10px; border-radius: 6px; background: #ede9fe; color: #6d4ca6; text-align: right; overflow-wrap: anywhere; }
 .rsi-run { display: flex; align-items: center; gap: 12px; min-height: 58px; margin-bottom: 4px; }
 .rsi-run-symbol { display: grid; place-items: center; align-self: flex-start; width: 32px; height: 36px; margin-top: 6px; flex-shrink: 0; border-radius: 7px; color: var(--rsi-accent); background: #f3effa; font-size: 20px; }
 .rsi-project-name { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
@@ -28,7 +31,7 @@
 .rsi-overview-item > button:hover { background: #f8f6fc; }
 .rsi-overview-item > button[aria-expanded=true] { background: #f1ecfb; box-shadow: inset 3px 0 var(--rsi-accent); }
 .rsi-overview-module { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.rsi-overview-module > strong { font-size: 13px; font-weight: 600; line-height: 1.4; }
+.rsi-overview-module > strong { font-size: 13px; font-weight: 600; line-height: 1.4; white-space: nowrap; }
 .rsi-preview-icon { flex: none; width: 18px; height: 18px; color: #59687d; }
 .rsi-preview-chevron { flex: none; width: 10px; height: 10px; color: #8b94a4; transition: transform .12s; }
 .rsi-overview-item > button[aria-expanded=true] :is(.rsi-preview-icon, .rsi-preview-chevron) { color: var(--rsi-accent); }
@@ -43,11 +46,11 @@
 .rsi-status--error { color: #991b1b; background: #fee2e2; }
 .rsi-status--warning { color: #92400e; background: #fef3c7; }
 .rsi-module-body { font-size: 13px; line-height: 1.7; padding: 14px 8px; background: #fafbfe; }
-.rsi-module-body > .observation-card, .rsi-module-body .observation-resources > .observation-card { padding: 0; border: 0; border-radius: 0; background: transparent; }
+.rsi-module-body > .observation-card { padding: 0; border: 0; border-radius: 0; background: transparent; }
 .rsi-module-body .observation-card + .observation-card { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rsi-line); }
-.rsi-module-body .observation-resources { display: block; }
 .rsi-module-body .observation-metrics { display: block; }
 .rsi-module-body .observation-empty, .rsi-detail-help { padding: 8px 0; color: var(--rsi-muted); text-align: left; }
+.observation-report-retry { padding: 4px 8px; border-radius: 5px; color: var(--rsi-accent); background: #f4f0fc; }
 .rsi-no-project { display: grid; gap: 8px; padding: 24px 16px; color: var(--rsi-muted); font-size: 13px; }
 .project-confirmation-slot { min-width: 0; min-height: 0; border-top: 1px solid #e2e8f0; background: #fff; }
 .project-confirmation-slot > summary { padding: 9px 16px; color: #475569; cursor: pointer; font-size: 12px; }
@@ -64,7 +67,7 @@
 @media (min-width: 1600px) { .rsi-content-with-sidebar > main { grid-template-columns: 240px minmax(0, 1fr); } }
 @media (min-width: 761px) and (max-width: 1100px) {
   .rsi-sidebar { width: 380px; }
-  .rsi-overview-columns, .rsi-overview-item > button { grid-template-columns: minmax(110px, 1fr) 68px minmax(84px, 1fr); gap: 6px; padding-left: 6px; padding-right: 6px; }
+  .rsi-overview-columns, .rsi-overview-item > button { grid-template-columns: minmax(126px, 1fr) 68px minmax(84px, 1fr); gap: 6px; padding-left: 6px; padding-right: 6px; }
   .rsi-content-with-sidebar > main > nav { max-height: 140px; overflow-y: auto; }
 }
 @media (max-width: 760px) {
@@ -77,38 +80,14 @@
   .rsi-desktop-label { display: none; }
   .rsi-mobile-label { display: inline; }
   .rsi-sidebar > header h2 { font-size: 17px; }
-  .rsi-overview-columns, .rsi-overview-item > button { grid-template-columns: minmax(110px, 1fr) 68px minmax(84px, 1fr); gap: 6px; }
+  .rsi-overview-columns, .rsi-overview-item > button { grid-template-columns: minmax(126px, 1fr) 68px minmax(64px, 1fr); gap: 6px; }
   .rsi-content-with-sidebar > main > nav { max-height: 140px; overflow-y: auto; }
 }
 @media (max-width: 360px) {
-  .rsi-overview-columns, .rsi-overview-item > button { grid-template-columns: minmax(100px, 1fr) 62px minmax(76px, 1fr); gap: 4px; padding-left: 4px; padding-right: 4px; }
+  .rsi-overview-columns, .rsi-overview-item > button { grid-template-columns: minmax(126px, 1fr) 62px minmax(58px, 1fr); gap: 4px; padding-left: 4px; padding-right: 4px; }
 }
 @media (prefers-reduced-motion: reduce) { .rsi-overview-item > button, .rsi-preview-chevron { transition: none; } }
 .rsi-module-body :is(p, dl, dt, dd, h3, h4, label, button, input, select, option, table, th, td, small, strong, span, text) { font-size: inherit; line-height: inherit; }
-.observation-dataset-files > section + section { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rsi-line); }
-.observation-dataset-path { overflow-wrap: anywhere; }
-.rsi-phase-row { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 14px 0; gap: 12px; font-size: 13px; }
-.rsi-phase-row > span:first-child { color: var(--rsi-muted); }
-.rsi-phase-row + .rsi-phase-row { padding-top: 0; }
-.rsi-phase-row > strong { padding: 5px 10px; border-radius: 6px; background: #ede9fe; color: #6d4ca6; }
-.dataset-distributions { display: grid; gap: 10px; margin-top: 12px; }
-.dataset-distribution { min-width: 0; }
-.rsi-module-body { --data-table-border: #e8ebf0; --data-table-header: #f3f5f8; --data-table-surface: #fff; --data-table-alternate: #f9fafc; }
-.observation-summary-table { border: 1px solid var(--data-table-border); border-radius: 6px; background: var(--data-table-surface); overflow: hidden; }
-.dataset-frequency-table, .baseline-metrics-table { width: 100%; table-layout: fixed; border-collapse: collapse; text-align: left; }
-.dataset-frequency-table th, .dataset-frequency-table td, .baseline-metrics-table th, .baseline-metrics-table td { padding: 7px 10px; border-bottom: 1px solid var(--data-table-border); overflow-wrap: anywhere; vertical-align: top; }
-.rsi-module-body table { background: var(--data-table-surface); }
-.rsi-module-body table thead th { background: var(--data-table-header); color: var(--rsi-muted); }
-.dataset-frequency-table tbody th, .baseline-metrics-table tbody th { font-weight: 400; }
-.dataset-frequency-table :is(th, td):last-child, .baseline-metrics-table :is(th, td):last-child { width: 34%; text-align: right; font-variant-numeric: tabular-nums; }
-.dataset-frequency-table tbody tr:last-child > *, .baseline-metrics-table tbody tr:last-child > * { border-bottom: 0; }
-.rsi-module-body table tbody tr:nth-child(odd) { background: transparent; }
-.rsi-module-body table tbody tr:nth-child(even) { background: var(--data-table-alternate); }
-.dataset-distribution summary { padding: 7px 10px; border-top: 1px solid var(--rsi-line); color: var(--rsi-muted); cursor: pointer; }
-.dataset-frequency-more { max-height: 230px; overflow-y: auto; padding-top: 7px; }
-.baseline-metrics { margin-top: 12px; }
-.baseline-additional { margin-top: 12px; }
-.baseline-additional > summary { color: var(--rsi-accent); cursor: pointer; }
 .observation-chart { position: relative; }
 .observation-chart svg { display: block; }
 .rsi-module-body .observation-chart svg text { font-size: 11px; line-height: normal; }
@@ -120,3 +99,23 @@
 .observation-chart-tooltip dt { color: var(--rsi-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .observation-chart-tooltip dd { text-align: right; font-weight: 600; }
 .rsi-module-body .observation-chart-axis { margin-top: 2px; text-align: right; font-size: 12px; color: var(--rsi-muted); }
+.stage-report-metrics { margin: 8px 0; }
+.observation-metric-group { margin: 12px 0 0; font-weight: 650; }
+.stage-report-metrics > div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--rsi-line); }
+.stage-report-metrics dd { font-variant-numeric: tabular-nums; }
+.stage-metric-table-frame { margin: 8px 0; }
+.stage-report-artifacts code { overflow-wrap: anywhere; }
+.observation-dataset-files { display: grid; gap: 14px; }
+.observation-dataset-files .observation-facts { margin-top: 6px; }
+.dataset-distributions { display: grid; gap: 10px; margin-top: 12px; }
+.observation-table-frame { min-width: 0; border: 1px solid #e8ebf0; border-radius: 6px; background: #fff; overflow: hidden; }
+.observation-data-table { width: 100%; table-layout: fixed; border-collapse: collapse; text-align: left; }
+.observation-data-table :is(th, td) { padding: 7px 10px; overflow-wrap: anywhere; vertical-align: top; }
+.observation-data-table thead th { background: #f3f5f8; color: var(--rsi-muted); }
+.observation-data-table tbody th { font-weight: 400; }
+.observation-data-table :is(th, td):last-child { width: 34%; text-align: right; font-variant-numeric: tabular-nums; }
+.observation-data-table tbody tr:nth-child(even) { background: #f9fafc; }
+.dataset-frequency-table :is(th, td) { border-bottom: 1px solid #e8ebf0; }
+.dataset-frequency-table tbody tr:last-child > * { border-bottom: 0; }
+.dataset-distribution summary { padding: 7px 10px; border-top: 1px solid var(--rsi-line); color: var(--rsi-muted); cursor: pointer; }
+.dataset-frequency-more { max-height: 230px; overflow-y: auto; padding-top: 7px; }

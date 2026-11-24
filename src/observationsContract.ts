@@ -5,45 +5,78 @@ export interface MetricConfig {
 }
 export interface PanelConfig {
   project_node_id: string; training_type: string; metrics: MetricConfig[];
-  run_ids: string[]; platform_node_id: string | null;
+  platform_node_id: string | null;
+}
+export interface ObservationMetricGroup {
+  title: string; labels: Record<string, string>;
+}
+export type ObservationDetailBlock =
+  | { type: 'select'; label: string; min_options?: 1 | 2 }
+  | { type: 'metrics'; source: 'report' | 'analysis'; groups?: ObservationMetricGroup[]; empty_message?: string | null }
+  | { type: 'status'; source: 'report' | 'analysis'; subject: string; loading_message?: string | null; unavailable_message?: string | null }
+  | { type: 'dataset_files'; empty_message: string }
+  | { type: 'summary' | 'findings' | 'artifacts' | 'analysis_version' | 'training_curves' };
+export interface ObservationDetailSection {
+  id: string; label: string; selection: 'report_version' | 'analysis_version' | 'task_id';
+  blocks: ObservationDetailBlock[];
+}
+export interface ObservationDetailForm {
+  project_node_id: string; sections: ObservationDetailSection[];
 }
 export interface ObservationsConfig {
-  schema_version: 1; panels: PanelConfig[]; orchestrator_source_id: string | null;
+  schema_version: 1; panels: PanelConfig[];
+  detail_forms?: { schema_version: number; forms: ObservationDetailForm[] } | null;
 }
 export interface RunBinding {
   project_node_id: string; run_id: string; task_id: string;
   business_status: string; platform_node_id: string | null;
-  history_path?: string | null;
-  training_type?: string | null; metrics?: MetricConfig[] | null;
 }
-export interface ResourceStatus {
-  kind: 'tracer' | 'inference' | 'orchestrator'; observation_status: ObservationStatus;
-  observed_at: string | null; message: string | null;
-  state: string | null; runtime: string | null; busy: boolean | null;
+export interface StageAnalysis {
+  job_id: string;
+  stage_id: string;
+  plan_sequence: number;
+  run_ids: string[];
+  status: 'queued' | 'ready' | 'failed';
+  report_ids?: string[];
+  report_version_id: string | null;
+  result: {
+    summary: string;
+    findings: string[];
+    metrics: { label: string; value: number; unit: MetricConfig['unit'] }[];
+    artifacts: { artifact_id: string; name: string; kind: string; storage_ref: string }[];
+  } | null;
+}
+export interface ObservationNode {
+  id: string; title: string; type: string; business_status: string; current_run_ids: string[];
+  report_version_ids?: string[];
+  historical_report_version_ids?: string[];
+  delivery_status?: 'registering' | 'failed';
+  delivery_error?: string;
 }
 export interface ObservationOverview {
-  schema_version: 1; project_id: string; graph_id: string;
-  lifecycle: 'development' | 'frozen'; frozen_execution_version: string | null;
-  config_version: string; record_version: string; config: ObservationsConfig;
-  nodes: { id: string; title: string; type: string; business_status: string; execution_id?: string }[];
+  schema_version: 1; project_id: string; config_version: string; record_version: string;
+  config: ObservationsConfig; plan_sequence: number | null;
+  nodes: ObservationNode[];
   bindings: RunBinding[]; available_runs: RunBinding[];
-  resources: ResourceStatus[]; observed_at: string;
-  baseline?: ModelEvaluationObservation | null;
-  baseline_report_task_ids?: string[];
-  evaluation?: ModelEvaluationObservation | null;
-  latest_evaluation?: EvaluationRow | null;
-  latest_evaluation_metrics?: Record<string, number>;
-  delivery_complete?: boolean;
+  stage_analyses: StageAnalysis[];
+  observed_at: string;
 }
-export interface ModelEvaluationObservation {
-  project_node_id: string; task_id: string; run_id: string | null;
-  model_reference: string | null; report_path: string | null;
-  metrics: Record<string, unknown>;
-  observation_status: 'available' | 'unavailable'; message: string | null;
+export interface ObservationDatasetFile {
+  name: string; path: string; size_bytes: number | null; sample_count: number | null;
+  distributions: Record<string, Record<string, number>>;
+}
+export interface ObservationReportDetails {
+  project_id: string; project_node_id: string; report_version_ids: string[];
+  metrics: NonNullable<StageAnalysis['result']>['metrics'];
+  files: ObservationDatasetFile[];
+  summaries?: string[];
+}
+export interface ObservationReportQuery {
+  project_node_id: string; analysis_job_id?: string; report_version_id?: string;
 }
 export interface MetricPoint {
   key: string; value: number; unit: string; source_point_id: string; source_run_id: string;
-  log_step: number; training_step: number | null; time: number | null;
+  log_step: number; training_step: number | null; epoch?: number | null; time: number | null;
 }
 export interface SeriesPage {
   project_id: string; project_node_id: string; run_id: string; config_version: string;
@@ -51,24 +84,6 @@ export interface SeriesPage {
   observation_status: ObservationStatus; analysis_status: 'not_requested';
   observed_at: string; message: string | null;
 }
-export interface EvaluationRow {
-  metric: {
-    experiment_id: string; version: string; evaluation_run_id: string; step_run_id: string;
-    step: number; role: 'checkpoint' | 'baseline'; dataset_role: 'validation' | 'test' | 'train';
-    comparison_group: string; metric: string; value: number; selected: boolean;
-  };
-  project_node_id: string | null; report_path: string | null;
-  metrics_path: string | null; model_path: string | null; created_at: number;
-}
-export interface EvaluationPage {
-  project_id: string; items: EvaluationRow[]; next_cursor: string | null;
-  total: number; record_version: string; observed_at: string;
-}
 export interface SeriesQuery {
   project_node_id: string; run_id: string; keys?: string[]; cursor?: string; limit?: number;
-}
-export interface DatasetFiles {
-  project_id: string; project_node_id: string; observed_at: string;
-  statistics_truncated?: boolean;
-  files: { name: string; path: string; size_bytes: number | null; format: string; sample_count: number | null; distributions: Record<string, Record<string, number>>; statistics_status?: 'available' | 'pending' | 'not_provided' }[];
 }
