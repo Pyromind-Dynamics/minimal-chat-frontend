@@ -13,10 +13,12 @@ import {
   type RequestOverrideFields,
 } from '../requestOverrides';
 import { PreparationWelcome } from './PreparationWelcome';
-import { ChatPanel } from './ChatPanel';
+import { ChatEventList, ChatPanel } from './ChatPanel';
 import { EchoMindConversationTimeline } from './EchoMindConversationTimeline';
+import { ExecutionDetails } from './ExecutionDetails';
 import { MessageInput } from './MessageInput';
-import { ECHOMIND_MESSAGE_PLACEHOLDER, mainAgentMessages, mergeChatHistory, publicChatEvents, visibleExecutionEvents } from '../echomindConversationPresentation';
+import { ECHOMIND_MESSAGE_PLACEHOLDER, mainAgentMessages, mainAgentProjectEntries, mergeChatHistory, publicChatEvents, splitPreparationTools, visibleExecutionEvents } from '../echomindConversationPresentation';
+import { summarizeToolActivity } from '../toolActivityPresentation';
 import { snapshotToChatEvents } from '../productSnapshot';
 import { EchoMindAgentChat } from './EchoMindAgentChat';
 import { deriveDisplayConnectionState } from '../productStreamState';
@@ -59,6 +61,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   client: ProductClient; chatClient: EchoMindChatClient; title: string; storageNamespace: string;
 }) {
   const { state, dispatch } = useChatContext();
+  const isProject = Boolean(state.snapshot?.project);
   const [userId] = useState(() => new URLSearchParams(window.location.search).get('userId')?.trim()
     || localStorage.getItem(`${storageNamespace}.userId`) || localStorage.getItem('minimal-chat.activeUserId') || '42');
   const [credentials, setCredentials] = useState<RequestOverrideFields>(loadRequestOverrides);
@@ -317,11 +320,14 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
       dispatch({ type: 'APPLY_MESSAGE_EVENTS', events: [event] });
       if (event.type !== 'message.completed') return;
     }
+    if (isProject && event.type.startsWith('operation.') && typeof event.payload.operation_id === 'string') {
+      dispatch({ type: 'APPLY_OPERATION_EVENT', event });
+    }
     if (event.type === 'project.changed') {
       void refreshProjects().catch(failure => setError(String(failure)));
     }
     scheduleRefresh();
-  }, [dispatch, refreshProjects, scheduleRefresh]);
+  }, [dispatch, isProject, refreshProjects, scheduleRefresh]);
 
   const connection = useProductEventStream({
     conversationId: loading || openError ? null : state.conversationId,
@@ -429,6 +435,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         ? { type, command_id: commandId }
         : { type, command_id: commandId, content: [{ type: 'text', text: '用户要求继续已授权的任务。' }] }, options);
       if (receipt.status === 'failed') throw new Error(JSON.stringify(receipt.response));
+      if (type === 'cancel' && receipt.response.cancelled === false) throw new Error('中断未生效，请重试。');
       await refresh();
     } catch (failure) {
       setError(String(failure));
@@ -497,7 +504,6 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   };
 
 
-  const isProject = Boolean(state.snapshot?.project);
   const currentProjectId = state.snapshot?.project?.project_id ?? null;
   const pendingCount = state.snapshot && !state.snapshot.capabilities.read_only
     ? (state.snapshot.pending_inputs?.length ?? 0) + state.snapshot.pending_permissions.length : 0;
@@ -523,10 +529,23 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   ), [isProject, state.events]);
   const conversationExecutionEvents = useMemo(() => executionEvents.filter(event =>
     event.kind === 'ActionEvent' || event.kind === 'ObservationEvent'), [executionEvents]);
-  const projectMessages = useMemo(() => mainAgentMessages(state.events), [state.events]);
   const preparationMessages = useMemo(() => publicChatEvents(state.events.filter(event => !event.task_id
     && (event.kind !== 'MessageEvent' || !event.project_reply))),
     [state.events]);
+  const projectReplies = useMemo(() => mainAgentMessages(state.events), [state.events]);
+  const mainAgentHistory = useMemo(() => preparationMessages.concat(projectReplies), [preparationMessages, projectReplies]);
+  const projectTools = useMemo(() => splitPreparationTools(preparationMessages, conversationExecutionEvents),
+    [preparationMessages, conversationExecutionEvents]);
+  const projectEntries = useMemo(() => mainAgentProjectEntries(state.events,
+    state.snapshot?.capabilities.read_only ? [] : projectTools.project, projectReplies),
+    [state.events, state.snapshot?.capabilities.read_only, projectTools, projectReplies]);
+  const activeRunId = state.status === 'running' ? state.snapshot?.active_run_id : undefined;
+  const activeProjectTools = activeRunId && projectEntries.findLast(entry => entry.kind === 'tools' && entry.run === activeRunId);
+  const archivedExecution = useMemo(() => {
+    if (!isProject || !state.snapshot?.capabilities.read_only) return [];
+    const shownInMainAgent = new Set(preparationMessages.concat(projectTools.preparation));
+    return executionEvents.filter(event => !shownInMainAgent.has(event));
+  }, [isProject, state.snapshot?.capabilities.read_only, preparationMessages, projectTools, executionEvents]);
   const historyId = !isProject || state.snapshot?.capabilities.read_only ? state.snapshot?.conversation_id : undefined;
   const selectedChat = savedChat?.managerId === state.conversationId ? savedChat : null;
   const preloadedChat = selectedChat && selectedChat.options.userId === options.userId
@@ -543,12 +562,11 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     return () => controller.abort();
   }, [chatClient, historyId, options, preloadedChat]);
   const savedHistory = historyId ? selectedChat?.snapshot : null;
+  const savedChatEvents = useMemo(() => savedHistory ? snapshotToChatEvents(savedHistory) : [], [savedHistory]);
   const history = useMemo(() => {
-    const manager = isProject && state.snapshot?.capabilities.read_only
-      ? publicChatEvents(managerChatEvents(state.events).filter(event => event.kind !== 'MessageEvent' || !event.project_reply))
-      : preparationMessages;
-    return savedHistory ? mergeChatHistory(manager, publicChatEvents(snapshotToChatEvents(savedHistory))) : manager;
-  }, [isProject, state.snapshot?.capabilities.read_only, state.events, preparationMessages, savedHistory]);
+    const chat = publicChatEvents(savedChatEvents);
+    return isProject ? chat : mergeChatHistory(preparationMessages, chat);
+  }, [isProject, preparationMessages, savedChatEvents]);
   const progressConnection = deriveDisplayConnectionState({
     conversationId: state.conversationId, isCreating: false, connectionState: connection, hasConnected,
   });
@@ -599,8 +617,9 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
 
   const archivedHistory = (active = true) => <>
     <ChatPanel active={active} autoScroll="follow" logLabel="EchoMind 对话记录" events={history} requestOptions={options}
-      timeline={!isProject && (history.length > 0 || conversationExecutionEvents.length > 0)
-        ? <EchoMindConversationTimeline messages={history} executionEvents={conversationExecutionEvents}
+      timeline={(history.length > 0 || (!isProject && conversationExecutionEvents.length > 0))
+        ? <EchoMindConversationTimeline projectChat={isProject} events={isProject ? savedChatEvents : history}
+            executionEvents={isProject ? projectTools.project : conversationExecutionEvents}
             snapshot={state.snapshot} options={options} /> : undefined}
       status={state.status} conversationId={state.conversationId} />
     <p className="border-t bg-amber-50 px-4 py-2 text-xs text-amber-800">此会话已归档，仅可查看历史记录和产物。请新建会话继续。</p>
@@ -715,11 +734,25 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
             <StageWorkspace snapshot={state.snapshot} />
             <section aria-label="Main Agent 消息" className="mx-4 mb-4 flex max-h-80 shrink-0 flex-col overflow-hidden rounded-lg border bg-white sm:mx-5">
               <h2 className="shrink-0 border-b bg-slate-50 px-4 py-2">Main Agent</h2>
-              <ChatPanel autoScroll="follow" logLabel="Main Agent 消息记录" events={projectMessages}
-                timeline={projectMessages.length === 0 ? <p className="text-sm text-slate-500">暂无消息</p> : undefined}
+              <ChatPanel autoScroll="follow" logLabel="Main Agent 消息记录" events={mainAgentHistory}
+                timeline={preparationMessages.length === 0 && projectEntries.length === 0 ? <p className="text-sm text-slate-500">暂无消息</p> : <>
+                  {preparationMessages.length > 0 && <EchoMindConversationTimeline
+                    events={preparationMessages} executionEvents={projectTools.preparation} snapshot={state.snapshot}
+                    options={options} onOpenConfirmation={() => openConfirmation()} activeRunId={activeRunId} />}
+                  {projectEntries.map(entry => {
+                    if (entry.kind === 'reply') return <ChatEventList key={`message:${entry.message.id}`}
+                      events={[entry.message]} requestOptions={options} />;
+                    const activity = summarizeToolActivity(entry.events);
+                    const running = state.status === 'running' && (entry === activeProjectTools
+                      ? !!activity && activity.status !== 'waiting'
+                      : !activeRunId && activity?.status === 'running');
+                    return <ExecutionDetails key={`tools:${entry.id}`} label="Main Agent 工具活动"
+                      summary={activity?.text ?? '工具活动'} running={running} events={entry.events} options={options} />;
+                  })}
+                </>}
                 requestOptions={options} status={state.status} conversationId={state.conversationId} />
             </section>
-            {state.snapshot.capabilities.read_only && <ChatPanel events={executionEvents} requestOptions={options}
+            {archivedExecution.length > 0 && <ChatPanel events={archivedExecution} requestOptions={options}
               autoScroll="follow" logLabel="Main Agent 执行记录" status={state.status} conversationId={state.conversationId} />}
             {pendingCount > 0 && <details ref={confirmationsRef} className="project-confirmation-slot mt-auto shrink-0"
               open={confirmationsOpen} onToggle={event => setConfirmationsOpen(event.currentTarget.open)}>
@@ -739,9 +772,9 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
             composer={panel => <button type="button" aria-controls={panel.id} aria-expanded={panel.expanded}
               className="mx-3 my-2 rounded-lg border px-4 py-2 text-sm hover:bg-slate-50"
               onClick={event => event.currentTarget.focus()}>查看归档对话</button>}
-          /> : <EchoMindAgentChat client={chatClient} preparationHistory={preparationMessages}
+          /> : <EchoMindAgentChat client={chatClient}
             managerId={state.snapshot.conversation_id} options={options} onActivity={recordChatActivity}
-            executionEvents={conversationExecutionEvents} executionSnapshot={state.snapshot}
+            executionEvents={projectTools.project} executionSnapshot={state.snapshot}
             onOpenConfirmation={() => openConfirmation()}
             initialSnapshot={preloadedChat?.projectId === currentProjectId ? preloadedChat.snapshot : undefined} />}
         </> : <section ref={chatAreaRef} aria-label="会话工作区" className="flex min-h-0 flex-1 flex-col bg-white">
@@ -752,8 +785,8 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
             autoScroll="follow" logLabel="EchoMind 对话记录" emptyText="向 EchoMind 描述任务或补充需求。"
             events={history} pendingOutboundMessages={state.pendingOutboundMessages} status={state.status} requestOptions={options} conversationId={state.conversationId}
             timeline={(history.length > 0 || conversationExecutionEvents.length > 0) && <EchoMindConversationTimeline
-              messages={history} executionEvents={conversationExecutionEvents} snapshot={state.snapshot}
-              options={options} onOpenConfirmation={() => openConfirmation()} />}
+              events={history} executionEvents={conversationExecutionEvents} snapshot={state.snapshot}
+              options={options} onOpenConfirmation={() => openConfirmation()} activeRunId={activeRunId} />}
             pendingInputs={state.snapshot.pending_inputs} pendingPermission={state.snapshot.pending_permissions[0]}
             isRespondingToConfirmation={respondingPermission} onRespondToUserInput={respondToInput} readInputMedia={readInputMedia}
             onRespondToConfirmation={state.snapshot.pending_permissions[0] ? accept => { void respondToPermission(accept); } : undefined}

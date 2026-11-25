@@ -6,14 +6,13 @@ import type { EchoMindChatClient } from '../productClient';
 import type { ChatEvent, ConversationSnapshot, ProductEvent } from '../types';
 import { ChatPanel } from './ChatPanel';
 import { EchoMindConversationTimeline } from './EchoMindConversationTimeline';
-import { ECHOMIND_MESSAGE_PLACEHOLDER, mergeChatHistory, publicChatEvents } from '../echomindConversationPresentation';
+import { ECHOMIND_MESSAGE_PLACEHOLDER, publicChatEvents } from '../echomindConversationPresentation';
 import { MessageInput } from './MessageInput';
 import { ProjectChatDrawer } from './ProjectChatDrawer';
 
 interface AgentChatProps {
   client: EchoMindChatClient;
   managerId: string;
-  preparationHistory: ChatEvent[];
   executionEvents: ChatEvent[];
   executionSnapshot: ConversationSnapshot;
   options: RequestOptions;
@@ -27,7 +26,7 @@ export function EchoMindAgentChat(props: AgentChatProps) {
 }
 
 function AgentChat({
-  client, managerId, preparationHistory, executionEvents, executionSnapshot,
+  client, managerId, executionEvents, executionSnapshot,
   options, onOpenConfirmation, initialSnapshot, onActivity,
 }: AgentChatProps) {
   const { state, dispatch } = useChatContext();
@@ -98,6 +97,9 @@ function AgentChat({
       if (event.type === 'message.completed') onActivity?.(managerId, event.occurred_at);
       return;
     }
+    if (event.type.startsWith('operation.') && typeof event.payload.operation_id === 'string') {
+      dispatch({ type: 'APPLY_OPERATION_EVENT', event });
+    }
     if (event.type === 'status.changed' || event.type === 'notice.raised'
       || (event.type === 'operation.completed' && event.payload.name === 'queue_echomind_requirement')) {
       void refresh().catch(failure => setError(String(failure)));
@@ -149,7 +151,8 @@ function AgentChat({
     if (!stream || busy) return;
     setBusy(true);
     try {
-      await client.command(stream.managerId, { type: 'cancel', command_id: crypto.randomUUID() }, options);
+      const receipt = await client.command(stream.managerId, { type: 'cancel', command_id: crypto.randomUUID() }, options);
+      if (receipt.status === 'failed' || receipt.response.cancelled === false) throw new Error('中断未生效，请重试。');
       await refresh();
     } catch (failure) {
       setError(String(failure));
@@ -158,15 +161,16 @@ function AgentChat({
     }
   };
 
-  const messages = useMemo(() => mergeChatHistory(preparationHistory, publicChatEvents(state.events)),
-    [preparationHistory, state.events]);
+  const messages = useMemo(() => publicChatEvents(state.events), [state.events]);
   return <ProjectChatDrawer
     history={expanded => <>
       <ChatPanel active={expanded} autoScroll="follow" logLabel="EchoMind 对话记录" emptyText="可以继续提问或补充需求。"
         events={messages} requestOptions={options} status={state.status}
-        timeline={(messages.length > 0 || executionEvents.length > 0) && <EchoMindConversationTimeline
-          messages={messages} executionEvents={executionEvents} snapshot={executionSnapshot}
-          options={options} onOpenConfirmation={onOpenConfirmation} />}
+        timeline={messages.length > 0 && <EchoMindConversationTimeline projectChat
+          events={state.events} executionEvents={executionEvents} snapshot={executionSnapshot}
+          options={options} onOpenConfirmation={onOpenConfirmation}
+          chatRunning={state.status === 'running'}
+          activeRunId={state.status === 'running' ? state.snapshot?.active_run_id : undefined} />}
         conversationId={state.conversationId} isCondensing={state.isCondensing}
         pendingOutboundMessages={state.pendingOutboundMessages} />
       {error && <p role="alert" className="px-4 py-2 text-sm text-red-700">{error}</p>}

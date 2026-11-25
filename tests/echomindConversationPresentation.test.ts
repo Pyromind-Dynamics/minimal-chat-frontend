@@ -3,9 +3,9 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
-import { groupEchoMindTurns, mergeChatHistory, publicChatEvents, visibleExecutionEvents } from '../src/echomindConversationPresentation.ts';
+import { groupEchoMindTurns, mainAgentMessages, mainAgentProjectEntries, mergeChatHistory, publicChatEvents, splitPreparationTools, visibleExecutionEvents } from '../src/echomindConversationPresentation.ts';
 import { snapshotToChatEvents } from '../src/productSnapshot.ts';
-import { projectMessageEvents } from '../src/productMessages.ts';
+import { projectTimelineEvents } from '../src/productMessages.ts';
 import { summarizeToolActivity } from '../src/toolActivityPresentation.ts';
 import type { ConversationSnapshot, TimelineItem, TimelineMessage, TimelineOperation } from '../src/types.ts';
 
@@ -47,33 +47,59 @@ test('opening a saved EchoMind chat renders its history before the stream starts
   try {
     const { EchoMindAgentChat } = await server.ssrLoadModule('/src/components/EchoMindAgentChat.tsx');
     const relatedTask = 'requirement:chat:test';
-    const preparation = snapshot([
-      { ...message('preparation-request', 1, 'user', 'prepare'), turn_id: 'prepare' },
-      { ...operation('report-query', 2, 'prepare', {name: 'training_analysis', arguments: {operation: 'report'}}), turn_id: 'prepare' },
-      { ...message('preparation-reply', 3, 'assistant', 'prepare'), turn_id: 'prepare' },
+    const execution = snapshot([
+      { ...operation('report-query', 2, 'follow-up', {name: 'training_analysis', arguments: {operation: 'report'}}), turn_id: 'follow-up' },
       operation('background-command', 4, 'automatic', {status: 'completed'}),
     ], {
-      task_origins: { [relatedTask]: 'prepare' },
+      task_origins: { [relatedTask]: 'follow-up' },
       task_runs: { related: { task_id: relatedTask, status: 'error', seq: 5 } },
       pending_inputs: [{ request_id: 'confirm', run_id: 'related', questions: [] }],
     });
-    const events = snapshotToChatEvents(preparation);
     const html = renderToStaticMarkup(createElement(EchoMindAgentChat, {
-      client: {}, managerId: 'manager', preparationHistory: publicChatEvents(events), options: {},
-      executionEvents: visibleExecutionEvents(events).filter(event => event.kind !== 'MessageEvent'),
-      executionSnapshot: preparation, onOpenConfirmation: () => {},
-      initialSnapshot: snapshot([message('saved-agent-reply', 1, 'assistant', 'a')]),
+      client: {}, managerId: 'manager', options: {},
+      executionEvents: visibleExecutionEvents(snapshotToChatEvents(execution)),
+      executionSnapshot: execution, onOpenConfirmation: () => {},
+      initialSnapshot: snapshot([
+        { ...message('saved-agent-request', 1, 'user', 'follow-up'), turn_id: 'follow-up' },
+        { ...operation('chat-status', 2, 'follow-up', {name: 'get_echomind_status', status: 'completed'}), turn_id: 'follow-up' },
+        { ...message('saved-agent-reply', 3, 'assistant', 'follow-up'), turn_id: 'follow-up' },
+      ]),
     }));
     assert.match(html, /saved-agent-reply/);
     assert.match(html, /aria-label="本轮执行"/);
     const groups = html.match(/<details\b[^>]*>.*?<\/details>/g) ?? [];
-    assert.equal(groups.length, 2);
+    assert.equal(groups.length, 1);
     assert.match(groups[0], /<summary[^>]*>.*正在查询训练报告….*<\/summary>/);
-    assert.match(groups[1], /<summary[^>]*>.*会话执行记录 · 运行命令 1 次.*<\/summary>/);
+    assert.doesNotMatch(html, /会话执行记录/);
     for (const group of groups) assert.doesNotMatch(group, /<details[^>]*\bopen\b|<button/);
-    assert.match(html, /preparation-request.*正在查询训练报告….*需求处理 · 执行失败.*查看待确认事项.*preparation-reply/);
+    assert.match(html, /saved-agent-request.*正在查询训练报告….*需求处理 · 执行失败.*查看待确认事项.*saved-agent-reply/);
     assert.doesNotMatch(html, /可以继续提问或补充需求/);
   } finally { await server.close(); }
+});
+
+test('project Chat keeps local tools and linked Main Agent tools under their originating question', () => {
+  const taskId = 'requirement:chat:first';
+  const chat = snapshot([
+    { ...message('first', 1, 'user', 'first'), turn_id: 'first' },
+    { ...message('second', 2, 'user', 'second'), turn_id: 'second' },
+    { ...operation('shared-id', 3, 'first', { name: 'read_echomind_report' }), turn_id: 'first' },
+    { ...receipt(taskId, 4), turn_id: 'first' },
+    operation('second-status', 5, 'second', { name: 'get_echomind_status', status: 'completed' }),
+  ]);
+  const manager = snapshot([
+    { ...operation('shared-id', 1, 'execution', { name: 'terminal', status: 'completed' }), task_id: taskId },
+    operation('separate-project-work', 2, 'automatic', { name: 'terminal', status: 'completed' }),
+  ], { active_run_id: 'execution' });
+  const { turns, background, activeExecutionTurnId } = groupEchoMindTurns(snapshotToChatEvents(chat), snapshotToChatEvents(manager), manager, true);
+  const actions = (events: typeof background) => events.flatMap(event => event.kind === 'ActionEvent' ? [event.id] : []);
+  assert.deepEqual(turns.map(turn => actions(turn.execution)), [
+    ['chat:shared-id', `chat:${taskId}`, 'shared-id'], ['chat:second-status'],
+  ]);
+  assert.equal(turns[0].execution.length, 6);
+  assert.deepEqual(background, []);
+  assert.equal(activeExecutionTurnId, 'first');
+  assert.equal(groupEchoMindTurns(snapshotToChatEvents(chat), snapshotToChatEvents(manager),
+    { ...manager, status: 'idle' }, true).activeExecutionTurnId, undefined);
 });
 
 test('tool activity changes from a running action to a compact outcome without exposing arguments', () => {
@@ -85,11 +111,14 @@ test('tool activity changes from a running action to a compact outcome without e
   const cancelled = operation('cancelled-question', 7, 'run', { name: 'ask_user', status: 'failed',
     details: { user_input: { status: 'cancelled', request_id: 'previous-question' } } });
   const activity = (items: TimelineOperation[]) => summarizeToolActivity(snapshotToChatEvents(snapshot(items)));
-  assert.deepEqual(activity([...completed, report]), { text: '正在查询训练报告…', running: true });
+  assert.deepEqual(activity([...completed, report]), { text: '正在查询训练报告…', status: 'running' });
   assert.deepEqual(activity([...completed, { ...report, status: 'completed' }, failure, cancelled]),
-    { text: '读取文件 2 次 · 写入文件 1 次 · 其他 2 次 · 失败 1 次 · 中断 1 次', running: false });
-  assert.deepEqual(activity([{ ...report, status: 'completed' }]), { text: '查询训练报告 1 次', running: false });
-  assert.deepEqual(activity([failure]), { text: '工具调用失败 1 次', running: false });
+    { text: '读取文件 2 次 · 写入文件 1 次 · 其他 2 次 · 失败 1 次 · 中断 1 次', status: 'finished' });
+  assert.deepEqual(activity([{ ...report, status: 'completed' }]), { text: '查询训练报告 1 次', status: 'finished' });
+  assert.deepEqual(activity([failure]), { text: '工具调用失败 1 次', status: 'finished' });
+  const waiting = operation('question', 8, 'run', { name: 'ask_user' });
+  assert.deepEqual(activity([waiting]), { text: '等待用户回复…', status: 'waiting' });
+  assert.equal(activity([waiting, report])?.status, 'running');
   assert.equal(activity([]), null);
 });
 
@@ -109,13 +138,48 @@ test('preparation tool calls appear under their direct turn while unbound activi
   assert.deepEqual(toolIds(background), ['unbound']);
 });
 
+test('only tools directly invoked in the preparation conversation move with its messages', () => {
+  const manager = snapshot([
+    { ...message('request', 1, 'user', 'prepare'), command_id: 'prepare' },
+    { ...operation('preparation-tool', 2, 'prepare'), turn_id: 'prepare' },
+    { ...operation('project-stage-tool', 3, 'automatic'), turn_id: 'prepare', task_id: 'project-start' },
+    operation('unbound-tool', 4, 'automatic'),
+  ]);
+  const events = snapshotToChatEvents(manager);
+  const tools = events.filter(event => event.kind === 'ActionEvent' || event.kind === 'ObservationEvent');
+  const { preparation, project } = splitPreparationTools(publicChatEvents(events), tools);
+  const actionIds = (items: typeof preparation) => items.flatMap(event => event.kind === 'ActionEvent' ? [event.id] : []);
+  assert.deepEqual(actionIds(preparation), ['preparation-tool']);
+  assert.deepEqual(actionIds(project), ['project-stage-tool', 'unbound-tool']);
+  assert.equal(preparation.length, 2);
+  assert.equal(project.length, 4);
+});
+
+test('Main Agent project activity groups related calls and keeps live work separate from earlier turns', () => {
+  const manager = snapshot([
+    operation('read', 1, 'first', { name: 'read', status: 'completed' }),
+    operation('bash', 2, 'first', { name: 'bash', status: 'completed' }),
+    { ...message('first-reply', 3, 'assistant', 'first'), project_reply: '完成' },
+    operation('another-read', 4, 'second', { name: 'read', status: 'completed' }),
+    operation('live-command', 5, 'third', { name: 'bash' }),
+  ]);
+  const events = snapshotToChatEvents(manager);
+  const entries = mainAgentProjectEntries(events, visibleExecutionEvents(events), mainAgentMessages(events));
+  assert.deepEqual(entries.map(entry => entry.kind === 'reply' ? entry.message.id : summarizeToolActivity(entry.events)), [
+    { text: '读取文件 1 次 · 运行命令 1 次', status: 'finished' },
+    'first-reply',
+    { text: '读取文件 1 次', status: 'finished' },
+    { text: '正在运行命令…', status: 'running' },
+  ]);
+});
+
 test('late notices follow chat arrival order and keep execution details with the original turn', () => {
   const chat = snapshot([
     { ...message('task', 1, 'user', 'a'), turn_id: 'a' },
     { ...message('other', 2, 'user', 'b'), turn_id: 'b' },
     { ...message('reply', 3, 'assistant', 'b'), turn_id: 'b' },
   ], { through_seq: 3 });
-  const projected = projectMessageEvents(chat, [{
+  const projected = projectTimelineEvents(chat, [{
     schema_version: 1, conversation_id: chat.conversation_id, event_id: 'notice', seq: 4,
     occurred_at: '2026-11-23T12:00:00Z', type: 'message.completed',
     payload: {

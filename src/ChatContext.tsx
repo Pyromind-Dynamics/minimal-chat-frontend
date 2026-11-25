@@ -9,7 +9,7 @@ import {
 } from './types';
 import type { StreamConnectionState } from './types';
 import { snapshotToChatEvents } from './productSnapshot';
-import { pendingMessageEvents, projectMessageEvents, receivedUserCommandIds } from './productMessages';
+import { pendingTimelineEvents, projectTimelineEvents, receivedUserCommandIds } from './productMessages';
 
 // State shape
 interface ChatState {
@@ -21,7 +21,7 @@ interface ChatState {
   wsState: StreamConnectionState;
   error: string | null;
   pendingOutboundMessages: PendingOutboundMessage[];
-  messageEvents: ProductEvent[];
+  timelineEvents: ProductEvent[];
 }
 
 // Actions
@@ -39,7 +39,8 @@ type ChatAction =
   | { type: 'ADD_PENDING_OUTBOUND'; message: PendingOutboundMessage }
   | { type: 'SET_PENDING_OUTBOUND_STATUS'; commandId: string; status: PendingOutboundMessage['status'] }
   | { type: 'MARK_PENDING_OUTBOUND_FAILED'; commandId: string }
-  | { type: 'APPLY_MESSAGE_EVENTS'; events: ProductEvent[] };
+  | { type: 'APPLY_MESSAGE_EVENTS'; events: ProductEvent[] }
+  | { type: 'APPLY_OPERATION_EVENT'; event: ProductEvent };
 
 const initialState: ChatState = {
   conversationId: null,
@@ -50,7 +51,7 @@ const initialState: ChatState = {
   wsState: 'closed',
   error: null,
   pendingOutboundMessages: [],
-  messageEvents: [],
+  timelineEvents: [],
 };
 
 function getEventId(event: ChatEvent): string | undefined {
@@ -86,7 +87,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         isCondensing: false,
         error: null,
         pendingOutboundMessages: [],
-        messageEvents: [],
+        timelineEvents: [],
       };
     case 'RESET_CONVERSATION':
       return {
@@ -98,13 +99,13 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         isCondensing: false,
         error: null,
         pendingOutboundMessages: [],
-        messageEvents: [],
+        timelineEvents: [],
       };
     case 'SET_PRODUCT_SNAPSHOT': {
       if (state.snapshot?.conversation_id === action.snapshot.conversation_id
         && state.snapshot.through_seq > action.snapshot.through_seq) return state;
-      const messageEvents = pendingMessageEvents(action.snapshot, state.messageEvents);
-      const projected = projectMessageEvents(action.snapshot, messageEvents);
+      const timelineEvents = pendingTimelineEvents(action.snapshot, state.timelineEvents);
+      const projected = projectTimelineEvents(action.snapshot, timelineEvents);
       const completedRunIds = receivedUserCommandIds(projected);
       return {
         ...state,
@@ -117,7 +118,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         pendingOutboundMessages: state.pendingOutboundMessages.filter(
           (message) => !completedRunIds.has(message.commandId),
         ),
-        messageEvents,
+        timelineEvents,
       };
     }
     case 'SET_EVENTS':
@@ -164,13 +165,15 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             : message,
         ),
       };
-    case 'APPLY_MESSAGE_EVENTS': {
+    case 'APPLY_MESSAGE_EVENTS':
+    case 'APPLY_OPERATION_EVENT': {
       if (!state.snapshot) return state;
-      const messageEvents = pendingMessageEvents(state.snapshot, [...state.messageEvents, ...action.events]);
-      const projected = projectMessageEvents(state.snapshot, messageEvents);
+      const updates = action.type === 'APPLY_MESSAGE_EVENTS' ? action.events : [action.event];
+      const timelineEvents = pendingTimelineEvents(state.snapshot, [...state.timelineEvents, ...updates]);
+      const projected = projectTimelineEvents(state.snapshot, timelineEvents);
       const receivedCommands = receivedUserCommandIds(projected);
       return {
-        ...state, messageEvents, events: snapshotToChatEvents(projected),
+        ...state, timelineEvents, events: snapshotToChatEvents(projected),
         pendingOutboundMessages: state.pendingOutboundMessages.filter((message) =>
           !receivedCommands.has(message.commandId)),
       };
