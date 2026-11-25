@@ -1,6 +1,6 @@
 export type ObservationStatus = 'available' | 'unavailable' | 'not_configured' | 'forbidden';
 export interface MetricConfig {
-  key: string; title: string; unit: 'number' | 'ratio' | 'seconds' | 'percent';
+  key: string; title: string; unit: string;
   axis: 'log_step' | 'training_step' | 'time'; axis_key: string | null;
 }
 export interface PanelConfig {
@@ -52,6 +52,7 @@ export interface ObservationNode {
   historical_report_version_ids?: string[];
   delivery_status?: 'registering' | 'failed';
   delivery_error?: string;
+  delivery_error_field?: string;
 }
 export interface ObservationOverview {
   schema_version: 1; project_id: string; config_version: string; record_version: string;
@@ -65,11 +66,17 @@ export interface ObservationDatasetFile {
   name: string; path: string; size_bytes: number | null; sample_count: number | null;
   distributions: Record<string, Record<string, number>>;
 }
+export interface ObservationReportIssue {
+  field: string;
+  code: 'invalid_metric' | 'invalid_count' | 'invalid_file' | 'invalid_check' | 'truncated' | 'unreadable_report' | 'invalid_report';
+}
 export interface ObservationReportDetails {
   project_id: string; project_node_id: string; report_version_ids: string[];
   metrics: NonNullable<StageAnalysis['result']>['metrics'];
   files: ObservationDatasetFile[];
   summaries?: string[];
+  checks?: Record<string, boolean>;
+  issues?: ObservationReportIssue[];
 }
 export interface ObservationReportQuery {
   project_node_id: string; analysis_job_id?: string; report_version_id?: string;
@@ -83,6 +90,7 @@ export interface SeriesPage {
   points: MetricPoint[]; next_cursor: string | null; truncated: boolean; gap: boolean;
   observation_status: ObservationStatus; analysis_status: 'not_requested';
   observed_at: string; message: string | null;
+  ignored_keys?: string[];
 }
 export interface SeriesQuery {
   project_node_id: string; run_id: string; keys?: string[]; cursor?: string; limit?: number;

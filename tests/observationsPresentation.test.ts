@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ObservationsConfig } from '../src/observationsContract.ts';
 import { observationSections } from '../src/observationForms.ts';
-import { formatMetric, formatTrainingMetric, mergePoints, pointAxis, trainingCurvePath, observationStatusTone, observationBusinessStatus, trainingPanelBindings, observationMessage, observationStageMessage, observationReportMessage, observationNodeStatus } from '../src/observationsPresentation.ts';
+import { formatMetric, formatTrainingMetric, matchesObservationReportVersions, mergePoints, pointAxis, trainingCurvePath, observationStatusTone, observationBusinessStatus, trainingPanelBindings, observationMessage, observationStageMessage, observationReportMessage, observationNodeStatus } from '../src/observationsPresentation.ts';
 
 test('detail forms use the published block order and tolerate an older or unsupported layout', () => {
   const config: ObservationsConfig = { schema_version: 1, panels: [], detail_forms: { schema_version: 1, forms: [
@@ -26,12 +26,20 @@ test('units are explicit and missing numeric values stay empty', () => {
   assert.equal(formatMetric(0.85, 'ratio'), '85%');
   assert.equal(formatMetric(85, 'percent'), '85%');
   assert.equal(formatMetric(2.5, 'seconds'), '2.5 s');
+  assert.equal(formatMetric(390, 'count'), '390');
+  assert.equal(formatMetric(2.5, 'tokens/s'), '2.5 tokens/s');
   assert.equal(formatMetric(0), '0');
   assert.equal(formatMetric(Number.NaN), '—');
   assert.equal(formatMetric(null), '—');
   assert.equal(observationMessage('请求失败。 '), '请求失败');
   assert.equal(observationMessage('Value 0.85.'), 'Value 0.85');
   assert.equal(observationMessage('https://example.com/run.json'), 'https://example.com/run.json');
+});
+
+test('a readable subset of the registered reports remains visible', () => {
+  assert.equal(matchesObservationReportVersions(['v2', 'v3'], ['v3']), true);
+  assert.equal(matchesObservationReportVersions(['v2', 'v3'], ['v3', 'v4']), false);
+  assert.equal(matchesObservationReportVersions(['v2', 'v3'], []), false);
 });
 test('sparse axes remain independent, and source identities deduplicate', () => {
   const point: MetricPoint = { key: 'loss', value: 2, unit: 'number', source_point_id: 'run:1:loss', source_run_id: 'run', log_step: 1, training_step: null, time: 1700000000 };

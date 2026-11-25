@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react';
 import type { RequestOptions } from '../../api';
 import type {
-  ObservationDetailBlock, ObservationDetailSection, ObservationMetricGroup, ObservationNode, ObservationReportQuery,
+  ObservationDetailBlock, ObservationDetailSection, ObservationMetricGroup, ObservationNode, ObservationReportIssue, ObservationReportQuery,
   PanelConfig, RunBinding, StageAnalysis,
 } from '../../observationsContract';
 import { useObservationReport } from '../../hooks/useProjectObservations';
@@ -115,12 +115,22 @@ const deliveryErrorMessages: Record<string, string> = {
   missing_output: '缺少计划声明的产物，请核对产物路径和文件。',
   invalid_output: '产物路径或版本归属无效，请核对当前执行记录。',
   invalid_report: '报告格式无法读取，请核对报告内容。',
-  invalid_report_metrics: '主报告缺少有效的结构化指标，请核对 metrics 字段。',
+  invalid_report_metrics: '主报告缺少可用的结构化指标，请核对报告字段。',
   ambiguous_report: '有多个产物包含结构化指标，请在计划中指定主报告。',
   missing_execution_record: '未能读取本次执行的产物记录，请检查 Storage 和计划文件。',
   credentials_required: '需要有效的 Storage 授权，请检查连接设置。',
   storage_unavailable: '暂时无法访问 Storage，请检查连接设置后重试。',
   version_error: '版本保存失败，请重试登记。',
+};
+
+const reportIssueMessages: Record<ObservationReportIssue['code'], string> = {
+  invalid_metric: '指标格式无效',
+  invalid_count: '应为非负整数',
+  invalid_file: '文件路径无效',
+  invalid_check: '检查结果无效',
+  truncated: '部分指标超出展示上限',
+  unreadable_report: '暂时无法读取报告',
+  invalid_report: '报告格式无效或超出读取上限',
 };
 
 export function ObservationFormSection(props: SectionProps) {
@@ -151,6 +161,9 @@ export function ObservationFormSection(props: SectionProps) {
   const result = needsReport && !report ? undefined : analysis?.result;
   const registeredReport = needsRegisteredMetrics && matchesObservationReportVersions(reportIds, report?.report_version_ids)
     ? report : undefined;
+  const issues = (needsReport || registeredReport || (needsRegisteredMetrics && !report))
+    ? source.report?.issues ?? [] : [];
+  const checks = node.type === 'dataset' ? Object.entries(report?.checks ?? {}) : [];
 
   if (section.selection === 'task_id' && !selected?.run) return null;
 
@@ -171,6 +184,7 @@ export function ObservationFormSection(props: SectionProps) {
     node.delivery_status === 'registering' ? statusText('正在登记产物') :
     node.delivery_status === 'failed' ? <>
       {statusText(`产物登记失败。 ${deliveryErrorMessages[node.delivery_error ?? ''] ?? '请检查当前执行的产物。'}`)}
+      {node.delivery_error_field && <p className="observation-muted">失败字段 <code>{node.delivery_error_field}</code></p>}
       {retryControl('重试登记')}
     </> : null
   );
@@ -252,7 +266,7 @@ export function ObservationFormSection(props: SectionProps) {
   }
 
   const blocks = section.blocks.map(block => renderBlock(block));
-  if (!deliveryNotice && !blocks.some(Boolean)) return null;
+  if (!deliveryNotice && !blocks.some(Boolean) && !issues.length && !checks.length) return null;
   const trainingHeading = node.type === 'train'
     ? section.selection === 'task_id' ? '训练过程曲线' : '训练报告汇总'
     : null;
@@ -260,5 +274,17 @@ export function ObservationFormSection(props: SectionProps) {
     {trainingHeading && <h4 className="observation-section-title">{trainingHeading}</h4>}
     {deliveryNotice}
     {blocks.map((block, index) => <Fragment key={index}>{block}</Fragment>)}
+    {checks.length > 0 && <details className="stage-report-artifacts">
+      <summary>数据检查（{checks.length}）</summary>
+      <dl>{checks.map(([label, passed]) => <div key={label}>
+        <dt>{label}</dt><dd>{passed ? '通过' : '未通过'}</dd>
+      </div>)}</dl>
+    </details>}
+    {issues.length > 0 && <details className="stage-report-artifacts">
+      <summary>产物校验提示（{issues.length}）</summary>
+      <ul>{issues.map(issue => <li key={`${issue.field}:${issue.code}`}>
+        <code>{issue.field}</code> · {reportIssueMessages[issue.code]}
+      </li>)}</ul>
+    </details>}
   </section>;
 }

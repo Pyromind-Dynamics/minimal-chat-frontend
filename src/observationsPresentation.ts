@@ -7,7 +7,7 @@ export function observationMessage(value: string | null | undefined): string {
 }
 
 export function matchesObservationReportVersions(expected: string[], received?: string[]): boolean {
-  return expected.length > 0 && received?.length === expected.length && expected.every(id => received.includes(id));
+  return !!received?.length && received.every(id => expected.includes(id));
 }
 
 export function observationHeadlineMetric(metrics?: NonNullable<StageAnalysis['result']>['metrics']) {
@@ -105,9 +105,9 @@ export function trainingPanelBindings(overview: ObservationOverview | null, proj
 export function formatTrainingMetric(value: number | null | undefined, metric: MetricConfig): string {
   if (value == null || !Number.isFinite(value)) return '—';
   const key = metric.key.replace(/^(train|eval)[/_.]/, '');
-  if (key === 'loss') return value.toFixed(5);
+  if (key === 'loss' && metric.unit === 'number') return value.toFixed(5);
   const display = metric.unit === 'ratio' ? value * 100 : value;
-  const suffix = metric.unit === 'ratio' || metric.unit === 'percent' ? '%' : metric.unit === 'seconds' ? ' s' : '';
+  const suffix = metricUnitSuffix(metric.unit);
   if (key === 'learning_rate') {
     const rounded = Number(display.toPrecision(4));
     const decimal = String(rounded);
@@ -122,7 +122,14 @@ export function formatTrainingMetric(value: number | null | undefined, metric: M
 export function formatMetric(value: number | null | undefined, unit: string = 'number'): string {
   if (value == null || !Number.isFinite(value)) return '—';
   const display = unit === 'ratio' ? value * 100 : value;
-  return `${new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 4 }).format(display)}${unit === 'ratio' || unit === 'percent' ? '%' : unit === 'seconds' ? ' s' : ''}`;
+  return `${new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 4 }).format(display)}${metricUnitSuffix(unit)}`;
+}
+
+function metricUnitSuffix(unit: string): string {
+  if (unit === 'ratio' || unit === 'percent') return '%';
+  if (unit === 'seconds') return ' s';
+  if (!unit || unit === 'number' || unit === 'count') return '';
+  return ` ${unit}`;
 }
 export function pointAxis(point: MetricPoint, metric: MetricConfig): number | null {
   return metric.axis === 'log_step' ? point.log_step : metric.axis === 'training_step' ? point.training_step : point.time;

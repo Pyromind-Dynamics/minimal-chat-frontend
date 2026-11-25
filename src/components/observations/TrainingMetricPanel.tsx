@@ -87,5 +87,7 @@ export function TrainingMetricPanel({ client, projectId, panel, binding, configV
     {result?.page.observation_status === 'unavailable' && points.length > 0 && <p className="observation-muted">暂时无法读取新指标，当前显示上次取到的数据</p>}
     {result?.page.truncated && <p className="observation-muted">正在继续读取历史指标，图表保留最近 1,000 个数据点</p>}
     {result?.page.gap && <p className="observation-error">数据源报告部分训练指标缺失</p>}
+    {!!result?.page.ignored_keys?.length &&
+      <p className="observation-muted">未配置的指标：{result.page.ignored_keys.join('、')}</p>}
   </>;
 }
