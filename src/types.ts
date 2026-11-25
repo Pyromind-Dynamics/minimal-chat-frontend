@@ -36,6 +36,7 @@ export interface MessageEvent {
   source: 'user' | 'agent';
   run_id?: string | null;
   command_id?: string | null;
+  project_reply?: boolean;
   delivery_status?: PendingOutboundMessage['status'];
   execution_notice?: ExecutionNoticeLink;
   llm_message: {
@@ -262,6 +263,7 @@ export type ProductContent =
 export interface TimelineMessage {
   kind: 'message';
   command_id?: string | null;
+  project_reply?: string | null;
   execution_notice?: ExecutionNoticeLink;
   item_id: string;
   started_seq: number;

@@ -1,15 +1,41 @@
 import type { ProjectSummary } from './echomindContract';
 import type { ConversationSummary } from './types';
 
-export function newestCreatedFirst(
-  a: { created_at?: string | null },
-  b: { created_at?: string | null },
+type ActivityDates = { updated_at?: string | null; created_at?: string | null };
+
+function activityTime(value?: string | null) {
+  const time = Date.parse(value ?? '');
+  return Number.isFinite(time) ? time : -Infinity;
+}
+
+export function conversationActivityAt(item: ActivityDates) {
+  if (activityTime(item.updated_at) !== -Infinity) return item.updated_at;
+  return item.created_at;
+}
+
+export function latestActivityAt(first?: string | null, second?: string | null) {
+  return (activityTime(first) >= activityTime(second) ? first : second) ?? null;
+}
+
+export function newestActivityFirst(a: ActivityDates, b: ActivityDates) {
+  const first = activityTime(conversationActivityAt(a));
+  const second = activityTime(conversationActivityAt(b));
+  return first === second ? 0 : second - first;
+}
+
+export function projectsByConversationActivity(
+  projects: ProjectSummary[],
+  conversations: (ActivityDates & Pick<ConversationSummary, 'conversation_id'>)[],
 ) {
-  const aTime = Date.parse(a.created_at ?? '');
-  const bTime = Date.parse(b.created_at ?? '');
-  if (Number.isNaN(aTime)) return Number.isNaN(bTime) ? 0 : 1;
-  if (Number.isNaN(bTime)) return -1;
-  return bTime - aTime;
+  const byId = new Map(conversations.map(item => [item.conversation_id, item]));
+  return projects.map(project => {
+    const conversation = byId.get(project.conversation_id);
+    const activity = conversation && conversationActivityAt(conversation);
+    return {
+      project,
+      updated_at: activityTime(activity) === -Infinity ? conversationActivityAt(project) : activity,
+    };
+  }).sort(newestActivityFirst);
 }
 
 export interface EchoMindSelection {

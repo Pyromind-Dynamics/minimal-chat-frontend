@@ -185,8 +185,15 @@ export function ObservationFormSection(props: SectionProps) {
       case 'status':
         if (deliveryNotice && !selected) return null;
         if (block.source === 'analysis' && result) return null;
-        if (block.source === 'analysis' && analysis?.status === 'failed' && registeredReport) {
-          return statusText(`${block.subject}报告已登记，阶段分析暂不可用`);
+        if (block.source === 'analysis' && needsRegisteredMetrics && reportIds.length) {
+          if (source.loading) return statusText('正在读取已登记的报告');
+          if (source.unavailable) return <>
+            {statusText('暂时无法读取已登记的报告')}
+            <button type="button" className="observation-report-retry" onClick={source.retry}>重试</button>
+          </>;
+          if (!registeredReport) return statusText('已登记的报告未通过当前执行归属校验');
+          if (analysis?.status === 'failed') return statusText(`${block.subject}报告已登记，阶段分析暂不可用`);
+          if (analysis?.status !== 'queued') return null;
         }
         if (block.source === 'report') {
           if (source.loading) return statusText(block.loading_message || '正在读取报告');

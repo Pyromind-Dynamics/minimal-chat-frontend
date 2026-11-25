@@ -7,6 +7,7 @@ import type { ChatEvent, ConversationSnapshot, ProductEvent } from '../types';
 import { ChatPanel } from './ChatPanel';
 import { ECHOMIND_MESSAGE_PLACEHOLDER, mergeChatHistory, publicChatEvents } from '../echomindConversationPresentation';
 import { MessageInput } from './MessageInput';
+import { ProjectChatDrawer } from './ProjectChatDrawer';
 
 interface AgentChatProps {
   client: EchoMindChatClient;
@@ -14,7 +15,7 @@ interface AgentChatProps {
   preparationHistory: ChatEvent[];
   options: RequestOptions;
   initialSnapshot?: ConversationSnapshot | null;
-  active: boolean;
+  onActivity?: (managerId: string, updatedAt: string) => void;
 }
 
 export function EchoMindAgentChat(props: AgentChatProps) {
@@ -22,7 +23,7 @@ export function EchoMindAgentChat(props: AgentChatProps) {
 }
 
 function AgentChat({
-  client, managerId, preparationHistory, options, initialSnapshot, active,
+  client, managerId, preparationHistory, options, initialSnapshot, onActivity,
 }: AgentChatProps) {
   const { state, dispatch } = useChatContext();
   const [stream, setStream] = useState<{ managerId: string; afterSeq: number } | null>(() =>
@@ -46,7 +47,8 @@ function AgentChat({
       setStream({ managerId: id, afterSeq: snapshot.through_seq });
     }
     dispatch({ type: 'SET_PRODUCT_SNAPSHOT', snapshot });
-  }, [dispatch]);
+    if (snapshot.updated_at) onActivity?.(id, snapshot.updated_at);
+  }, [dispatch, onActivity]);
 
   useEffect(() => {
     if (!managerId || options === preloadedOptions.current) return;
@@ -88,13 +90,14 @@ function AgentChat({
     flushDeltas();
     if (event.type === 'message.started' || event.type === 'message.completed') {
       dispatch({ type: 'APPLY_MESSAGE_EVENTS', events: [event] });
+      if (event.type === 'message.completed') onActivity?.(managerId, event.occurred_at);
       return;
     }
     if (event.type === 'status.changed' || event.type === 'notice.raised'
       || (event.type === 'operation.completed' && event.payload.name === 'queue_echomind_requirement')) {
       void refresh().catch(failure => setError(String(failure)));
     }
-  }, [dispatch, flushDeltas, refresh]);
+  }, [dispatch, flushDeltas, managerId, onActivity, refresh]);
 
   const eventsUrl = useCallback((_: string, afterSeq: number) => (
     stream ? client.eventsUrl(stream.managerId, afterSeq) : ''
@@ -152,18 +155,23 @@ function AgentChat({
 
   const messages = useMemo(() => mergeChatHistory(preparationHistory, publicChatEvents(state.events)),
     [preparationHistory, state.events]);
-  return <>
-    <ChatPanel active={active} autoScroll="follow" logLabel="EchoMind 对话记录" emptyText="可以继续提问或补充需求。"
-      events={messages} requestOptions={options} status={state.status}
-      conversationId={state.conversationId} isCondensing={state.isCondensing}
-      pendingOutboundMessages={state.pendingOutboundMessages} />
-    {error && <p role="alert" className="px-4 py-2 text-sm text-red-700">{error}</p>}
-    <div className="shrink-0 border-t">
+  return <ProjectChatDrawer
+    history={expanded => <>
+      <ChatPanel active={expanded} autoScroll="follow" logLabel="EchoMind 对话记录" emptyText="可以继续提问或补充需求。"
+        events={messages} requestOptions={options} status={state.status}
+        conversationId={state.conversationId} isCondensing={state.isCondensing}
+        pendingOutboundMessages={state.pendingOutboundMessages} />
+      {error && <p role="alert" className="px-4 py-2 text-sm text-red-700">{error}</p>}
+      {state.status === 'running' && !busy && <p role="status" className="px-4 py-2 text-xs text-gray-500">
+        正在回复…
+      </p>}
+    </>}
+    composer={panel => (
       <MessageInput compact placeholder={ECHOMIND_MESSAGE_PLACEHOLDER}
-        runningMode="send" interruptLabel="停止回复"
+        runningMode="send" interruptLabel="停止回复" historyPanelId={panel.id}
         onSend={text => { void send(text); }} status={state.status} sending={busy}
         disabled={busy} canInterrupt={state.status === 'running' && !busy}
         onInterrupt={() => { void interrupt(); }} />
-    </div>
-  </>;
+    )}
+  />;
 }

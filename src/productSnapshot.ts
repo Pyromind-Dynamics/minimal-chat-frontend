@@ -27,6 +27,7 @@ export function snapshotToChatEvents(
         source: item.role === 'assistant' ? 'agent' : 'user',
         run_id: item.run_id,
         command_id: item.command_id,
+        project_reply: Boolean(item.project_reply),
         execution_notice: item.execution_notice,
         llm_message: {
           role: item.role,

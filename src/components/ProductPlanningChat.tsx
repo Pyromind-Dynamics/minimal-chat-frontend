@@ -1,12 +1,12 @@
 import './ProductPlanningChat.css';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RequestOptions } from '../api';
 import { useChatContext } from '../ChatContext';
 import { useProductEventStream } from '../hooks/useProductEventStream';
 import type { EchoMindChatClient, ProductClient } from '../productClient';
 import type { ConversationSnapshot, ConversationSummary, ProductEvent } from '../types';
 import type { ProjectSummary } from '../echomindContract';
-import { newestCreatedFirst, resolveEchoMindSelection } from '../echomindNavigation';
+import { conversationActivityAt, latestActivityAt, newestActivityFirst, projectsByConversationActivity, resolveEchoMindSelection } from '../echomindNavigation';
 import {
   loadRequestOverrides,
   saveRequestOverrides,
@@ -15,7 +15,7 @@ import {
 import { PreparationWelcome } from './PreparationWelcome';
 import { ChatPanel } from './ChatPanel';
 import { MessageInput } from './MessageInput';
-import { ECHOMIND_MESSAGE_PLACEHOLDER, mergeChatHistory, publicChatEvents, visibleExecutionEvents } from '../echomindConversationPresentation';
+import { ECHOMIND_MESSAGE_PLACEHOLDER, mainAgentMessages, mergeChatHistory, publicChatEvents, visibleExecutionEvents } from '../echomindConversationPresentation';
 import { snapshotToChatEvents } from '../productSnapshot';
 import { EchoMindAgentChat } from './EchoMindAgentChat';
 import { deriveDisplayConnectionState } from '../productStreamState';
@@ -23,12 +23,8 @@ import { PreparationPlanMessage } from './PreparationPlanMessage';
 import { StageWorkspace } from './StageWorkspace';
 import { ProjectOverview } from './observations/ProjectOverview';
 import { ProjectConfirmationPanel } from './ProjectConfirmationPanel';
+import { ProjectChatDrawer } from './ProjectChatDrawer';
 import { managerChatEvents, preparationPlanStatus } from '../preparation';
-
-const projectTabs = [
-  { id: 'chat', label: 'Chat' },
-  { id: 'main', label: 'Main Agent' },
-] as const;
 
 type ConversationSelection = { conversationId?: string; projectId?: string; cluster?: string };
 type SavedChat = {
@@ -38,15 +34,15 @@ type SavedChat = {
   options: RequestOptions;
 };
 
-const creationDateFormat = new Intl.DateTimeFormat('zh-CN', {
+const activityDateFormat = new Intl.DateTimeFormat('zh-CN', {
   month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 });
 
-function CreatedDate({ value }: { value?: string | null }) {
+function ActivityDate({ value }: { value?: string | null }) {
   if (!value) return null;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
-  return <time dateTime={value} title={date.toLocaleString()}>{creationDateFormat.format(date)}</time>;
+  return <time dateTime={value} title={`更新时间：${date.toLocaleString()}`}>{activityDateFormat.format(date)}</time>;
 }
 
 function updateWorkbenchUrl(projectId: string | null, conversationId: string | null) {
@@ -75,10 +71,8 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   }), [userId, credentials]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const orderedConversations = useMemo(() => conversations.toSorted(newestCreatedFirst), [conversations]);
-  const orderedProjects = useMemo(() => projects.toSorted(newestCreatedFirst), [projects]);
-  const [activeTab, setActiveTab] = useState<typeof projectTabs[number]['id']>('chat');
-  const tabsId = useId();
+  const orderedConversations = useMemo(() => conversations.toSorted(newestActivityFirst), [conversations]);
+  const orderedProjects = useMemo(() => projectsByConversationActivity(projects, conversations), [projects, conversations]);
   const [busy, setBusy] = useState(false);
   const [respondingPermission, setRespondingPermission] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -104,7 +98,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const createRequest = useRef<{conversation: string; revision: number; command: string} | null>(null);
   const reviewRequest = useRef<{conversation: string; revision: number; command: string} | null>(null);
 
-  const apply = useCallback((snapshot: ConversationSnapshot) => {
+  const apply = useCallback((snapshot: ConversationSnapshot, chatUpdatedAt?: string | null) => {
     if (activeId.current !== snapshot.conversation_id) return;
     dispatch({ type: 'SET_PRODUCT_SNAPSHOT', snapshot });
     const summary: ConversationSummary = {
@@ -112,7 +106,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
       status: snapshot.status,
       through_seq: snapshot.through_seq,
       created_at: snapshot.created_at,
-      updated_at: snapshot.updated_at ?? null,
+      updated_at: latestActivityAt(snapshot.updated_at, chatUpdatedAt),
       title: snapshot.project?.plan.goal ?? snapshot.preparation?.plan?.goal ?? null,
       project_id: snapshot.project?.project_id ?? null,
       cluster: snapshot.project?.cluster ?? null,
@@ -121,11 +115,18 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
       const existing = current.find(item => item.conversation_id === summary.conversation_id);
       if (existing && existing.through_seq > summary.through_seq) return current;
       const next = { ...summary, title: summary.title ?? existing?.title ?? null,
-        created_at: summary.created_at ?? existing?.created_at };
+        created_at: summary.created_at ?? existing?.created_at,
+        updated_at: latestActivityAt(summary.updated_at, existing?.updated_at) };
       if (!existing) return [...current, next];
       return current.map(item => item === existing ? next : item);
     });
   }, [dispatch]);
+
+  const recordChatActivity = useCallback((managerId: string, updatedAt: string) => {
+    if (activeId.current !== managerId) return;
+    setConversations(current => current.map(item => item.conversation_id === managerId
+      ? { ...item, updated_at: latestActivityAt(item.updated_at, updatedAt) } : item));
+  }, []);
 
   const resetRequests = useCallback(() => {
     generation.current += 1;
@@ -211,12 +212,11 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
       if (signal.aborted) return;
       activeId.current = id;
       dispatch({ type: 'RESET_CONVERSATION' });
-      apply(snapshot);
+      apply(snapshot, chat?.updated_at);
       setSavedChat(chat === undefined ? null : {
         managerId: id, projectId: snapshot.project?.project_id, snapshot: chat, options: chatOptions,
       });
       setWorkspaceKey(key => key + 1);
-      if (!snapshot.project) setActiveTab('chat');
       setError(null); setNotice(null);
       setHasConnected(false);
       setAfterSeq(snapshot.through_seq);
@@ -254,10 +254,10 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         const byId = new Map(items.map(item => [item.conversation_id, item]));
         for (const item of current) {
           const listed = byId.get(item.conversation_id);
-          if (!listed || item.through_seq >= listed.through_seq) {
-            byId.set(item.conversation_id, { ...item, title: item.title ?? listed?.title ?? null,
-              created_at: item.created_at ?? listed?.created_at });
-          }
+          const latest = !listed || item.through_seq >= listed.through_seq ? item : listed;
+          byId.set(item.conversation_id, { ...latest, title: latest.title ?? listed?.title ?? item.title,
+            created_at: latest.created_at ?? listed?.created_at ?? item.created_at,
+            updated_at: latestActivityAt(item.updated_at, listed?.updated_at) });
         }
         return [...byId.values()];
       });
@@ -283,7 +283,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         savedProjectId: localStorage.getItem(selectedProjectKey),
         savedConversationId: localStorage.getItem(selectedKey),
         projects: projectsResult.status === 'fulfilled' ? projectsResult.value : [],
-        conversations: conversationsResult.status === 'fulfilled' ? conversationsResult.value.toSorted(newestCreatedFirst) : [],
+        conversations: conversationsResult.status === 'fulfilled' ? conversationsResult.value.toSorted(newestActivityFirst) : [],
       });
       if (selection) void open({
         conversationId: selection.conversationId,
@@ -414,7 +414,6 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     dispatch({ type: 'RESET_CONVERSATION' });
     setSavedChat(null);
     setWorkspaceKey(key => key + 1);
-    setActiveTab('chat');
     setError(null); setNotice(null); setAfterSeq(0); setHasConnected(false);
   };
 
@@ -521,7 +520,9 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const executionEvents = useMemo(() => visibleExecutionEvents(
     isProject ? managerChatEvents(state.events) : state.events,
   ), [isProject, state.events]);
-  const preparationMessages = useMemo(() => publicChatEvents(state.events.filter(event => !event.task_id)),
+  const projectMessages = useMemo(() => mainAgentMessages(state.events), [state.events]);
+  const preparationMessages = useMemo(() => publicChatEvents(state.events.filter(event => !event.task_id
+    && (event.kind !== 'MessageEvent' || !event.project_reply))),
     [state.events]);
   const historyId = !isProject || state.snapshot?.capabilities.read_only ? state.snapshot?.conversation_id : undefined;
   const selectedChat = savedChat?.managerId === state.conversationId ? savedChat : null;
@@ -541,7 +542,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const savedHistory = historyId ? selectedChat?.snapshot : null;
   const history = useMemo(() => {
     const manager = isProject && state.snapshot?.capabilities.read_only
-      ? publicChatEvents(managerChatEvents(state.events))
+      ? publicChatEvents(managerChatEvents(state.events).filter(event => event.kind !== 'MessageEvent' || !event.project_reply))
       : preparationMessages;
     return savedHistory ? mergeChatHistory(manager, publicChatEvents(snapshotToChatEvents(savedHistory))) : manager;
   }, [isProject, state.snapshot?.capabilities.read_only, state.events, preparationMessages, savedHistory]);
@@ -555,7 +556,6 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     const targetSelector = targetId ? `[data-confirmation-id="${CSS.escape(targetId)}"]` : null;
     if (isProject) {
       const panel = confirmationsRef.current;
-      setActiveTab('main');
       setConfirmationsOpen(true);
       window.requestAnimationFrame(() => {
         const target = targetSelector ? panel?.querySelector(targetSelector) : null;
@@ -594,8 +594,8 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     )}
   </div>;
 
-  const archivedHistory = state.snapshot?.capabilities.read_only && <>
-    <ChatPanel active={!isProject || activeTab === 'chat'} autoScroll="follow" logLabel="EchoMind 对话记录" events={history} requestOptions={options}
+  const archivedHistory = (active = true) => <>
+    <ChatPanel active={active} autoScroll="follow" logLabel="EchoMind 对话记录" events={history} requestOptions={options}
       status={state.status} conversationId={state.conversationId} />
     <p className="border-t bg-amber-50 px-4 py-2 text-xs text-amber-800">此会话已归档，仅可查看历史记录和产物。请新建会话继续。</p>
   </>;
@@ -678,7 +678,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
                 <button type="button" disabled={busy} aria-current={item.conversation_id === state.conversationId}
                   onClick={() => selectConversation({ conversationId: item.conversation_id, projectId: item.project_id ?? undefined, cluster: item.cluster ?? undefined })}>
                   <span className="echomind-nav-title" title={label}>{label}</span>
-                  <span className="echomind-nav-meta"><CreatedDate value={item.created_at} /></span>
+                  <span className="echomind-nav-meta"><ActivityDate value={conversationActivityAt(item)} /></span>
                 </button>
               </li>;
             })}
@@ -688,45 +688,32 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
           <h2>Project <span>{orderedProjects.length}</span></h2>
           {orderedProjects.length === 0 && <p>暂无 Project</p>}
           <ul>
-            {orderedProjects.map(project => <li key={project.project_id}>
+            {orderedProjects.map(({ project, updated_at }) => <li key={project.project_id}>
               <button type="button" disabled={busy} aria-current={project.project_id === currentProjectId}
                 onClick={() => selectConversation({ conversationId: project.conversation_id, projectId: project.project_id, cluster: project.cluster })}>
                 <span className="echomind-nav-title" title={project.name}>{project.name}</span>
                 <span className="echomind-nav-meta">
                   <span title={`${project.cluster} · ${project.node_count} 节点`}>{project.lifecycle === 'development' ? '开发中' : '已固化'}</span>
-                  <CreatedDate value={project.created_at} />
+                  <ActivityDate value={updated_at} />
                 </span>
               </button>
             </li>)}
           </ul>
         </section>
       </nav>
-      <section key={workspaceKey} inert={workspaceUnavailable} aria-busy={loading || undefined} className="flex min-h-[480px] min-w-0 flex-col lg:min-h-0">
+      <section key={workspaceKey} inert={workspaceUnavailable} aria-busy={loading || undefined}
+        className={`flex min-w-0 flex-col ${isProject ? 'echomind-project-workspace min-h-0' : 'min-h-[480px] lg:min-h-0'}`}>
         {state.snapshot?.project ? <>
-          <div className="shrink-0 border-b px-4 py-1.5">
-            <div role="tablist" aria-label="EchoMind 工作区" className="inline-flex gap-1 rounded-full bg-slate-100 p-1">
-              {projectTabs.map(tab => <button key={tab.id} type="button" role="tab"
-                id={`${tabsId}-${tab.id}`} aria-controls={`${tabsId}-${tab.id}-panel`}
-                aria-selected={activeTab === tab.id} tabIndex={activeTab === tab.id ? 0 : -1}
-                onClick={() => setActiveTab(tab.id)}
-                onKeyDown={event => {
-                  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-                  event.preventDefault();
-                  const next = event.key === 'Home' ? projectTabs[0].id : event.key === 'End' ? projectTabs[1].id
-                    : tab.id === 'main' ? 'chat' : 'main';
-                  setActiveTab(next);
-                  document.getElementById(`${tabsId}-${next}`)?.focus();
-                }}
-                className="min-h-9 rounded-full px-4 text-sm font-medium whitespace-nowrap text-slate-600 hover:bg-slate-200 aria-selected:bg-white aria-selected:text-slate-900 aria-selected:shadow-sm focus-visible:outline-2 focus-visible:outline-blue-600">
-                {tab.label}
-              </button>)}
-            </div>
-          </div>
-          <section role="tabpanel" id={`${tabsId}-main-panel`} aria-labelledby={`${tabsId}-main`}
-            hidden={activeTab !== 'main'} tabIndex={0} className="flex min-h-0 flex-1 flex-col bg-white lg:overflow-y-auto">
+          <section aria-label="Main Agent" tabIndex={0} className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-white">
             {managerStatus}
             <StageWorkspace snapshot={state.snapshot} />
-            {state.snapshot.capabilities.read_only && <ChatPanel active={activeTab === 'main'} events={executionEvents} requestOptions={options}
+            <section aria-label="Main Agent 消息" className="mx-4 mb-4 flex max-h-80 shrink-0 flex-col overflow-hidden rounded-lg border bg-white sm:mx-5">
+              <h2 className="shrink-0 border-b bg-slate-50 px-4 py-2">Main Agent</h2>
+              <ChatPanel autoScroll="follow" logLabel="Main Agent 消息记录" events={projectMessages}
+                timeline={projectMessages.length === 0 ? <p className="text-sm text-slate-500">暂无消息</p> : undefined}
+                requestOptions={options} status={state.status} conversationId={state.conversationId} />
+            </section>
+            {state.snapshot.capabilities.read_only && <ChatPanel events={executionEvents} requestOptions={options}
               autoScroll="follow" logLabel="Main Agent 执行记录" status={state.status} conversationId={state.conversationId} />}
             {pendingCount > 0 && <details ref={confirmationsRef} className="project-confirmation-slot mt-auto shrink-0"
               open={confirmationsOpen} onToggle={event => setConfirmationsOpen(event.currentTarget.open)}>
@@ -739,19 +726,19 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
                 }} readMedia={readInputMedia} />
             </details>}
           </section>
-          <section role="tabpanel" id={`${tabsId}-chat-panel`} aria-labelledby={`${tabsId}-chat`}
-            hidden={activeTab !== 'chat'} tabIndex={0} className="flex min-h-0 flex-1 flex-col bg-white">
-            {state.snapshot.capabilities.read_only ? archivedHistory : <>
-              <EchoMindAgentChat client={chatClient} preparationHistory={preparationMessages}
-                managerId={state.snapshot.conversation_id} options={options} active={activeTab === 'chat'}
-                initialSnapshot={preloadedChat?.projectId === currentProjectId ? preloadedChat.snapshot : undefined} />
-              {pendingCount > 0 && <ExecutionActions snapshot={state.snapshot} onOpenPlan={openPlan}
-                onOpenConfirmation={() => openConfirmation()} />}
-            </>}
-          </section>
+          {pendingCount > 0 && <ExecutionActions snapshot={state.snapshot} onOpenPlan={openPlan}
+            onOpenConfirmation={() => openConfirmation()} />}
+          {state.snapshot.capabilities.read_only ? <ProjectChatDrawer
+            history={archivedHistory}
+            composer={panel => <button type="button" aria-controls={panel.id} aria-expanded={panel.expanded}
+              className="mx-3 my-2 rounded-lg border px-4 py-2 text-sm hover:bg-slate-50"
+              onClick={event => event.currentTarget.focus()}>查看归档对话</button>}
+          /> : <EchoMindAgentChat client={chatClient} preparationHistory={preparationMessages}
+            managerId={state.snapshot.conversation_id} options={options} onActivity={recordChatActivity}
+            initialSnapshot={preloadedChat?.projectId === currentProjectId ? preloadedChat.snapshot : undefined} />}
         </> : <section ref={chatAreaRef} aria-label="会话工作区" className="flex min-h-0 flex-1 flex-col bg-white">
         {managerStatus}
-        {state.snapshot?.capabilities.read_only ? archivedHistory : <>
+        {state.snapshot?.capabilities.read_only ? archivedHistory() : <>
           {!state.conversationId && <PreparationWelcome />}
           {state.snapshot && <ChatPanel
             autoScroll="follow" logLabel="EchoMind 对话记录" emptyText="向 EchoMind 描述任务或补充需求。"
@@ -773,7 +760,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
       </section>
     </main>
     {currentProjectId && <ProjectOverview snapshot={state.snapshot} client={client} projectId={currentProjectId} options={options}
-      hidden={activeTab !== 'main'} inert={workspaceUnavailable} />}
+      inert={workspaceUnavailable} />}
     </div>
   </div>;
 }

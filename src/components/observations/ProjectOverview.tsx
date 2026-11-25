@@ -103,7 +103,7 @@ export function ProjectOverview({ hidden, inert, ...props }: Props & { inert?: b
     <header>
       <button type="button" className="rsi-sidebar-toggle" aria-label={open ? 'Collapse RSI Overview' : 'Expand RSI Overview'} aria-expanded={open} onClick={() => setOpen(value => !value)}>
         <span className="rsi-desktop-label">{open ? '⇥' : '⇤'}</span>
-        <span className="rsi-mobile-label">{open ? 'Back to chat' : 'RSI Overview'}</span>
+        <span className="rsi-mobile-label">{open ? 'Back to workspace' : 'RSI Overview'}</span>
       </button>
       {open && <h2>RSI Overview</h2>}
     </header>

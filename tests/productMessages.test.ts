@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { pendingMessageEvents, projectMessageEvents, receivedUserCommandIds } from '../src/productMessages.ts';
+import { mainAgentMessages } from '../src/echomindConversationPresentation.ts';
+import { snapshotToChatEvents } from '../src/productSnapshot.ts';
 import type { ConversationSnapshot, ProductEvent } from '../src/types.ts';
 
 const snapshot: ConversationSnapshot = {
@@ -98,4 +100,20 @@ test('a public preview stays attached to its original turn through reload and co
   const result = projectMessageEvents({ ...partial, through_seq: 2 }, [first, done, done]);
   assert.deepEqual(texts(result), ['hello', 'stage result']);
   assert.ok(result.timeline[1].kind === 'message' && result.timeline[1].execution_notice?.has_result);
+});
+
+test('Main Agent public reply is visible before completion and resumes without duplicating text', () => {
+  const first = event(2, 'message.delta', 'main-result', '评估');
+  const next = event(3, 'message.delta', 'main-result', '完成');
+  first.payload.project_reply_delta = '评估';
+  next.payload.project_reply_delta = '完成';
+  const readMain = (value: ConversationSnapshot) => mainAgentMessages(snapshotToChatEvents(value))
+    .flatMap(message => message.llm_message.content).map(block => block.type === 'text' && block.text);
+  const partial = { ...projectMessageEvents(snapshot, [first]), through_seq: 2 };
+  assert.deepEqual(readMain(partial), ['评估']);
+  const resumed = projectMessageEvents(partial, [first, next]);
+  assert.deepEqual(readMain(resumed), ['评估完成']);
+  const withdrawn = event(4, 'message.completed', 'main-result');
+  withdrawn.payload.project_reply = null;
+  assert.deepEqual(readMain(projectMessageEvents(partial, [next, withdrawn])), []);
 });

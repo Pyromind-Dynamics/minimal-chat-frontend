@@ -37,11 +37,15 @@ export function projectMessageEvents(
       const last = blocks.at(-1);
       if (last?.type === 'text') blocks[blocks.length - 1] = { ...last, text: last.text + text };
       else blocks.push({ type: 'text', text });
-      message = { ...message, content: blocks };
+      const projectDelta = event.payload.project_reply_delta;
+      message = { ...message, content: blocks,
+        project_reply: typeof projectDelta === 'string' ? (message.project_reply ?? '') + projectDelta : message.project_reply };
     } else if (event.type === 'message.completed') {
+      const projectReply = event.payload.project_reply;
       message = {
         ...message, status: 'completed', completed_seq: event.seq,
         content: 'content' in event.payload ? content(event.payload.content) : message.content,
+        project_reply: typeof projectReply === 'string' || projectReply === null ? projectReply : message.project_reply,
       };
     }
     const notice = event.payload.execution_notice;

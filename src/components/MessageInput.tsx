@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import type { ExecutionStatus, GuidanceStatus } from '../types';
 
 interface MessageInputProps {
@@ -14,6 +14,7 @@ interface MessageInputProps {
   disabled?: boolean;
   guidanceStatus?: GuidanceStatus | null;
   runningMode?: 'guide' | 'send' | 'queue';
+  historyPanelId?: string;
 }
 
 export function MessageInput({
@@ -27,8 +28,10 @@ export function MessageInput({
   disabled = false,
   guidanceStatus = null,
   runningMode = 'guide',
+  historyPanelId,
 }: MessageInputProps) {
   const [text, setText] = useState('');
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const isRunning = status === 'running';
   const isPaused = status === 'paused';
   const queueing = isRunning && runningMode === 'queue';
@@ -65,6 +68,7 @@ export function MessageInput({
     e.preventDefault();
     const trimmed = text.trim();
     if (!trimmed || disabled || sending || interrupting) return;
+    if (historyPanelId) inputRef.current?.focus();
     onSend(trimmed);
     setText('');
   };
@@ -73,13 +77,16 @@ export function MessageInput({
     <form onSubmit={handleSubmit} className={compact ? "bg-white px-3 py-2" : "border-t bg-white p-4"}>
       <div className="flex items-end gap-2">
         <textarea
+          ref={inputRef}
           value={text}
           onChange={(event) => setText(event.target.value)}
           aria-label={inputHint}
+          aria-controls={historyPanelId}
           placeholder={inputHint ?? placeholder}
-          disabled={disabled}
+          disabled={disabled && !historyPanelId}
+          readOnly={disabled && !!historyPanelId}
           rows={compact ? 1 : 2}
-          className={`${compact ? 'min-h-10' : 'min-h-14'} max-h-40 min-w-0 flex-1 resize-y rounded-lg border px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100`}
+          className={`${compact ? 'min-h-10' : 'min-h-14'} ${historyPanelId ? 'h-10 resize-none py-2' : 'resize-y py-2.5'} max-h-40 min-w-0 flex-1 rounded-lg border px-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100`}
         />
         <button
           type="submit"
@@ -90,7 +97,10 @@ export function MessageInput({
         </button>
         {(!compact || canInterrupt) && <button
           type="button"
-          onClick={onInterrupt}
+          onClick={() => {
+            if (historyPanelId) inputRef.current?.focus();
+            onInterrupt();
+          }}
           disabled={!canInterrupt || interrupting}
           aria-label={interrupting ? '正在中断当前会话' : interruptLabel ?? '中断当前会话'}
           aria-busy={interrupting}
@@ -100,7 +110,7 @@ export function MessageInput({
           {interrupting ? '中断中…' : interruptLabel ?? '中断'}
         </button>}
       </div>
-      {helperText && (!compact || canInterrupt) && (
+      {helperText && !historyPanelId && (!compact || canInterrupt) && (
         <p role="status" aria-live="polite" className="mt-2 text-xs text-gray-500">
           {helperText}
         </p>

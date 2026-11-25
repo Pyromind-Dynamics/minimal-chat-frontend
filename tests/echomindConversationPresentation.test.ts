@@ -46,7 +46,7 @@ test('opening a saved EchoMind chat renders its history before the stream starts
   try {
     const { EchoMindAgentChat } = await server.ssrLoadModule('/src/components/EchoMindAgentChat.tsx');
     const html = renderToStaticMarkup(createElement(EchoMindAgentChat, {
-      client: {}, managerId: 'manager', preparationHistory: [], options: {}, active: true,
+      client: {}, managerId: 'manager', preparationHistory: [], options: {},
       initialSnapshot: snapshot([message('saved-agent-reply', 1, 'assistant', 'a')]),
     }));
     assert.match(html, /saved-agent-reply/);

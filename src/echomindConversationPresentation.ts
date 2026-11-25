@@ -34,6 +34,11 @@ export function publicChatEvents(events: ChatEvent[]): ChatEvent[] {
   )).map(presentEchoMindMessage);
 }
 
+export function mainAgentMessages(events: ChatEvent[]): MessageEvent[] {
+  return events.filter((event): event is MessageEvent =>
+    hasVisibleMessage(event) && event.source === 'agent' && event.project_reply === true);
+}
+
 // Each stream owns its event IDs. Compare timestamps only across streams,
 // keeping the recorded order within each stream (including undated notices).
 export function mergeChatHistory(manager: ChatEvent[], chat: ChatEvent[]): ChatEvent[] {

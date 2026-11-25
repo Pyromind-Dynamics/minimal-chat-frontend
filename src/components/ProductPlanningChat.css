@@ -140,6 +140,102 @@
   scrollbar-width: thin;
 }
 
+.product-planning-chat:has(.echomind-project-workspace) {
+  height: 100dvh;
+}
+
+.echomind-project-workspace {
+  container-type: size;
+  isolation: isolate;
+}
+
+.project-chat-composer {
+  --text-xs: calc(0.75rem - 1px);
+  --text-sm: calc(0.875rem - 1px);
+  --text-base: calc(1rem - 1px);
+  position: relative;
+  flex: none;
+  border-top: 1px solid #e2e8f0;
+  background: #fff;
+  font-size: var(--text-base);
+}
+
+.project-chat-drawer {
+  position: absolute;
+  z-index: 1;
+  inset-inline: 8px;
+  bottom: calc(100% + 6px);
+  max-height: max(0px, calc(100cqh - 100% - 12px));
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 8px 28px #17213b29;
+}
+
+.project-chat-drawer:not([hidden]) { display: flex; }
+
+.project-chat-drawer .markdown-body { font-size: var(--text-sm); }
+.project-chat-drawer .markdown-body h1 { font-size: calc(1.35rem - 1px); }
+.project-chat-drawer .markdown-body h2 { font-size: 15px; }
+.project-chat-drawer .markdown-body h3 { font-size: calc(1.075rem - 1px); }
+.project-chat-drawer .markdown-body :is(h4, h5, h6) { font-size: var(--text-base); }
+.project-chat-drawer .markdown-body :is(code, pre) { font-size: calc(0.8125rem - 1px); }
+.project-chat-drawer [role="log"] time { font-size: 10px; }
+
+.project-chat-drawer-header {
+  display: grid;
+  grid-template-columns: 36px 1fr 36px;
+  flex: none;
+  min-height: 36px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.project-chat-resize,
+.project-chat-close {
+  display: grid;
+  place-items: center;
+}
+
+.project-chat-resize {
+  grid-column: 2;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.project-chat-close {
+  cursor: pointer;
+  color: #475569;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.project-chat-resize:hover,
+.project-chat-close:hover { background: #eef2f7; }
+
+.project-chat-resize:focus-visible,
+.project-chat-close:focus-visible { outline: 2px solid #7050c8; outline-offset: -2px; }
+
+.project-chat-resize span {
+  width: 36px;
+  height: 3px;
+  border-radius: 999px;
+  background: #64748b;
+}
+
+@media (width < 64rem) {
+  .echomind-workbench:has(> .echomind-project-workspace) {
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .echomind-workbench:has(> .echomind-project-workspace) > .echomind-navigation {
+    max-height: min(10rem, 28dvh);
+  }
+}
+
 @media (min-width: 64rem) {
   .echomind-workbench {
     grid-template-columns: clamp(17rem, 24vw, 21rem) minmax(0, 1fr);
@@ -158,8 +254,4 @@
   .product-planning-chat * {
     border-color: #e2e8f0;
   }
-}
-
-@media (width < 64rem) {
-  .product-planning-chat [role="tab"] { min-height: 44px; }
 }
