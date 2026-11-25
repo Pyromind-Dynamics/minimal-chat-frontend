@@ -26,6 +26,7 @@ import { ToolCallBlock } from './ToolCallBlock';
 import { WorkflowBlock } from './WorkflowBlock';
 import { UserInputCard } from './UserInputCard';
 import { getObservationContent, getObservationDisplayText } from '../toolErrorPresentation';
+import { observationsFor } from '../toolActivityPresentation';
 
 interface ChatPanelProps {
   active?: boolean;
@@ -212,10 +213,12 @@ export function ChatPanel({
 export function ChatEventList({
   events: visibleEvents,
   requestOptions,
+  compactTools = false,
   onRollbackWorkflow,
   rollbackWorkflowDisabled,
   rollingBackWorkflowEventId,
-}: Pick<ChatPanelProps, 'events' | 'requestOptions' | 'onRollbackWorkflow' | 'rollbackWorkflowDisabled' | 'rollingBackWorkflowEventId'>) {
+}: Pick<ChatPanelProps, 'events' | 'requestOptions' | 'onRollbackWorkflow' | 'rollbackWorkflowDisabled'
+  | 'rollingBackWorkflowEventId'> & { compactTools?: boolean }) {
   const actionIds = new Set(visibleEvents.flatMap(event => event.kind === 'ActionEvent' ? [event.id] : []));
   const observationsByActionId = observationsFor(visibleEvents);
   // Pair actions and observations by id; parallel tool calls are not adjacent.
@@ -236,6 +239,7 @@ export function ChatEventList({
               action={event as ActionEvent}
               observation={observation}
               requestOptions={requestOptions}
+              compact={compactTools}
             />
           )}
         </div>,
@@ -304,14 +308,6 @@ export function ChatEventList({
   }
 
   return <>{rendered}</>;
-}
-
-function observationsFor(events: ChatEvent[]): Map<string, ObservationEvent> {
-  const byActionId = new Map<string, ObservationEvent>();
-  for (const event of events) {
-    if (event.kind === 'ObservationEvent' && event.action_id) byActionId.set(event.action_id, event);
-  }
-  return byActionId;
 }
 
 function getObsText(obs: ObservationEvent): string {

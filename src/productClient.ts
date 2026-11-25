@@ -17,9 +17,9 @@ export function createProductClient(path: string) {
     listProjects: (options: RequestOptions, signal?: AbortSignal) => productRequest<ProjectSummary[]>(`${BACKEND_URL}${PROJECTS_PATH}`, { signal }, options),
     inputMedia: (id: string, requestId: string, contentIndex: number, imageIndex: number, options: RequestOptions) => productRequest<{url: string}>(`${base}/${encodeURIComponent(id)}/pending-inputs/${encodeURIComponent(requestId)}/media/${contentIndex}/${imageIndex}`, {}, options),
     observations: (id: string, options: RequestOptions, signal?: AbortSignal) => productRequest<ObservationOverview>(`${BACKEND_URL}${PROJECTS_PATH}/${encodeURIComponent(id)}/observations/overview`, { signal, cache: 'no-store' }, options),
-    retryArtifactDelivery: (id: string, nodeId: string, options: RequestOptions) =>
-      productRequest<{ status: 'accepted' }>(`${BACKEND_URL}${PROJECTS_PATH}/${encodeURIComponent(id)}/observations/retry-artifact-delivery`, {
-        method: 'POST', body: JSON.stringify({ project_node_id: nodeId }),
+    retryArtifactDelivery: (id: string, nodeId: string, options: RequestOptions, reportVersionId?: string) =>
+      productRequest<{ status: 'accepted'; report_version_id?: string }>(`${BACKEND_URL}${PROJECTS_PATH}/${encodeURIComponent(id)}/observations/retry-artifact-delivery`, {
+        method: 'POST', body: JSON.stringify({ project_node_id: nodeId, report_version_id: reportVersionId }),
       }, options),
     observationReport: (id: string, query: ObservationReportQuery, options: RequestOptions, signal?: AbortSignal) => {
       const params = new URLSearchParams({ project_node_id: query.project_node_id });

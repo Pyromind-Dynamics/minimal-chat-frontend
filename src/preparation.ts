@@ -4,7 +4,7 @@ import type { ChatEvent, ConversationSnapshot, TimelineOperation } from './types
 export type { WorkflowContext } from './workflowPlan';
 export interface WorkflowNodeDefinition {
   id: string; name: string; description: string; roles: string[];
-  tasks: {id: string; description: string; display_name?: string | null}[];
+  tasks: {id: string; description: string; display_name?: string | null; requires_report?: boolean}[];
 }
 export interface PreparationView {
   policy: { allowed_roles: string[]; workflow_nodes: WorkflowNodeDefinition[] };

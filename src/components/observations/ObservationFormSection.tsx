@@ -115,6 +115,8 @@ const deliveryErrorMessages: Record<string, string> = {
   missing_output: '缺少计划声明的产物，请核对产物路径和文件。',
   invalid_output: '产物路径或版本归属无效，请核对当前执行记录。',
   invalid_report: '报告格式无法读取，请核对报告内容。',
+  invalid_report_metrics: '主报告缺少有效的结构化指标，请核对 metrics 字段。',
+  ambiguous_report: '有多个产物包含结构化指标，请在计划中指定主报告。',
   missing_execution_record: '未能读取本次执行的产物记录，请检查 Storage 和计划文件。',
   credentials_required: '需要有效的 Storage 授权，请检查连接设置。',
   storage_unavailable: '暂时无法访问 Storage，请检查连接设置后重试。',
@@ -152,11 +154,12 @@ export function ObservationFormSection(props: SectionProps) {
 
   if (section.selection === 'task_id' && !selected?.run) return null;
 
-  async function retryDelivery() {
+  async function retryDelivery(reportVersionId?: string) {
     setRetrying(true);
     setRetryError(false);
     try {
-      await client.retryArtifactDelivery(projectId, node.id, options);
+      const retry = await client.retryArtifactDelivery(projectId, node.id, options, reportVersionId);
+      if (retry.report_version_id) setSelectedValue(retry.report_version_id);
       props.onDeliveryRetry?.();
     } catch {
       setRetryError(true);
@@ -168,11 +171,17 @@ export function ObservationFormSection(props: SectionProps) {
     node.delivery_status === 'registering' ? statusText('正在登记产物') :
     node.delivery_status === 'failed' ? <>
       {statusText(`产物登记失败。 ${deliveryErrorMessages[node.delivery_error ?? ''] ?? '请检查当前执行的产物。'}`)}
-      {retryError && <p role="alert" className="observation-error">未能启动重试，请检查连接设置后再试。</p>}
-      <button type="button" className="observation-report-retry" disabled={retrying}
-        onClick={() => void retryDelivery()}>{retrying ? '正在请求重试' : '重试登记'}</button>
+      {retryControl('重试登记')}
     </> : null
   );
+
+  function retryControl(label: string, reportVersionId?: string) {
+    return <>
+      {retryError && <p role="alert" className="observation-error">登记未完成，请核对连接设置和已登记的报告来源。</p>}
+      <button type="button" className="observation-report-retry" disabled={retrying}
+        onClick={() => void retryDelivery(reportVersionId)}>{retrying ? '正在登记' : label}</button>
+    </>;
+  }
 
   function renderBlock(block: ObservationDetailBlock) {
     switch (block.type) {
@@ -207,6 +216,14 @@ export function ObservationFormSection(props: SectionProps) {
         return deliveryNotice ? null : statusText(observationReportMessage(block.subject, status, analysis?.status));
       case 'metrics': {
         const metrics = block.source === 'report' ? report?.metrics : registeredReport?.metrics ?? result?.metrics;
+        const reportId = selected?.reportVersionId;
+        if (node.type === 'init' && block.source === 'report' && metrics?.length === 0 && reportId
+          && node.report_version_ids?.includes(reportId)) {
+          return <>
+            {statusText(block.empty_message || '所选报告未提供结构化指标')}
+            {retryControl('从原始产物补登指标', reportId)}
+          </>;
+        }
         return metrics?.length ? <ReportMetrics metrics={metrics} groups={block.groups ?? []} asTable={node.type === 'init' || node.type === 'eval'} />
           : metrics && block.empty_message ? statusText(block.empty_message) : null;
       }

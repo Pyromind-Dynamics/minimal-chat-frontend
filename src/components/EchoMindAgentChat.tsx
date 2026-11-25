@@ -5,6 +5,7 @@ import { useProductEventStream } from '../hooks/useProductEventStream';
 import type { EchoMindChatClient } from '../productClient';
 import type { ChatEvent, ConversationSnapshot, ProductEvent } from '../types';
 import { ChatPanel } from './ChatPanel';
+import { EchoMindConversationTimeline } from './EchoMindConversationTimeline';
 import { ECHOMIND_MESSAGE_PLACEHOLDER, mergeChatHistory, publicChatEvents } from '../echomindConversationPresentation';
 import { MessageInput } from './MessageInput';
 import { ProjectChatDrawer } from './ProjectChatDrawer';
@@ -13,7 +14,10 @@ interface AgentChatProps {
   client: EchoMindChatClient;
   managerId: string;
   preparationHistory: ChatEvent[];
+  executionEvents: ChatEvent[];
+  executionSnapshot: ConversationSnapshot;
   options: RequestOptions;
+  onOpenConfirmation: () => void;
   initialSnapshot?: ConversationSnapshot | null;
   onActivity?: (managerId: string, updatedAt: string) => void;
 }
@@ -23,7 +27,8 @@ export function EchoMindAgentChat(props: AgentChatProps) {
 }
 
 function AgentChat({
-  client, managerId, preparationHistory, options, initialSnapshot, onActivity,
+  client, managerId, preparationHistory, executionEvents, executionSnapshot,
+  options, onOpenConfirmation, initialSnapshot, onActivity,
 }: AgentChatProps) {
   const { state, dispatch } = useChatContext();
   const [stream, setStream] = useState<{ managerId: string; afterSeq: number } | null>(() =>
@@ -159,6 +164,9 @@ function AgentChat({
     history={expanded => <>
       <ChatPanel active={expanded} autoScroll="follow" logLabel="EchoMind 对话记录" emptyText="可以继续提问或补充需求。"
         events={messages} requestOptions={options} status={state.status}
+        timeline={(messages.length > 0 || executionEvents.length > 0) && <EchoMindConversationTimeline
+          messages={messages} executionEvents={executionEvents} snapshot={executionSnapshot}
+          options={options} onOpenConfirmation={onOpenConfirmation} />}
         conversationId={state.conversationId} isCondensing={state.isCondensing}
         pendingOutboundMessages={state.pendingOutboundMessages} />
       {error && <p role="alert" className="px-4 py-2 text-sm text-red-700">{error}</p>}

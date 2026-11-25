@@ -95,7 +95,7 @@ function reportVersions(snapshot: ConversationSnapshot | null) {
 
 type ConversationEntry =
   | { kind: 'messages'; id: string; turn?: EchoMindTurn; messages: ChatEvent[] }
-  | { kind: 'notice'; message: MessageEvent; receiptStatuses: string[]; reports?: ReportVersion[] };
+  | { kind: 'notice'; message: MessageEvent; messages: MessageEvent[]; receiptStatuses: string[]; reports?: ReportVersion[] };
 
 interface TurnProgress {
   id: string;
@@ -210,13 +210,14 @@ export function groupEchoMindTurns(
         if (report && event.run_id && link.origin_turn_id && last?.kind === 'notice'
           && last.reports?.[0]?.logicalKey === report.logicalKey && last.message.run_id === event.run_id
           && last.message.execution_notice?.origin_turn_id === link.origin_turn_id) {
+          last.messages.push(event);
           if (!last.reports.some(item => item.id === report.id)) {
             last.reports.push(report);
             last.reports.sort((a, b) => b.version - a.version);
           }
           continue;
         }
-        entries.push({ kind: 'notice', message: event, receiptStatuses, ...(report ? { reports: [report] } : {}) });
+        entries.push({ kind: 'notice', message: event, messages: [event], receiptStatuses, ...(report ? { reports: [report] } : {}) });
         continue;
       }
       const message = presentEchoMindMessage(event);
@@ -285,10 +286,13 @@ export function groupEchoMindTurns(
     const run = lineage.experimentForEvent(event);
     const root = rootForTask(lineage.taskForEvent(event)) ?? rootForTask(run?.platform_task_id ?? undefined);
     const state = progress.get(root ?? '');
+    const directTurn = !run?.stage_id && event.turn_id ? turnsById.get(event.turn_id) : undefined;
     if (state) {
       state.turn.execution.push(event);
       state.hasActivity = true;
       if (event.kind === 'ServerErrorEvent' && event.severity === 'error') state.reason = event.detail;
+    } else if (directTurn) {
+      directTurn.execution.push(event);
     } else if (!executionSnapshot?.project || !run?.stage_id || (!stages.has(run.stage_id) && !run.stage_snapshot)) {
       background.push(event);
     }
@@ -318,8 +322,10 @@ export function groupEchoMindTurns(
         const stage = (run.stage_id && stages.get(run.stage_id)) || run.stage_snapshot?.name;
         turn.progress.push({
           id: `${taskId}/${run.task_id}`, title: run.task_name, stage,
-          status: executionProgressLabel(run), reason: run.waiting_reason,
-          needsAttention: ['failed', 'needs_input', 'waiting_authorization'].includes(run.state) || run.report_state === 'failed',
+          status: run.report_state === 'registration_failed' ? '产物登记失败' : executionProgressLabel(run),
+          reason: run.waiting_reason,
+          needsAttention: ['failed', 'needs_input', 'waiting_authorization'].includes(run.state)
+            || ['failed', 'registration_failed'].includes(run.report_state),
           settled: ['reported', 'failed', 'cancelled', 'rejected', 'abandoned'].includes(run.state)
             || (run.state === 'succeeded' && ['not_started', 'ready', 'failed'].includes(run.report_state)),
           reportReady: run.state === 'reported' || (run.state === 'succeeded' && run.report_state === 'ready'),

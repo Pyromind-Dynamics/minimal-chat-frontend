@@ -4,6 +4,7 @@ import type { ActionEvent, ObservationEvent } from '../types';
 import { ContentList } from './ContentList';
 import { ProgressBlock } from './ProgressBlock';
 import { SampleRecordsBlock } from './SampleRecordsBlock';
+import { parseToolArgs } from '../toolActivityPresentation';
 import {
   getObservationDisplayText,
   getObservationContent,
@@ -15,9 +16,10 @@ interface ToolCallBlockProps {
   action: ActionEvent;
   observation?: ObservationEvent;
   requestOptions: RequestOptions;
+  compact?: boolean;
 }
 
-export function ToolCallBlock({ action, observation, requestOptions }: ToolCallBlockProps) {
+export function ToolCallBlock({ action, observation, requestOptions, compact = false }: ToolCallBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const progress = observation?.observation as Record<string, unknown> | undefined;
@@ -44,18 +46,18 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
     .trim();
 
   // Extract human-readable summary
-  const summary = getSummary(toolName, args);
+  const summary = getSummary(toolName, args, compact);
   const interruption = getUserInputInterruption(toolName, observation?.observation);
   const isError = !interruption && Boolean(observation?.observation.is_error);
   const error = isError && observation
     ? getToolErrorPresentation(observation.observation)
     : null;
 
-  // Get observation text
-  const obsText = interruption?.message ?? (observation
-    ? getObservationDisplayText(observation.observation)
-    : null);
-  const obsImages = observation
+  const showDetails = isExpanded || (!compact && running);
+  const obsText = (!compact || showDetails)
+    ? interruption?.message ?? (observation ? getObservationDisplayText(observation.observation) : null)
+    : null;
+  const obsImages = observation && showDetails
     ? getObservationContent(observation.observation).filter((item) => item.type !== 'text')
     : [];
 
@@ -69,8 +71,13 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
     ? extractSampleRecords(observation)
     : null;
 
+  const extraResults = <>
+    {progressOutputDir && <ProgressBlock outputDir={progressOutputDir} requestOptions={requestOptions} />}
+    {sampleRecords && <SampleRecordsBlock records={sampleRecords.records} recordCount={sampleRecords.recordCount} />}
+  </>;
+
   return (
-    <div className={`mb-3 ml-2 border-l-2 pl-3 ${interruption ? 'border-gray-300' : isError ? 'border-red-400' : 'border-amber-300'}`}>
+    <div className={`border-l-2 ${compact ? 'mb-1 w-full min-w-0 pl-2' : 'mb-3 ml-2 pl-3'} ${interruption ? 'border-gray-300' : isError ? 'border-red-400' : 'border-amber-300'}`}>
       {thought && (
         <p className="mb-2 whitespace-pre-wrap text-xs leading-5 text-purple-700">
           {thought}
@@ -78,26 +85,32 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
       )}
 
       <button
+        type="button"
+        aria-expanded={showDetails}
         onClick={() => setIsExpanded(!isExpanded)}
-        className="flex items-center gap-2 text-xs text-gray-600 hover:text-gray-900 cursor-pointer"
+        className={`flex cursor-pointer items-center gap-2 text-xs text-gray-600 hover:text-gray-900 ${compact ? 'w-full min-w-0 py-1 text-left' : ''}`}
       >
-        <span className={`font-mono px-1.5 py-0.5 rounded ${interruption ? 'bg-gray-100 text-gray-600' : isError ? 'bg-red-50 text-red-800' : 'bg-amber-50 text-amber-800'}`}>
+        <span className={`rounded px-1.5 py-0.5 font-mono ${compact ? 'max-w-[50%] truncate' : ''} ${interruption ? 'bg-gray-100 text-gray-600' : isError ? 'bg-red-50 text-red-800' : 'bg-amber-50 text-amber-800'}`}>
           {toolName}
         </span>
         {(interruption || cancelled || running || isError) && (
-          <span className={`rounded px-1.5 py-0.5 font-medium ${interruption || cancelled ? 'bg-gray-100 text-gray-600' : isError ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'}`}>
+          <span className={`shrink-0 rounded px-1.5 py-0.5 font-medium ${interruption || cancelled ? 'bg-gray-100 text-gray-600' : isError ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'}`}>
             {interruption?.label ?? (cancelled ? '已取消' : running ? '执行中' : '失败')}
           </span>
         )}
-        <span className="text-gray-500">{summary}</span>
-        <span className="text-gray-400">{isExpanded ? '▼' : '▶'}</span>
+        {summary && <span className={`text-gray-500 ${compact ? 'min-w-0 truncate' : ''}`} title={compact ? summary : undefined}>{summary}</span>}
+        <span aria-hidden="true" className={`shrink-0 text-gray-400 ${compact ? 'ml-auto' : ''}`}>{showDetails ? '▼' : '▶'}</span>
       </button>
 
-      {typeof progress?.validation_case === 'string' && <p className="mt-1 text-xs text-gray-600">验证案例：{progress.validation_case}{typeof progress.candidate_version === 'string' ? ` · 候选版本 ${progress.candidate_version}` : ''}</p>}
-      {phase && <p className="mt-1 text-xs text-blue-600">{phase}</p>}
-      {node && <p className="mt-1 text-xs text-gray-600">当前节点：{node}{verdict ? ` · 验收：${verdict}` : ''}</p>}
-      {(isExpanded || running) && (
-        <div className="mt-2 space-y-2">
+      {(!compact || isExpanded) && <>
+        {typeof progress?.validation_case === 'string' && <p className="mt-1 break-all text-xs text-gray-600">验证案例：{progress.validation_case}{typeof progress.candidate_version === 'string' ? ` · 候选版本 ${progress.candidate_version}` : ''}</p>}
+        {phase && <p className="mt-1 text-xs text-blue-600">{phase}</p>}
+        {node && <p className="mt-1 break-all text-xs text-gray-600">当前节点：{node}{verdict ? ` · 验收：${verdict}` : ''}</p>}
+      </>}
+      {showDetails && (
+        <div className={`mt-2 min-w-0 space-y-2 ${compact ? 'max-h-[min(10rem,30dvh)] overflow-auto' : ''}`}
+          tabIndex={compact ? 0 : undefined} role={compact ? 'region' : undefined}
+          aria-label={compact ? '工具参数与输出' : undefined}>
           <pre className="text-xs bg-gray-50 rounded p-2 overflow-x-auto text-gray-700">
             {JSON.stringify(args, null, 2)}
           </pre>
@@ -115,56 +128,34 @@ export function ToolCallBlock({ action, observation, requestOptions }: ToolCallB
           {error?.suggestion && (
             <p className="text-xs text-red-700">建议：{error.suggestion}</p>
           )}
-          {obsImages.length > 0 && <ContentList content={obsImages} />}
+          {obsImages.length > 0 && <ContentList content={obsImages} imageClassName={compact ? 'max-h-28 max-w-full rounded object-contain' : undefined} />}
+          {compact && extraResults}
         </div>
       )}
 
-      {!isExpanded && obsText && (
+      {!compact && !isExpanded && obsText && (
         <p className={`text-xs mt-1 truncate max-w-md ${interruption ? 'text-gray-600' : isError ? 'text-red-700' : 'text-green-700'}`}>
           {obsText.split('\n')[0]}
         </p>
       )}
 
-      {progressOutputDir && (
-        <ProgressBlock outputDir={progressOutputDir} requestOptions={requestOptions} />
-      )}
-      {sampleRecords && (
-        <SampleRecordsBlock
-          records={sampleRecords.records}
-          recordCount={sampleRecords.recordCount}
-        />
-      )}
+      {!compact && extraResults}
     </div>
   );
 }
 
-function getSummary(toolName: string, args: Record<string, unknown>): string {
+function getSummary(toolName: string, args: Record<string, unknown>, compact: boolean): string {
   if (toolName === 'terminal' && args.command) {
     const cmd = String(args.command);
     return cmd.length > 60 ? cmd.slice(0, 60) + '...' : cmd;
   }
-  if (toolName === 'file_editor' && args.path) {
+  if (args.path && (toolName === 'file_editor' || (compact && ['read', 'write', 'edit'].includes(toolName)))) {
     return String(args.path);
   }
   if (toolName === 'df_submit_pipeline' && args.script_path) {
     return String(args.script_path);
   }
   return '';
-}
-
-function parseToolArgs(args: Record<string, unknown> | string): Record<string, unknown> {
-  if (typeof args !== 'string') {
-    return args;
-  }
-  try {
-    const parsed = JSON.parse(args) as unknown;
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    return { arguments: args };
-  }
-  return { arguments: args };
 }
 
 function extractOutputDir(obs: ObservationEvent | undefined): string | null {

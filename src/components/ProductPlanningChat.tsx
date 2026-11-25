@@ -14,6 +14,7 @@ import {
 } from '../requestOverrides';
 import { PreparationWelcome } from './PreparationWelcome';
 import { ChatPanel } from './ChatPanel';
+import { EchoMindConversationTimeline } from './EchoMindConversationTimeline';
 import { MessageInput } from './MessageInput';
 import { ECHOMIND_MESSAGE_PLACEHOLDER, mainAgentMessages, mergeChatHistory, publicChatEvents, visibleExecutionEvents } from '../echomindConversationPresentation';
 import { snapshotToChatEvents } from '../productSnapshot';
@@ -520,6 +521,8 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const executionEvents = useMemo(() => visibleExecutionEvents(
     isProject ? managerChatEvents(state.events) : state.events,
   ), [isProject, state.events]);
+  const conversationExecutionEvents = useMemo(() => executionEvents.filter(event =>
+    event.kind === 'ActionEvent' || event.kind === 'ObservationEvent'), [executionEvents]);
   const projectMessages = useMemo(() => mainAgentMessages(state.events), [state.events]);
   const preparationMessages = useMemo(() => publicChatEvents(state.events.filter(event => !event.task_id
     && (event.kind !== 'MessageEvent' || !event.project_reply))),
@@ -596,6 +599,9 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
 
   const archivedHistory = (active = true) => <>
     <ChatPanel active={active} autoScroll="follow" logLabel="EchoMind 对话记录" events={history} requestOptions={options}
+      timeline={!isProject && (history.length > 0 || conversationExecutionEvents.length > 0)
+        ? <EchoMindConversationTimeline messages={history} executionEvents={conversationExecutionEvents}
+            snapshot={state.snapshot} options={options} /> : undefined}
       status={state.status} conversationId={state.conversationId} />
     <p className="border-t bg-amber-50 px-4 py-2 text-xs text-amber-800">此会话已归档，仅可查看历史记录和产物。请新建会话继续。</p>
   </>;
@@ -735,6 +741,8 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
               onClick={event => event.currentTarget.focus()}>查看归档对话</button>}
           /> : <EchoMindAgentChat client={chatClient} preparationHistory={preparationMessages}
             managerId={state.snapshot.conversation_id} options={options} onActivity={recordChatActivity}
+            executionEvents={conversationExecutionEvents} executionSnapshot={state.snapshot}
+            onOpenConfirmation={() => openConfirmation()}
             initialSnapshot={preloadedChat?.projectId === currentProjectId ? preloadedChat.snapshot : undefined} />}
         </> : <section ref={chatAreaRef} aria-label="会话工作区" className="flex min-h-0 flex-1 flex-col bg-white">
         {managerStatus}
@@ -743,6 +751,9 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
           {state.snapshot && <ChatPanel
             autoScroll="follow" logLabel="EchoMind 对话记录" emptyText="向 EchoMind 描述任务或补充需求。"
             events={history} pendingOutboundMessages={state.pendingOutboundMessages} status={state.status} requestOptions={options} conversationId={state.conversationId}
+            timeline={(history.length > 0 || conversationExecutionEvents.length > 0) && <EchoMindConversationTimeline
+              messages={history} executionEvents={conversationExecutionEvents} snapshot={state.snapshot}
+              options={options} onOpenConfirmation={() => openConfirmation()} />}
             pendingInputs={state.snapshot.pending_inputs} pendingPermission={state.snapshot.pending_permissions[0]}
             isRespondingToConfirmation={respondingPermission} onRespondToUserInput={respondToInput} readInputMedia={readInputMedia}
             onRespondToConfirmation={state.snapshot.pending_permissions[0] ? accept => { void respondToPermission(accept); } : undefined}
