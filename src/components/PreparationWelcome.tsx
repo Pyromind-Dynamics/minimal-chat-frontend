@@ -8,7 +8,7 @@ export function PreparationWelcome() {
         {[
           ['01', '收集信息', '在对话中核对 Checklist，缺少的信息继续沟通。'],
           ['02', '审阅计划', '查看 workflowPLAN，通过对话修改，确认后创建并启动。'],
-          ['03', '阶段执行', 'Project 工作台按 Stage 展示子 Agent、执行状态和报告。'],
+          ['03', '阶段执行', '在工作台查看各阶段的任务、执行状态和产物登记进度。'],
         ].map(([number, title, description]) => <li key={number} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
           <span className="text-xs font-semibold text-violet-600">{number}</span>
           <h3 className="mt-3 text-sm font-semibold">{title}</h3>

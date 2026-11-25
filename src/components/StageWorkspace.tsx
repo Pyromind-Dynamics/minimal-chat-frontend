@@ -1,34 +1,33 @@
-import type { ChatEvent, ConversationSnapshot } from '../types';
-import type { RequestOptions } from '../api';
-import { useMemo, useState } from 'react';
-import { executionProgressLabel } from '../experimentExecutions';
-import { stageOperations, stageRunOperations } from '../preparation';
-import { SubagentRunsPanel } from './SubagentRunsPanel';
+import { useState } from 'react';
+import type { ConversationSnapshot } from '../types';
+import { executionProgressLabel, type ExperimentExecution } from '../experimentExecutions';
+import { stageOperations } from '../preparation';
 import { WorkflowStageRow } from './WorkflowPlanPreview';
-import { executionLineage } from '../echomindConversationPresentation';
-import { ExecutionDetails } from './ExecutionDetails';
-export function StageWorkspace({ snapshot, events, options }: {
-  snapshot: ConversationSnapshot; events?: ChatEvent[]; options?: RequestOptions;
-}) {
+
+function statusLabel(run: ExperimentExecution) {
+  return run.state === 'succeeded' || run.state === 'reported' ? '已完成' : executionProgressLabel(run);
+}
+
+function deliveryLabel(run: ExperimentExecution) {
+  if (run.state !== 'succeeded' && run.state !== 'reported') return null;
+  switch (run.report_state) {
+    case 'ready': return '报告已就绪';
+    case 'registering': return '正在登记产物';
+    case 'registration_failed': return '产物登记失败';
+    case 'failed': return '报告生成失败';
+    case 'not_started': return null;
+    case 'queued': return '等待生成报告';
+    case 'running': return '正在生成报告';
+    default: return `报告状态：${run.report_state}`;
+  }
+}
+
+export function StageWorkspace({ snapshot }: {snapshot: ConversationSnapshot}) {
   const [selectedRuns, setSelectedRuns] = useState<Record<string, string>>({});
   const [stageRunExpanded, setStageRunExpanded] = useState(false);
-  const history = useMemo(() => {
-    const result = new Map<string, ChatEvent[]>();
-    if (!events?.length) return result;
-    const lineage = executionLineage(snapshot);
-    for (const event of events) {
-      const run = lineage.experimentForEvent(event);
-      if (!run?.stage_id) continue;
-      const existing = result.get(run.run_id) ?? [];
-      existing.push(event);
-      result.set(run.run_id, existing);
-    }
-    return result;
-  }, [events, snapshot]);
   const project = snapshot.project;
   if (!project) return null;
   const executions = snapshot.experiment_executions ?? [];
-  const statusLabel = executionProgressLabel;
   const known = new Set(project.plan.stages.map(stage => stage.id));
   const historical = executions.filter(run => run.stage_id && !known.has(run.stage_id) && run.stage_snapshot)
     .filter((run, index, all) => all.findIndex(other => other.stage_id === run.stage_id) === index)
@@ -85,11 +84,10 @@ export function StageWorkspace({ snapshot, events, options }: {
         const { runs, latest, byTask } = stageActivity.get(stage.id)!;
         const selectionKey = `${project.project_id}:${stage.id}`;
         const selected = runs.find(run => run.run_id === selectedRuns[selectionKey]) ?? latest;
-        const runOperations = stageRunOperations(snapshot, stage.id);
+        const delivery = selected && deliveryLabel(selected);
         return <section key={stage.id} data-stage-id={stage.id} aria-label={`阶段 ${stage.name}`} className="min-w-0 overflow-hidden break-words rounded-lg border bg-white p-3">
-          <SubagentRunsPanel key={`${snapshot.conversation_id}:${stage.id}`} operations={runOperations} executions={runs} />
-          {runs.length === 0 && runOperations.length === 0 && <p className="my-6 text-center text-xs text-slate-400">{stage.enabled ? '尚未执行' : '此阶段未启用'}</p>}
-          {runs.length === 1 && selected && !runOperations.length && <p className="text-xs text-slate-700">{selected.task_name} · {statusLabel(selected)}</p>}
+          {runs.length === 0 && <p className="my-6 text-center text-xs text-slate-400">{stage.enabled ? '尚未执行' : '此阶段未启用'}</p>}
+          {runs.length === 1 && selected && <p className="text-xs text-slate-700">{selected.task_name} · {statusLabel(selected)}</p>}
           {runs.length > 1 && <label className="mt-3 block text-xs text-slate-500">执行历史
             <select aria-label={`${stage.name} 的执行记录`} value={selected?.run_id} onChange={event => setSelectedRuns(current => ({...current, [selectionKey]: event.target.value}))} className="mt-1 block w-full rounded border bg-white p-2 text-xs text-slate-700">
               {runs.map(run => {
@@ -99,8 +97,8 @@ export function StageWorkspace({ snapshot, events, options }: {
               })}
             </select>
           </label>}
-          {selected?.role_id === 'main' && <p className="mt-1 text-xs text-slate-500">{selected.platform_task_id ? `Studio 任务 #${selected.platform_task_id}` : '无 Studio 任务号'}</p>}
-          {selected && options && <ExecutionDetails key={selected.run_id} label="任务执行详情" events={history.get(selected.run_id) ?? []} options={options} />}
+          {selected?.platform_task_id && <p className="mt-1 text-xs text-slate-500">Studio 任务 #{selected.platform_task_id}</p>}
+          {delivery && <p className="mt-1 text-xs text-slate-500">{delivery}</p>}
           {selected?.waiting_reason && <p role={selected.report_state === 'failed' ? 'alert' : 'status'} className="mt-2 break-words whitespace-pre-wrap text-xs text-amber-800">{selected.waiting_reason}</p>}
         </section>;
       })}

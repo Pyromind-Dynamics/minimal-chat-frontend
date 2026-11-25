@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
-import { canCreateProject, managerChatEvents, preparationPlanStatus, stageOperations, stageRunOperations } from '../src/preparation.ts';
+import { canCreateProject, managerChatEvents, preparationPlanStatus, stageOperations } from '../src/preparation.ts';
 import type { ChatEvent, ConversationSnapshot, TimelineOperation } from '../src/types.ts';
 
 const snapshot = {
@@ -65,26 +65,7 @@ test('review plan and creation remain available without the checklist panel', as
       details: { subagent: { version: 1, role: 'search', task: 'Assigned search', status: 'queued' } },
     };
     const withQueue = renderToStaticMarkup(createElement(StageWorkspace, {snapshot: {...state, timeline: [queued]}}));
-    assert.match(withQueue, /子 Agent 运行记录/);
-    assert.match(withQueue, /Assigned search/);
-    const {SubagentRunsPanel} = await server.ssrLoadModule('/src/components/SubagentRunsPanel.tsx');
-    const active = {...queued, item_id: 'active', started_seq: 2, details: {
-      subagent: {version: 1, role: 'search', task: 'Currently running', status: 'running'},
-    }};
-    const finished = {...queued, item_id: 'finished', started_seq: 3, status: 'completed'};
-    const localRuns = renderToStaticMarkup(createElement(SubagentRunsPanel, {operations: [queued, active, finished]}));
-    assert.match(localRuns.replaceAll('<!-- -->', ''), /全部 3/);
-    const summary = localRuns.slice(0, localRuns.indexOf('</summary>'));
-    assert.match(summary, /Currently running/);
-    assert.match(summary, /运行中/);
-    assert.doesNotMatch(summary, /Assigned search|open=/);
-    assert.match(localRuns, /本轮已结束/);
-    const waiting = renderToStaticMarkup(createElement(SubagentRunsPanel, {
-      operations: [finished],
-      executions: [{run_id: 'queued', state: 'waiting_platform', report_state: 'not_started'}],
-    }));
-    assert.match(waiting, /等待平台结果/);
-    assert.doesNotMatch(waiting, /本轮已结束|已完成/);
+    assert.doesNotMatch(withQueue, /子 Agent 运行记录|Assigned search/);
     assert.match(workspace, /工作流阶段依赖关系/); assert.match(workspace, /Init → Eval/);
     assert.doesNotMatch(workspace, /开始开发|重新开发/);
     const {WorkflowPlanPreview} = await server.ssrLoadModule('/src/components/WorkflowPlanPreview.tsx');
@@ -134,7 +115,7 @@ test('review plan and creation remain available without the checklist panel', as
       ],
     }}));
     assert.match(resumed, /<option value="old" selected="">/);
-    assert.match(resumed, /已交付报告/);
+    assert.match(resumed, /Recovered execution · 已完成/);
     assert.doesNotMatch(resumed, /子 Agent 会话|报告已保存|内部执行日志/);
     assert.match(resumed, /第 2 次 · Failed launch · 已失败/);
     const {ToolCallBlock} = await server.ssrLoadModule('/src/components/ToolCallBlock.tsx');
@@ -145,32 +126,6 @@ test('review plan and creation remain available without the checklist panel', as
     }));
     assert.match(tool, /inspect_resource/); assert.match(tool, /4 rows; truncated/);
   } finally {await server.close();}
-});
-
-test('stage run lists use explicit bindings and only unambiguous configured role mappings', () => {
-  const stages = [{id: 'data-stage', kind: 'data'}, {id: 'eval-stage', kind: 'evaluation'}];
-  const base = {
-    ...snapshot,
-    project: {project_id: 'project', plan: {stages}},
-    preparation: {...snapshot.preparation, policy: {workflow_nodes: [
-      {id: 'data', roles: ['dataset']}, {id: 'evaluation', roles: ['eval']},
-    ]}},
-  } as unknown as ConversationSnapshot;
-  const child = (id: string, role: string, execution?: TimelineOperation['execution']) => ({
-    kind: 'operation', category: 'subagent', item_id: id, name: role, execution,
-    details: {subagent: {version: 1, role}},
-  } as TimelineOperation);
-  const data = child('data', 'dataset');
-  const evaluation = child('eval', 'eval');
-  const foreign = child('foreign', 'dataset', {project_id: 'other', stage_id: 'data-stage', task_run_id: 'x', plan_sequence: 1});
-  const bound = child('bound', 'dataset', {project_id: 'project', stage_id: 'eval-stage', task_run_id: 'x', plan_sequence: 1});
-  const state = {...base, timeline: [data, evaluation, foreign, bound]};
-  assert.deepEqual(stageRunOperations(state, 'data-stage'), [data]);
-  assert.deepEqual(stageRunOperations(state, 'eval-stage'), [evaluation, bound]);
-  const ambiguous = {...state, project: {...state.project!, plan: {
-    ...state.project!.plan, stages: [...state.project!.plan.stages, {...stages[0], id: 'data-second'}],
-  }}} as ConversationSnapshot;
-  assert.deepEqual(stageRunOperations(ambiguous, 'data-stage'), []);
 });
 
 test('manager chat omits both child actions and their paired observations', () => {

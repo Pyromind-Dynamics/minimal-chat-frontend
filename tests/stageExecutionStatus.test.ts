@@ -49,6 +49,22 @@ test('current stage workspace displays blocked artifact delivery without old con
     assert.match(html, /\/workspace\/val.jsonl/);
     assert.doesNotMatch(html, /仅重试报告|核对并绑定|后台工作队列/);
 
+    // Main-agent tool events can carry the same Studio task ID as the stage execution.
+    const train = {...run, task_name: '训练并合并', role_id: 'main', platform_task_id: '1320',
+      state: 'succeeded', report_state: 'registering'};
+    const trainWorkspace = renderToStaticMarkup(createElement(StageWorkspace, {
+      snapshot: {conversation_id: 'chat', timeline: [],
+        project: {project_id: 'project', plan: {goal: 'Train', edges: [],
+          stages: [{id: 'stage', name: 'Train', enabled: true}]}},
+        experiment_executions: [train]},
+      events: [{kind: 'ActionEvent', id: 'inspect', task_id: '1320',
+        tool_call: {name: 'inspect_workflow_task', arguments: {}}}], options: {},
+    }));
+    assert.match(trainWorkspace.split('</ol>')[0], /已完成/);
+    assert.match(trainWorkspace, /正在登记产物/);
+    assert.match(trainWorkspace, /Studio 任务 #1320/);
+    assert.doesNotMatch(trainWorkspace, /任务执行详情|个步骤|inspect_workflow_task/);
+
     const {ObservationFormSection} = await server.ssrLoadModule('/src/components/observations/ObservationFormSection.tsx');
     const sidebar = renderToStaticMarkup(createElement(ObservationFormSection, {
       section: {id: 'report', label: 'Dataset', selection: 'analysis_version',

@@ -566,7 +566,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         </section>
       </nav>
       <section className="flex min-h-[480px] min-w-0 flex-col lg:min-h-0">
-        {state.snapshot?.project && <div ref={executionWorkspaceRef} className="contents"><StageWorkspace snapshot={state.snapshot} events={executionEvents} options={options} /></div>}
+        {state.snapshot?.project && <div ref={executionWorkspaceRef} className="contents"><StageWorkspace snapshot={state.snapshot} /></div>}
         <section ref={chatAreaRef} aria-label="聊天区" className="flex min-h-0 flex-1 flex-col bg-white">
         {state.snapshot && <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-slate-50 px-4 py-2">
           <span className="flex items-center gap-2 text-sm text-slate-700" role="status">
