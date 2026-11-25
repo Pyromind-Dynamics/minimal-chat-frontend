@@ -6,7 +6,7 @@ export function reviewDocument(html: string) {
     FORCE_BODY: true,
     ALLOWED_TAGS: [
       'style', 'main', 'section', 'header', 'article', 'div', 'p', 'h1', 'h2', 'h3',
-      'strong', 'em', 'span', 'details', 'summary', 'figure', 'figcaption', 'img',
+      'strong', 'em', 'span', 'br', 'details', 'summary', 'figure', 'figcaption', 'img',
       'table', 'thead', 'tbody', 'tr', 'td', 'th', 'ul', 'ol', 'li', 'pre', 'code',
       'svg', 'rect', 'circle', 'line', 'polyline', 'text', 'g',
     ],
