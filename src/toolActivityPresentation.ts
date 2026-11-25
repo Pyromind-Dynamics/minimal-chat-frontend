@@ -14,6 +14,9 @@ const toolActivities: Record<string, string> = {
   bash: '运行命令',
   df_check_progress: '查询任务进度',
   inspect_workflow_task: '查询任务进度',
+  get_echomind_status: '查询项目状态',
+  read_echomind_report: '读取项目报告',
+  queue_echomind_requirement: '提交需求',
   df_submit_evaluation: '提交评测',
   df_submit_pipeline: '提交数据处理',
   submit_workflow: '提交工作流',
@@ -21,11 +24,12 @@ const toolActivities: Record<string, string> = {
   ask_user: '询问用户',
 };
 
-export function summarizeToolActivity(events: ChatEvent[]): { text: string; running: boolean } | null {
+export function summarizeToolActivity(events: ChatEvent[]): { text: string; status: 'running' | 'waiting' | 'finished' } | null {
   const observations = observationsFor(events);
   const completed = new Map<string, number>();
   let current: string | undefined;
   let running = 0;
+  let executing = false;
   let failed = 0;
   let interrupted = 0;
   for (const event of events) {
@@ -38,14 +42,16 @@ export function summarizeToolActivity(events: ChatEvent[]): { text: string; runn
     } else if (observation?.is_error || observation?.operation_status === 'failed') {
       failed++;
     } else if (!observation || observation.operation_status === 'running') {
-      current = event.tool_call.name === 'ask_user' ? '等待用户回复' : `正在${label}`;
+      const waiting = event.tool_call.name === 'ask_user';
+      current = waiting ? '等待用户回复' : `正在${label}`;
       running++;
+      executing ||= !waiting;
     } else {
       completed.set(label, (completed.get(label) ?? 0) + 1);
     }
   }
 
-  if (current) return { text: running > 1 ? `${current}等 ${running} 项操作…` : `${current}…`, running: true };
+  if (current) return { text: running > 1 ? `${current}等 ${running} 项操作…` : `${current}…`, status: executing ? 'running' : 'waiting' };
 
   const categories = [...completed].sort((left, right) => right[1] - left[1]);
   const parts = categories.slice(0, 2).map(([label, count]) => `${label} ${count} 次`);
@@ -53,7 +59,7 @@ export function summarizeToolActivity(events: ChatEvent[]): { text: string; runn
   if (other) parts.push(`其他 ${other} 次`);
   if (failed) parts.push(`${parts.length ? '' : '工具调用'}失败 ${failed} 次`);
   if (interrupted) parts.push(`${parts.length ? '' : '工具调用'}中断 ${interrupted} 次`);
-  return parts.length ? { text: parts.join(' · '), running: false } : null;
+  return parts.length ? { text: parts.join(' · '), status: 'finished' } : null;
 }
 
 function activityLabel(event: ActionEvent): string {

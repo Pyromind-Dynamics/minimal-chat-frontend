@@ -10,8 +10,13 @@ export function matchesObservationReportVersions(expected: string[], received?: 
   return !!received?.length && received.every(id => expected.includes(id));
 }
 
-export function observationHeadlineMetric(metrics?: NonNullable<StageAnalysis['result']>['metrics']) {
-  return metrics?.find(metric => metric.label === 'result_accuracy') ?? metrics?.[0];
+export function observationHeadlineMetric(stageType: string, metrics?: NonNullable<StageAnalysis['result']>['metrics']) {
+  const accuracy = metrics?.find(metric => metric.label === 'result_accuracy');
+  if (stageType === 'init') {
+    return accuracy ?? metrics?.find(metric => metric.label === 'label_accuracy')
+      ?? metrics?.find(metric => metric.label === 'accuracy');
+  }
+  return accuracy ?? metrics?.[0];
 }
 
 // The labels and tone groups follow the approved RSI HTML demo.

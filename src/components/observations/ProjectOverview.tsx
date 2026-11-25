@@ -93,7 +93,7 @@ function RegisteredReportMetric({ client, projectId, options, node }: {
   const versions = node.report_version_ids ?? [];
   const { report } = useObservationReport(client, projectId, { project_node_id: node.id }, versions, options);
   const metric = matchesObservationReportVersions(versions, report?.report_version_ids)
-    ? observationHeadlineMetric(report?.metrics) : undefined;
+    ? observationHeadlineMetric(node.type, report?.metrics) : undefined;
   return <><strong>{formatMetric(metric?.value, metric?.unit)}</strong>{metric && <small>{metric.label}</small>}</>;
 }
 
@@ -136,7 +136,7 @@ function ProjectObservationContent({ client, projectId, snapshot, options }: Pro
         });
         const detail = details.length === 1 ? details[0] : undefined;
         const current = detail?.currentReport;
-        const metric = current?.status === 'ready' ? observationHeadlineMetric(current.result?.metrics) : undefined;
+        const metric = current?.status === 'ready' ? observationHeadlineMetric(module.stageType, current.result?.metrics) : undefined;
         const status = overview ? moduleStatus(details.map(item => item.status)) : undefined;
         const runCount = new Set(details.flatMap(detail => detail.bindings.map(binding => binding.task_id))).size;
         let keyMetric = <><strong>{formatMetric(metric?.value, metric?.unit)}</strong>{metric && <small>{metric.label}</small>}</>;

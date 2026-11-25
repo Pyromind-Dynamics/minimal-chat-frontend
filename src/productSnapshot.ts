@@ -124,6 +124,7 @@ function toAction(item: TimelineOperation): ActionEvent {
     kind: 'ActionEvent',
     id: item.item_id,
     category: item.category,
+    run_id: item.run_id,
     details: item.details,
     timestamp: subagentDisplay(item.details)?.started_at ?? '',
     source: 'agent',

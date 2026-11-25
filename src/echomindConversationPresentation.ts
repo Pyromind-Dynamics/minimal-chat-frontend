@@ -1,5 +1,6 @@
 import type { ChatEvent, ConversationSnapshot, MessageEvent } from './types';
 import { executionProgressLabel, type ExperimentExecution } from './experimentExecutions.ts';
+import { observationsFor } from './toolActivityPresentation.ts';
 
 export const ECHOMIND_MESSAGE_PLACEHOLDER = '向 EchoMind 描述任务或补充需求…';
 
@@ -11,7 +12,7 @@ export function hasVisibleMessage(event: ChatEvent): event is MessageEvent {
   });
 }
 
-export function presentEchoMindMessage(event: ChatEvent): ChatEvent {
+export function presentEchoMindMessage<T extends ChatEvent>(event: T): T {
   if (event.kind !== 'MessageEvent' || event.source !== 'agent') return event;
   return {
     ...event,
@@ -39,6 +40,36 @@ export function mainAgentMessages(events: ChatEvent[]): MessageEvent[] {
     hasVisibleMessage(event) && event.source === 'agent' && event.project_reply === true);
 }
 
+type MainAgentEntry =
+  | { kind: 'reply'; message: MessageEvent }
+  | { kind: 'tools'; id: string; run: string; events: ChatEvent[] };
+
+export function mainAgentProjectEntries(events: ChatEvent[], tools: ChatEvent[], replies: MessageEvent[]): MainAgentEntry[] {
+  const visibleReplies = new Map(replies.map(message => [message.id, message]));
+  const actions = new Map(tools.flatMap(event => event.kind === 'ActionEvent' ? [[event.id, event] as const] : []));
+  const observations = observationsFor(tools);
+  const entries: MainAgentEntry[] = [];
+  for (const event of events) {
+    if (event.kind === 'MessageEvent') {
+      const message = visibleReplies.get(event.id);
+      if (message) entries.push({ kind: 'reply', message });
+    } else if (event.kind === 'ActionEvent') {
+      const action = actions.get(event.id);
+      if (!action) continue;
+      const run = action.run_id ?? action.task_id ?? action.turn_id ?? action.id;
+      let group = entries.at(-1);
+      if (group?.kind !== 'tools' || group.run !== run) {
+        group = { kind: 'tools', id: action.id, run, events: [] };
+        entries.push(group);
+      }
+      group.events.push(action);
+      const observation = observations.get(action.id);
+      if (observation) group.events.push(observation);
+    }
+  }
+  return entries;
+}
+
 // Each stream owns its event IDs. Compare timestamps only across streams,
 // keeping the recorded order within each stream (including undated notices).
 export function mergeChatHistory(manager: ChatEvent[], chat: ChatEvent[]): ChatEvent[] {
@@ -63,6 +94,19 @@ export function visibleExecutionEvents(events: ChatEvent[]): ChatEvent[] {
     .map(event => event.kind === 'ActionEvent' && event.thought?.length
       ? { ...event, thought: [] }
       : event);
+}
+
+export function splitPreparationTools(messages: ChatEvent[], tools: ChatEvent[]) {
+  const turns = new Set(messages.flatMap(event =>
+    event.kind === 'MessageEvent' && event.llm_message.role === 'user'
+      ? [event.turn_id ?? event.command_id ?? event.id] : []));
+  const preparation: ChatEvent[] = [];
+  const project: ChatEvent[] = [];
+  for (const event of tools) {
+    if (!event.task_id && event.turn_id && turns.has(event.turn_id)) preparation.push(event);
+    else project.push(event);
+  }
+  return { preparation, project };
 }
 
 export interface EchoMindTurn {
@@ -171,6 +215,7 @@ export function groupEchoMindTurns(
   chatEvents: ChatEvent[],
   executionEvents: ChatEvent[],
   executionSnapshot: ConversationSnapshot | null,
+  projectChat = false,
 ) {
   const turns: EchoMindTurn[] = [];
   const entries: ConversationEntry[] = [];
@@ -198,6 +243,7 @@ export function groupEchoMindTurns(
     const owner = event.turn_id ? turnsById.get(event.turn_id) : current;
     if ((hasVisibleMessage(event) && event.llm_message.role !== 'system') || event.kind === 'ServerErrorEvent') {
       if (event.kind === 'MessageEvent' && event.execution_notice) {
+        const message = presentEchoMindMessage(event);
         const statuses = event.execution_notice.has_result && event.run_id
           ? submissionStatuses.get(event.run_id) : undefined;
         const text = event.llm_message.content.flatMap(b => b.type === 'text' ? [b.text] : []).join(' ');
@@ -210,14 +256,14 @@ export function groupEchoMindTurns(
         if (report && event.run_id && link.origin_turn_id && last?.kind === 'notice'
           && last.reports?.[0]?.logicalKey === report.logicalKey && last.message.run_id === event.run_id
           && last.message.execution_notice?.origin_turn_id === link.origin_turn_id) {
-          last.messages.push(event);
+          last.messages.push(message);
           if (!last.reports.some(item => item.id === report.id)) {
             last.reports.push(report);
             last.reports.sort((a, b) => b.version - a.version);
           }
           continue;
         }
-        entries.push({ kind: 'notice', message: event, messages: [event], receiptStatuses, ...(report ? { reports: [report] } : {}) });
+        entries.push({ kind: 'notice', message, messages: [message], receiptStatuses, ...(report ? { reports: [report] } : {}) });
         continue;
       }
       const message = presentEchoMindMessage(event);
@@ -228,8 +274,18 @@ export function groupEchoMindTurns(
         turn: owner, messages: [message] });
       continue;
     }
+    // Chat and Main Agent can independently assign the same operation ID.
+    if (projectChat && owner) {
+      if (event.kind === 'ActionEvent') {
+        owner.execution.push({ ...event, id: `chat:${event.id}`, thought: [] });
+      } else if (event.kind === 'ObservationEvent') {
+        owner.execution.push({ ...event, id: `chat:${event.id}`,
+          action_id: event.action_id && `chat:${event.action_id}`,
+          tool_call_id: event.tool_call_id && `chat:${event.tool_call_id}` });
+      }
+    }
     // Previously saved conversations recorded the binding only in the tool result.
-    const taskId = !event.turn_id ? legacyQueuedRequirement(event) : undefined;
+    const taskId = projectChat || !event.turn_id ? legacyQueuedRequirement(event) : undefined;
     if (owner && taskId && !taskOrigins.has(taskId)) taskOrigins.set(taskId, owner.id);
   }
   const lineage = executionLineage(executionSnapshot);
@@ -293,7 +349,7 @@ export function groupEchoMindTurns(
       if (event.kind === 'ServerErrorEvent' && event.severity === 'error') state.reason = event.detail;
     } else if (directTurn) {
       directTurn.execution.push(event);
-    } else if (!executionSnapshot?.project || !run?.stage_id || (!stages.has(run.stage_id) && !run.stage_snapshot)) {
+    } else if (!projectChat && (!executionSnapshot?.project || !run?.stage_id || (!stages.has(run.stage_id) && !run.stage_snapshot))) {
       background.push(event);
     }
   }
@@ -346,7 +402,9 @@ export function groupEchoMindTurns(
       fallbackTitles.set(turn, titles);
     }
   }
-  return { leading, turns, background, entries };
+  const activeRunId = executionSnapshot?.status === 'running' ? executionSnapshot.active_run_id : undefined;
+  const activeTask = projectChat && activeRunId ? rootForTask(lineage.taskForRun(activeRunId)) : undefined;
+  return { leading, turns, background, entries, activeExecutionTurnId: activeTask ? taskOrigins.get(activeTask) : undefined };
 }
 
 function taskProgressTitle(taskId: string, project: ConversationSnapshot['project']): string {

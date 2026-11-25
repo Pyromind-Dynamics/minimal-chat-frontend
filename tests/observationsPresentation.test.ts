@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ObservationsConfig } from '../src/observationsContract.ts';
 import { observationSections } from '../src/observationForms.ts';
-import { formatMetric, formatTrainingMetric, matchesObservationReportVersions, mergePoints, pointAxis, trainingCurvePath, observationStatusTone, observationBusinessStatus, trainingPanelBindings, observationMessage, observationStageMessage, observationReportMessage, observationNodeStatus } from '../src/observationsPresentation.ts';
+import { formatMetric, formatTrainingMetric, matchesObservationReportVersions, mergePoints, pointAxis, trainingCurvePath, observationStatusTone, observationBusinessStatus, trainingPanelBindings, observationHeadlineMetric, observationMessage, observationStageMessage, observationReportMessage, observationNodeStatus } from '../src/observationsPresentation.ts';
 
 test('detail forms use the published block order and tolerate an older or unsupported layout', () => {
   const config: ObservationsConfig = { schema_version: 1, panels: [], detail_forms: { schema_version: 1, forms: [
@@ -41,6 +41,19 @@ test('a readable subset of the registered reports remains visible', () => {
   assert.equal(matchesObservationReportVersions(['v2', 'v3'], ['v3', 'v4']), false);
   assert.equal(matchesObservationReportVersions(['v2', 'v3'], []), false);
 });
+
+test('the Orchestrator headline shows accuracy independently of report order', () => {
+  const samples = { label: 'evaluated_samples', value: 120, unit: 'count' };
+  const resultAccuracy = { label: 'result_accuracy', value: 0.81, unit: 'ratio' };
+  const labelAccuracy = { label: 'label_accuracy', value: 0.82, unit: 'ratio' };
+  const accuracy = { label: 'accuracy', value: 0.8, unit: 'ratio' };
+  assert.equal(observationHeadlineMetric('init', [samples, labelAccuracy]), labelAccuracy);
+  assert.equal(observationHeadlineMetric('init', [samples, accuracy, labelAccuracy, resultAccuracy]), resultAccuracy);
+  assert.equal(observationHeadlineMetric('init', [samples, accuracy]), accuracy);
+  assert.equal(observationHeadlineMetric('init', [samples]), undefined);
+  assert.equal(observationHeadlineMetric('eval', [samples]), samples);
+});
+
 test('sparse axes remain independent, and source identities deduplicate', () => {
   const point: MetricPoint = { key: 'loss', value: 2, unit: 'number', source_point_id: 'run:1:loss', source_run_id: 'run', log_step: 1, training_step: null, time: 1700000000 };
   const metric = { key: 'loss', title: 'Loss', unit: 'number' as const, axis: 'training_step' as const, axis_key: 'global_step' };

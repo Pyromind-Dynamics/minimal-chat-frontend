@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { pendingMessageEvents, projectMessageEvents, receivedUserCommandIds } from '../src/productMessages.ts';
+import { pendingTimelineEvents, projectTimelineEvents, receivedUserCommandIds } from '../src/productMessages.ts';
 import { mainAgentMessages } from '../src/echomindConversationPresentation.ts';
 import { snapshotToChatEvents } from '../src/productSnapshot.ts';
 import type { ConversationSnapshot, ProductEvent } from '../src/types.ts';
@@ -23,7 +23,7 @@ function texts(value: ConversationSnapshot) {
 }
 
 test('user and multiple assistant messages in one run retain separate identities', () => {
-  const result = projectMessageEvents(snapshot, [
+  const result = projectTimelineEvents(snapshot, [
     event(2, 'message.started', 'a1'), event(3, 'message.delta', 'a1', 'before tool'),
     event(4, 'message.completed', 'a1', 'before tool'), event(6, 'message.started', 'a2'),
     event(7, 'message.delta', 'a2', 'final'),
@@ -34,20 +34,20 @@ test('user and multiple assistant messages in one run retain separate identities
 test('snapshot rebases deltas at its cursor and retains newer text and completion', () => {
   const events = [event(2, 'message.started', 'a'), event(3, 'message.delta', 'a', 'one'),
     event(4, 'message.delta', 'a', ' two'), event(5, 'message.completed', 'a', 'one two!')];
-  const partial = { ...projectMessageEvents(snapshot, events.slice(0, 2)), through_seq: 3 };
-  assert.deepEqual(texts(projectMessageEvents(partial, events.slice(0, 3))), ['hello', 'one two']);
-  assert.deepEqual(texts(projectMessageEvents(partial, events)), ['hello', 'one two!']);
-  assert.deepEqual(pendingMessageEvents(partial, events).map((item) => item.seq), [4, 5]);
-  const complete = { ...projectMessageEvents(partial, events), through_seq: 5 };
-  assert.deepEqual(texts(projectMessageEvents(complete, events)), ['hello', 'one two!']);
+  const partial = { ...projectTimelineEvents(snapshot, events.slice(0, 2)), through_seq: 3 };
+  assert.deepEqual(texts(projectTimelineEvents(partial, events.slice(0, 3))), ['hello', 'one two']);
+  assert.deepEqual(texts(projectTimelineEvents(partial, events)), ['hello', 'one two!']);
+  assert.deepEqual(pendingTimelineEvents(partial, events).map((item) => item.seq), [4, 5]);
+  const complete = { ...projectTimelineEvents(partial, events), through_seq: 5 };
+  assert.deepEqual(texts(projectTimelineEvents(complete, events)), ['hello', 'one two!']);
 });
 
 test('reconnection restores an unfinished snapshot without receiving message.started again', () => {
-  const partial = { ...projectMessageEvents(snapshot, [event(2, 'message.started', 'a'),
+  const partial = { ...projectTimelineEvents(snapshot, [event(2, 'message.started', 'a'),
     event(3, 'message.delta', 'a', 'one')]), through_seq: 3 };
   const delta = event(4, 'message.delta', 'a', ' two');
-  assert.deepEqual(texts(projectMessageEvents(partial, [delta, delta])), ['hello', 'one two']);
-  assert.deepEqual(texts(projectMessageEvents(partial, [{ ...delta, conversation_id: 'other' }])), ['hello', 'one']);
+  assert.deepEqual(texts(projectTimelineEvents(partial, [delta, delta])), ['hello', 'one two']);
+  assert.deepEqual(texts(projectTimelineEvents(partial, [{ ...delta, conversation_id: 'other' }])), ['hello', 'one']);
 });
 
 test('completion works without an overlay or REST refresh and keeps operation order', () => {
@@ -56,9 +56,45 @@ test('completion works without an overlay or REST refresh and keeps operation or
     { kind: 'operation', item_id: 'tool', started_seq: 5, name: 'read', category: 'tool',
       status: 'running', arguments: {}, output: [], thought: [], details: null },
   ] };
-  const result = projectMessageEvents(withTool, [event(6, 'message.completed', 'final', 'done')]);
+  const result = projectTimelineEvents(withTool, [event(6, 'message.completed', 'final', 'done')]);
   assert.deepEqual(texts(result), ['hello', 'done']);
   assert.deepEqual(result.timeline.map((item) => item.item_id), ['user', 'tool', 'final']);
+});
+
+test('tool status is projected from SSE and rebased on the snapshot cursor', () => {
+  const start = { ...event(2, 'operation.started', ''), payload: {
+    operation_id: 'read-file', name: 'read', category: 'tool', arguments: { path: 'config.json' },
+  } };
+  const update = { ...event(3, 'operation.progress', ''), payload: {
+    operation_id: 'read-file', output: [{ type: 'text', text: 'partial result' }],
+  } };
+  const fail = { ...event(4, 'operation.failed', ''), payload: {
+    operation_id: 'read-file', error_code: 'tool_timeout',
+  } };
+  const running = { ...projectTimelineEvents(snapshot, [start]), through_seq: 2 };
+  assert.equal(running.timeline[1].kind, 'operation');
+  assert.equal(running.timeline[1].status, 'running');
+  const result = projectTimelineEvents(running, [start, update, fail, fail]);
+  const tool = result.timeline[1];
+  assert.ok(tool.kind === 'operation');
+  assert.equal(tool.status, 'failed');
+  assert.equal(tool.completed_seq, 4);
+  assert.equal(tool.error_code, 'tool_timeout');
+  assert.deepEqual(tool.output, update.payload.output);
+  assert.equal(result.timeline.length, 2);
+  assert.deepEqual(projectTimelineEvents({ ...result, through_seq: 4 }, [start, fail]).timeline, result.timeline);
+});
+
+test('an operation completed without a start frame appears immediately', () => {
+  const finish = { ...event(2, 'operation.completed', ''), turn_id: 'turn', payload: {
+    operation_id: 'recover', name: 'read', output: [{ type: 'text', text: 'result' }],
+  } };
+  const item = projectTimelineEvents(snapshot, [finish]).timeline[1];
+  assert.ok(item.kind === 'operation');
+  assert.equal(item.category, 'observation');
+  assert.equal(item.status, 'completed');
+  assert.equal(item.turn_id, 'turn');
+  assert.deepEqual(item.output, finish.payload.output);
 });
 
 
@@ -68,36 +104,36 @@ test('callback steering acknowledges commands across SSE replay and refreshed sn
     run_id: 'callback:graph', payload: { message_id: `u${index}`, role: 'user',
       command_id: commandId, content: [{ type: 'text', text: 'same message' }] },
   }));
-  const projected = projectMessageEvents(snapshot, [...updates, ...updates]);
+  const projected = projectTimelineEvents(snapshot, [...updates, ...updates]);
   assert.deepEqual([...receivedUserCommandIds(projected)], ['run', 'command-1', 'command-2']);
   assert.equal(projected.timeline.filter((item) => item.kind === 'message' && item.role === 'user').length, 3);
   const refreshed = { ...projected, through_seq: 3 };
-  assert.deepEqual(projectMessageEvents(refreshed, updates), refreshed);
+  assert.deepEqual(projectTimelineEvents(refreshed, updates), refreshed);
   assert.equal(receivedUserCommandIds(refreshed).has('callback:graph'), false);
 });
 
 test('streamed messages keep the first event time through completion and snapshot refresh', () => {
   const start = { ...event(2, 'message.started', 'reply'), occurred_at: '2026-11-23T10:05:14Z' };
   const finish = { ...event(3, 'message.completed', 'reply', 'done'), occurred_at: '2026-11-23T10:05:28Z' };
-  const streamed = projectMessageEvents(snapshot, [start, finish]);
+  const streamed = projectTimelineEvents(snapshot, [start, finish]);
   const reply = streamed.timeline[1];
   assert.equal(reply.kind, 'message');
   assert.equal(reply.started_at, start.occurred_at);
-  assert.deepEqual(projectMessageEvents({ ...streamed, through_seq: 3 }, [start, finish]).timeline, streamed.timeline);
+  assert.deepEqual(projectTimelineEvents({ ...streamed, through_seq: 3 }, [start, finish]).timeline, streamed.timeline);
 });
 
 test('a public preview stays attached to its original turn through reload and completion', () => {
   const first = event(2, 'message.delta', 'public', 'stage');
   const origin = { origin_turn_id: 'older-turn', source_message_id: 'manager-item', public_copy: true };
   first.payload.execution_notice = { ...origin, source_seq: 41 };
-  const partial = projectMessageEvents(snapshot, [first]);
+  const partial = projectTimelineEvents(snapshot, [first]);
   const row = partial.timeline[1];
   assert.ok(row.kind === 'message');
   assert.equal(row.execution_notice?.origin_turn_id, 'older-turn');
   assert.equal(row.status, 'streaming');
   const done = event(3, 'message.completed', 'public', 'stage result');
   done.payload.execution_notice = { ...origin, has_result: true };
-  const result = projectMessageEvents({ ...partial, through_seq: 2 }, [first, done, done]);
+  const result = projectTimelineEvents({ ...partial, through_seq: 2 }, [first, done, done]);
   assert.deepEqual(texts(result), ['hello', 'stage result']);
   assert.ok(result.timeline[1].kind === 'message' && result.timeline[1].execution_notice?.has_result);
 });
@@ -109,11 +145,11 @@ test('Main Agent public reply is visible before completion and resumes without d
   next.payload.project_reply_delta = '完成';
   const readMain = (value: ConversationSnapshot) => mainAgentMessages(snapshotToChatEvents(value))
     .flatMap(message => message.llm_message.content).map(block => block.type === 'text' && block.text);
-  const partial = { ...projectMessageEvents(snapshot, [first]), through_seq: 2 };
+  const partial = { ...projectTimelineEvents(snapshot, [first]), through_seq: 2 };
   assert.deepEqual(readMain(partial), ['评估']);
-  const resumed = projectMessageEvents(partial, [first, next]);
+  const resumed = projectTimelineEvents(partial, [first, next]);
   assert.deepEqual(readMain(resumed), ['评估完成']);
   const withdrawn = event(4, 'message.completed', 'main-result');
   withdrawn.payload.project_reply = null;
-  assert.deepEqual(readMain(projectMessageEvents(partial, [next, withdrawn])), []);
+  assert.deepEqual(readMain(projectTimelineEvents(partial, [next, withdrawn])), []);
 });
