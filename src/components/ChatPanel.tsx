@@ -1,5 +1,5 @@
 import type { ReadInputMedia } from '../types';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { RequestOptions } from '../api';
 import {
@@ -28,6 +28,7 @@ import { UserInputCard } from './UserInputCard';
 import { getObservationContent, getObservationDisplayText } from '../toolErrorPresentation';
 
 interface ChatPanelProps {
+  active?: boolean;
   autoScroll?: 'always' | 'follow';
   logLabel?: string;
   emptyText?: string;
@@ -52,6 +53,7 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({
+  active = true,
   autoScroll = 'always',
   logLabel,
   emptyText = 'Start a conversation by sending a message below.',
@@ -89,22 +91,23 @@ export function ChatPanel({
       size + (block.type === 'text' ? block.text.length : 0), 0) : 0
   ), 0);
 
-  // Auto-scroll to bottom on new events
-  useEffect(() => {
-    if (pendingInputIds) return;
-    if (autoScroll === 'follow') {
-      if (followRef.current && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-      return;
+  useLayoutEffect(() => {
+    if (autoScroll === 'follow' && active && !pendingInputIds && followRef.current && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
+  }, [active, visibleEvents, isCondensing, pendingOutboundMessages.length, textLength, pendingInputIds, contentKey, autoScroll, timeline]);
+
+  useEffect(() => {
+    if (!active || pendingInputIds || autoScroll === 'follow') return;
     const changed = previousContentKey.current !== contentKey;
     previousContentKey.current = contentKey;
     if (changed && contentKey !== undefined) contentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     else bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [visibleEvents, isCondensing, pendingOutboundMessages.length, textLength, pendingInputIds, contentKey, autoScroll, timeline]);
+  }, [active, visibleEvents, isCondensing, pendingOutboundMessages.length, textLength, pendingInputIds, contentKey, autoScroll, timeline]);
 
   useEffect(() => {
-    if (pendingInputIds) inputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [pendingInputIds]);
+    if (active && pendingInputIds) inputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [active, pendingInputIds]);
 
   if (
     visibleEvents.length === 0
@@ -137,7 +140,7 @@ export function ChatPanel({
     <>
     <div ref={scrollRef} role={logLabel ? 'log' : undefined} aria-label={logLabel} tabIndex={logLabel ? 0 : undefined} onScroll={autoScroll === 'follow' ? () => {
       const element = scrollRef.current;
-      if (!element) return;
+      if (!active || !element) return;
       const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 40;
       followRef.current = atBottom;
       setFollowing(atBottom);

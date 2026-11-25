@@ -712,7 +712,7 @@ function ChatApp() {
             href={`?chat=echomind&userId=${encodeURIComponent(activeUserId)}`}
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
           >
-            打开 EchoMind Manager
+            打开 EchoMind
           </a>
         </div>
         <div className="flex items-center gap-2 overflow-x-auto pb-2">

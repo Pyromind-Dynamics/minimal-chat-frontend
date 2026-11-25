@@ -5,7 +5,7 @@ import type {
   PanelConfig, RunBinding, StageAnalysis,
 } from '../../observationsContract';
 import { useObservationReport } from '../../hooks/useProjectObservations';
-import { formatMetric, observationReportMessage } from '../../observationsPresentation';
+import { formatMetric, matchesObservationReportVersions, observationBusinessStatus, observationReportMessage } from '../../observationsPresentation';
 import type { ProductClient } from '../../productClient';
 import { DatasetResultPanel } from './DatasetResultPanel';
 import { TrainingMetricPanel } from './TrainingMetricPanel';
@@ -133,16 +133,22 @@ export function ObservationFormSection(props: SectionProps) {
   const analysis = selected?.analysis ?? (!selected ? currentReport : undefined);
   const needsReport = section.blocks.some(block => block.type === 'dataset_files' ||
     ((block.type === 'metrics' || block.type === 'status') && block.source === 'report'));
+  const needsRegisteredMetrics = (node.type === 'train' || node.type === 'eval') && section.selection === 'analysis_version' &&
+    observationBusinessStatus(status) === 'completed' && (!selected || selected.analysis === currentReport) &&
+    !analysis?.result?.metrics.length;
   const query: ObservationReportQuery = { project_node_id: node.id };
   if (needsReport) {
     query.report_version_id = selected?.reportVersionId;
     query.analysis_job_id = section.selection === 'analysis_version' && analysis?.status === 'ready'
       ? analysis.job_id : selected?.analysisJobId;
   }
-  const reportIds = needsReport && section.selection === 'analysis_version' ? node.report_version_ids ?? [] : [];
+  const reportIds = (needsReport || needsRegisteredMetrics) && section.selection === 'analysis_version'
+    ? node.report_version_ids ?? [] : [];
   const source = useObservationReport(client, projectId, query, reportIds, options);
   const report = source.report?.report_version_ids.length ? source.report : undefined;
   const result = needsReport && !report ? undefined : analysis?.result;
+  const registeredReport = needsRegisteredMetrics && matchesObservationReportVersions(reportIds, report?.report_version_ids)
+    ? report : undefined;
 
   if (section.selection === 'task_id' && !selected?.run) return null;
 
@@ -179,6 +185,9 @@ export function ObservationFormSection(props: SectionProps) {
       case 'status':
         if (deliveryNotice && !selected) return null;
         if (block.source === 'analysis' && result) return null;
+        if (block.source === 'analysis' && analysis?.status === 'failed' && registeredReport) {
+          return statusText(`${block.subject}报告已登记，阶段分析暂不可用`);
+        }
         if (block.source === 'report') {
           if (source.loading) return statusText(block.loading_message || '正在读取报告');
           if (source.unavailable) return <>
@@ -190,7 +199,7 @@ export function ObservationFormSection(props: SectionProps) {
         }
         return deliveryNotice ? null : statusText(observationReportMessage(block.subject, status, analysis?.status));
       case 'metrics': {
-        const metrics = block.source === 'report' ? report?.metrics : result?.metrics;
+        const metrics = block.source === 'report' ? report?.metrics : registeredReport?.metrics ?? result?.metrics;
         return metrics?.length ? <ReportMetrics metrics={metrics} groups={block.groups ?? []} asTable={node.type === 'init' || node.type === 'eval'} />
           : metrics && block.empty_message ? statusText(block.empty_message) : null;
       }
@@ -198,7 +207,7 @@ export function ObservationFormSection(props: SectionProps) {
         return report?.files.length ? <DatasetResultPanel files={report.files} />
           : report && statusText(block.empty_message);
       case 'summary':
-        return result?.summary && <p>{result.summary}</p>;
+        return result?.summary ? <p>{result.summary}</p> : registeredReport?.summaries?.map(summary => <p key={summary}>{summary}</p>);
       case 'findings':
         return result && result.findings.length > 0 && <ul>{result.findings.map((finding, index) => <li key={index}>{finding}</li>)}</ul>;
       case 'artifacts':
@@ -220,7 +229,11 @@ export function ObservationFormSection(props: SectionProps) {
 
   const blocks = section.blocks.map(block => renderBlock(block));
   if (!deliveryNotice && !blocks.some(Boolean)) return null;
+  const trainingHeading = node.type === 'train'
+    ? section.selection === 'task_id' ? '训练过程曲线' : '训练报告汇总'
+    : null;
   return <section className="observation-card" aria-label={section.label}>
+    {trainingHeading && <h4 className="observation-section-title">{trainingHeading}</h4>}
     {deliveryNotice}
     {blocks.map((block, index) => <Fragment key={index}>{block}</Fragment>)}
   </section>;

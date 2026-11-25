@@ -1,6 +1,8 @@
 import type { ChatEvent, ConversationSnapshot, MessageEvent } from './types';
 import { executionProgressLabel, type ExperimentExecution } from './experimentExecutions.ts';
 
+export const ECHOMIND_MESSAGE_PLACEHOLDER = '向 EchoMind 描述任务或补充需求…';
+
 export function hasVisibleMessage(event: ChatEvent): event is MessageEvent {
   return event.kind === 'MessageEvent' && event.llm_message.content.some(item => {
     if (item.type === 'text') return item.text.trim().length > 0;
@@ -19,11 +21,35 @@ export function presentEchoMindMessage(event: ChatEvent): ChatEvent {
         ...item,
         text: item.text
           .replace(/(?:EchoMind\s+)?(?:Main\s+Agent|Manager(?:\s+Agent)?|执行\s*Agent|主\s*Agent)\s*(?:的\s*)?队列/gi, '执行队列')
-          .replace(/\b(?:EchoMind\s+Manager|Main\s+Agent|Manager\s+Agent)\b|(?:执行|主)\s*Agent/gi, '执行流程')
-          .replace(/\bChat\s+Agent\b|对话\s*Agent/gi, 'EchoMind'),
+          .replace(/\b(?:EchoMind\s+Manager|(?:EchoMind\s+)?(?:Manager|Main|Chat)\s+Agent)\b|(?:对话|执行|主)\s*Agent/gi, 'EchoMind'),
       } : item),
     },
   };
+}
+
+export function publicChatEvents(events: ChatEvent[]): ChatEvent[] {
+  return withRecoveredMessages(events).filter(event => event.kind === 'ServerErrorEvent' || (
+    hasVisibleMessage(event)
+    && (event.llm_message.role === 'user' || event.llm_message.role === 'assistant')
+  )).map(presentEchoMindMessage);
+}
+
+// Each stream owns its event IDs. Compare timestamps only across streams,
+// keeping the recorded order within each stream (including undated notices).
+export function mergeChatHistory(manager: ChatEvent[], chat: ChatEvent[]): ChatEvent[] {
+  const result: ChatEvent[] = [];
+  let index = 0;
+  for (const event of chat) {
+    const time = 'timestamp' in event ? Date.parse(event.timestamp) : NaN;
+    while (index < manager.length) {
+      const next = manager[index];
+      if ('timestamp' in next && Date.parse(next.timestamp) > time) break;
+      result.push(next);
+      index++;
+    }
+    result.push('id' in event && event.id ? { ...event, id: 'chat:' + event.id } : event);
+  }
+  return result.concat(manager.slice(index));
 }
 
 export function visibleExecutionEvents(events: ChatEvent[]): ChatEvent[] {

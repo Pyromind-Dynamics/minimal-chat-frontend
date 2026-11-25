@@ -1,6 +1,17 @@
 import type { ProjectSummary } from './echomindContract';
 import type { ConversationSummary } from './types';
 
+export function newestCreatedFirst(
+  a: { created_at?: string | null },
+  b: { created_at?: string | null },
+) {
+  const aTime = Date.parse(a.created_at ?? '');
+  const bTime = Date.parse(b.created_at ?? '');
+  if (Number.isNaN(aTime)) return Number.isNaN(bTime) ? 0 : 1;
+  if (Number.isNaN(bTime)) return -1;
+  return bTime - aTime;
+}
+
 export interface EchoMindSelection {
   project: ProjectSummary | null;
   conversationId: string;

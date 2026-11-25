@@ -1,14 +1,16 @@
 import './ProjectOverview.css';
 import { Fragment, useId, useState, type ReactNode } from 'react';
 import type { RequestOptions } from '../../api';
-import type { ObservationOverview } from '../../observationsContract';
+import type { ObservationNode, ObservationOverview } from '../../observationsContract';
 import type { ProductClient } from '../../productClient';
 import type { ConversationSnapshot } from '../../types';
-import { useProjectObservations } from '../../hooks/useProjectObservations';
+import { useObservationReport, useProjectObservations } from '../../hooks/useProjectObservations';
 import {
   formatMetric,
+  matchesObservationReportVersions,
   observationBusinessStatus,
   observationEvidenceVersion,
+  observationHeadlineMetric,
   observationNodeStatus,
   observationStatusTone,
   trainingPanelBindings,
@@ -18,9 +20,10 @@ import { ObservationFormSection } from './ObservationFormSection';
 
 type Props = {
   client: ProductClient;
-  projectId: string | null;
+  projectId: string;
   snapshot?: ConversationSnapshot | null;
   options: RequestOptions;
+  hidden?: boolean;
 };
 const modules = [
   { id: 'orchestrator', label: 'Orchestrator', stageType: 'init' },
@@ -64,8 +67,8 @@ function moduleStatus(businessStatuses: string[]): string {
   return ['failed', 'stopped', 'needs_input', 'running', 'waiting'].find(status => statuses.includes(status)) ?? 'pending';
 }
 
-function ModuleRow({ module, status, expanded, toggle, value, caption, children }: {
-  module: Module; status?: string; expanded: boolean; toggle: () => void; value: string; caption?: string; children: ReactNode;
+function ModuleRow({ module, status, expanded, toggle, metric, children }: {
+  module: Module; status?: string; expanded: boolean; toggle: () => void; metric: ReactNode; children: ReactNode;
 }) {
   const id = useId();
   const label = status === 'needs_input' ? 'waiting' : status;
@@ -78,15 +81,25 @@ function ModuleRow({ module, status, expanded, toggle, value, caption, children 
         <svg className="rsi-preview-chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m4 2 4 4-4 4" /></svg>
       </span>
       <span className={label ? `rsi-status rsi-status--${tone}` : 'rsi-status'}>{label ?? '—'}</span>
-      <span className="rsi-overview-value"><strong>{value}</strong>{caption && <small>{caption}</small>}</span>
+      <span className="rsi-overview-value">{metric}</span>
     </button>
     {expanded && <div id={id} className="rsi-module-body">{children}</div>}
   </section>;
 }
 
-export function ProjectOverview(props: Props) {
+function RegisteredReportMetric({ client, projectId, options, node }: {
+  client: ProductClient; projectId: string; options: RequestOptions; node: ObservationNode;
+}) {
+  const versions = node.report_version_ids ?? [];
+  const { report } = useObservationReport(client, projectId, { project_node_id: node.id }, versions, options);
+  const metric = matchesObservationReportVersions(versions, report?.report_version_ids)
+    ? observationHeadlineMetric(report?.metrics) : undefined;
+  return <><strong>{formatMetric(metric?.value, metric?.unit)}</strong>{metric && <small>{metric.label}</small>}</>;
+}
+
+export function ProjectOverview({ hidden, inert, ...props }: Props & { inert?: boolean }) {
   const [open, setOpen] = useState(() => typeof window === 'undefined' || window.matchMedia('(min-width: 761px)').matches);
-  return <aside className={`rsi-sidebar${open ? '' : ' is-collapsed'}`} aria-label="RSI Overview">
+  return <aside className={`rsi-sidebar${open ? '' : ' is-collapsed'}`} aria-label="RSI Overview" hidden={hidden} inert={inert}>
     <header>
       <button type="button" className="rsi-sidebar-toggle" aria-label={open ? 'Collapse RSI Overview' : 'Expand RSI Overview'} aria-expanded={open} onClick={() => setOpen(value => !value)}>
         <span className="rsi-desktop-label">{open ? '⇥' : '⇤'}</span>
@@ -94,13 +107,11 @@ export function ProjectOverview(props: Props) {
       </button>
       {open && <h2>RSI Overview</h2>}
     </header>
-    {open && (props.projectId
-      ? <ProjectObservationContent key={props.projectId} {...props} projectId={props.projectId} />
-      : <div className="rsi-no-project"><p>Select a project to view training and evaluation results</p></div>)}
+    {open && <ProjectObservationContent key={props.projectId} {...props} />}
   </aside>;
 }
 
-function ProjectObservationContent({ client, projectId, snapshot, options }: Props & { projectId: string }) {
+function ProjectObservationContent({ client, projectId, snapshot, options }: Props) {
   const { overview, error, refresh } = useProjectObservations(client, projectId, options, observationEvidenceVersion(snapshot, projectId));
   const [expanded, setExpanded] = useState<Module['id'][]>([]);
   return <div className="rsi-toolbar project-observations">
@@ -123,25 +134,26 @@ function ProjectObservationContent({ client, projectId, snapshot, options }: Pro
             stage.current_run_ids.length === report.run_ids.length && report.run_ids.every(runId => stage.current_run_ids.includes(runId)));
           return { stage, status, bindings, reports, currentReport };
         });
-        const current = details.length === 1 ? details[0].currentReport : undefined;
-        const metric = current?.status === 'ready' ? current.result?.metrics[0] : undefined;
+        const detail = details.length === 1 ? details[0] : undefined;
+        const current = detail?.currentReport;
+        const metric = current?.status === 'ready' ? observationHeadlineMetric(current.result?.metrics) : undefined;
+        const status = overview ? moduleStatus(details.map(item => item.status)) : undefined;
         const runCount = new Set(details.flatMap(detail => detail.bindings.map(binding => binding.task_id))).size;
-        let value = formatMetric(metric?.value, metric?.unit);
-        let caption = metric?.label;
+        let keyMetric = <><strong>{formatMetric(metric?.value, metric?.unit)}</strong>{metric && <small>{metric.label}</small>}</>;
         if (module.id === 'dataset' && stages.length) {
-          value = `${stages.length} ${stages.length === 1 ? 'node' : 'nodes'}`;
-          caption = undefined;
-        }
-        if (module.id === 'train' && runCount) {
-          value = `${runCount} ${runCount === 1 ? 'run' : 'runs'}`;
-          caption = undefined;
+          keyMetric = <strong>{stages.length} {stages.length === 1 ? 'node' : 'nodes'}</strong>;
+        } else if (module.id === 'train' && runCount) {
+          keyMetric = <strong>{runCount} {runCount === 1 ? 'run' : 'runs'}</strong>;
+        } else if ((module.id === 'orchestrator' || module.id === 'eval') && !metric &&
+          status === 'completed' && detail?.stage.report_version_ids?.length) {
+          keyMetric = <RegisteredReportMetric client={client} projectId={projectId} options={options} node={detail.stage} />;
         }
         const emptyMessage = error ? '暂时无法读取模块状态'
           : !overview ? '正在读取模块状态'
           : module.id === 'tracer' || module.id === 'inference' ? `${module.label} 资源接口尚未接入，暂无资源状态`
           : `当前计划没有${stageSubjects[module.id]}阶段`;
-        return <ModuleRow key={module.id} module={module} status={overview ? moduleStatus(details.map(detail => detail.status)) : undefined}
-          expanded={expanded.includes(module.id)} value={value} caption={caption} toggle={() => setExpanded(items =>
+        return <ModuleRow key={module.id} module={module} status={status}
+          expanded={expanded.includes(module.id)} metric={keyMetric} toggle={() => setExpanded(items =>
             items.includes(module.id) ? items.filter(item => item !== module.id) : [...items, module.id])}>
           {details.length && overview ? details.map(({ stage, status, bindings, reports, currentReport }) => {
             const panel = overview.config.panels.find(item => item.project_node_id === stage.id);

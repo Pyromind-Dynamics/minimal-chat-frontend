@@ -74,7 +74,7 @@ export function TrainingMetricPanel({ client, projectId, panel, binding, configV
   const status = observationBusinessStatus(binding.business_status);
   let placeholder = observationStageMessage('训练', binding.business_status === 'cancelled' ? 'cancelled' : status);
   if (status === 'running') placeholder = '训练正在执行，等待指标上报';
-  if (status === 'completed') placeholder = '训练已完成，暂无可展示的历史指标';
+  if (status === 'completed') placeholder = '当前未读取到逐步训练曲线数据';
   if (status === 'failed') placeholder = '训练执行失败，暂无指标';
   if (loading) placeholder = '正在读取训练指标';
   if (result?.page.observation_status === 'unavailable') placeholder = '暂时无法从数据源读取训练指标';

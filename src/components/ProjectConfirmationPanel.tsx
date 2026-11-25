@@ -13,10 +13,10 @@ export function ProjectConfirmationPanel({ snapshot, onRespond, onPermission, re
   const inputs = snapshot.pending_inputs ?? [];
   const permissions = snapshot.pending_permissions;
   const count = inputs.length + permissions.length;
+  if (!count) return null;
   return <aside aria-label="待确认" className="project-confirmations flex min-h-0 min-w-0 flex-col border-l bg-slate-50">
     <header className="flex shrink-0 items-center justify-between border-b bg-white px-4 py-3"><h2 className="font-semibold">待确认</h2><span role="status" className="rounded-full bg-violet-100 px-2.5 py-1 text-xs text-violet-800">{count} 项</span></header>
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
-      {!count && <div className="rounded-xl border border-dashed bg-white p-6 text-center"><p className="text-sm text-slate-600">暂无待确认事项</p><p className="mt-2 text-xs leading-5 text-slate-400">需要你作决定时，会在这里展示结果与确认操作。</p></div>}
       {inputs.map(request => <UserInputCard
         key={`${snapshot.conversation_id}:${request.request_id}`}
         request={request} onRespond={onRespond} readMedia={readMedia} />)}

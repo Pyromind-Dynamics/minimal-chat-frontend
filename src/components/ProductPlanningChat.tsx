@@ -1,19 +1,22 @@
 import './ProductPlanningChat.css';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { RequestOptions } from '../api';
 import { useChatContext } from '../ChatContext';
 import { useProductEventStream } from '../hooks/useProductEventStream';
 import type { EchoMindChatClient, ProductClient } from '../productClient';
 import type { ConversationSnapshot, ConversationSummary, ProductEvent } from '../types';
 import type { ProjectSummary } from '../echomindContract';
-import { resolveEchoMindSelection } from '../echomindNavigation';
+import { newestCreatedFirst, resolveEchoMindSelection } from '../echomindNavigation';
 import {
   loadRequestOverrides,
   saveRequestOverrides,
   type RequestOverrideFields,
 } from '../requestOverrides';
+import { PreparationWelcome } from './PreparationWelcome';
 import { ChatPanel } from './ChatPanel';
-import { visibleExecutionEvents } from '../echomindConversationPresentation';
+import { MessageInput } from './MessageInput';
+import { ECHOMIND_MESSAGE_PLACEHOLDER, mergeChatHistory, publicChatEvents, visibleExecutionEvents } from '../echomindConversationPresentation';
+import { snapshotToChatEvents } from '../productSnapshot';
 import { EchoMindAgentChat } from './EchoMindAgentChat';
 import { deriveDisplayConnectionState } from '../productStreamState';
 import { PreparationPlanMessage } from './PreparationPlanMessage';
@@ -21,6 +24,30 @@ import { StageWorkspace } from './StageWorkspace';
 import { ProjectOverview } from './observations/ProjectOverview';
 import { ProjectConfirmationPanel } from './ProjectConfirmationPanel';
 import { managerChatEvents, preparationPlanStatus } from '../preparation';
+
+const projectTabs = [
+  { id: 'chat', label: 'Chat' },
+  { id: 'main', label: 'Main Agent' },
+] as const;
+
+type ConversationSelection = { conversationId?: string; projectId?: string; cluster?: string };
+type SavedChat = {
+  managerId: string;
+  projectId?: string;
+  snapshot: ConversationSnapshot | null;
+  options: RequestOptions;
+};
+
+const creationDateFormat = new Intl.DateTimeFormat('zh-CN', {
+  month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+
+function CreatedDate({ value }: { value?: string | null }) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return <time dateTime={value} title={date.toLocaleString()}>{creationDateFormat.format(date)}</time>;
+}
 
 function updateWorkbenchUrl(projectId: string | null, conversationId: string | null) {
   const url = new URL(window.location.href);
@@ -35,7 +62,8 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   client: ProductClient; chatClient: EchoMindChatClient; title: string; storageNamespace: string;
 }) {
   const { state, dispatch } = useChatContext();
-  const [userId] = useState(() => new URLSearchParams(window.location.search).get('userId')?.trim() || localStorage.getItem(`${storageNamespace}.userId`) || '42');
+  const [userId] = useState(() => new URLSearchParams(window.location.search).get('userId')?.trim()
+    || localStorage.getItem(`${storageNamespace}.userId`) || localStorage.getItem('minimal-chat.activeUserId') || '42');
   const [credentials, setCredentials] = useState<RequestOverrideFields>(loadRequestOverrides);
   const [credentialDraft, setCredentialDraft] = useState<RequestOverrideFields>(credentials);
   const projectCluster = state.snapshot?.project?.cluster;
@@ -47,10 +75,15 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   }), [userId, credentials]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [mobilePane, setMobilePane] = useState<'conversations' | 'projects'>('projects');
+  const orderedConversations = useMemo(() => conversations.toSorted(newestCreatedFirst), [conversations]);
+  const orderedProjects = useMemo(() => projects.toSorted(newestCreatedFirst), [projects]);
+  const [activeTab, setActiveTab] = useState<typeof projectTabs[number]['id']>('chat');
+  const tabsId = useId();
   const [busy, setBusy] = useState(false);
   const [respondingPermission, setRespondingPermission] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [workspaceKey, setWorkspaceKey] = useState(0);
+  const [savedChat, setSavedChat] = useState<SavedChat | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -63,7 +96,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const didRestore = useRef(false);
   const generation = useRef(0);
   const request = useRef<AbortController | null>(null);
-  const target = useRef<{ conversationId?: string; projectId?: string; cluster?: string } | null>(null);
+  const target = useRef<ConversationSelection | null>(null);
   const refreshTimer = useRef<number | null>(null);
   const inFlight = useRef<Promise<number> | null>(null);
   const refreshAgain = useRef(false);
@@ -78,6 +111,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
       conversation_id: snapshot.conversation_id,
       status: snapshot.status,
       through_seq: snapshot.through_seq,
+      created_at: snapshot.created_at,
       updated_at: snapshot.updated_at ?? null,
       title: snapshot.project?.plan.goal ?? snapshot.preparation?.plan?.goal ?? null,
       project_id: snapshot.project?.project_id ?? null,
@@ -86,8 +120,10 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     setConversations(current => {
       const existing = current.find(item => item.conversation_id === summary.conversation_id);
       if (existing && existing.through_seq > summary.through_seq) return current;
-      return [{ ...summary, title: summary.title ?? existing?.title ?? null },
-        ...current.filter(item => item.conversation_id !== summary.conversation_id)];
+      const next = { ...summary, title: summary.title ?? existing?.title ?? null,
+        created_at: summary.created_at ?? existing?.created_at };
+      if (!existing) return [...current, next];
+      return current.map(item => item === existing ? next : item);
     });
   }, [dispatch]);
 
@@ -148,15 +184,14 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     return client.inputMedia(id, requestId, contentIndex, imageIndex, options);
   }, [client, options]);
 
-  const open = useCallback(async (selection: NonNullable<typeof target.current>) => {
+  const open = useCallback(async (selection: ConversationSelection) => {
     resetRequests();
     const controller = new AbortController();
     request.current = controller;
     target.current = selection;
     const { signal } = controller;
-    activeId.current = selection.conversationId ?? null;
-    dispatch({ type: 'RESET_CONVERSATION' });
-    setHasConnected(false); setError(null); setOpenError(null); setNotice(null); setLoading(true);
+    activeId.current = null;
+    setOpenError(null); setLoading(true);
     try {
       let id = selection.conversationId;
       let cluster = selection.cluster;
@@ -166,13 +201,24 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         cluster = project.cluster;
       }
       if (!id || signal.aborted) return;
-      activeId.current = id;
       const snapshot = await client.snapshot(id, {
         ...navigationOptions,
         xCluster: cluster ?? (selection.projectId ? undefined : navigationOptions.xCluster),
       }, signal);
       if (signal.aborted) return;
+      const chatOptions = { ...navigationOptions, xCluster: snapshot.project?.cluster ?? navigationOptions.xCluster };
+      const chat = await chatClient.snapshot(id, chatOptions, signal).catch(() => undefined);
+      if (signal.aborted) return;
+      activeId.current = id;
+      dispatch({ type: 'RESET_CONVERSATION' });
       apply(snapshot);
+      setSavedChat(chat === undefined ? null : {
+        managerId: id, projectId: snapshot.project?.project_id, snapshot: chat, options: chatOptions,
+      });
+      setWorkspaceKey(key => key + 1);
+      if (!snapshot.project) setActiveTab('chat');
+      setError(null); setNotice(null);
+      setHasConnected(false);
       setAfterSeq(snapshot.through_seq);
       const projectId = snapshot.project?.project_id ?? null;
       updateWorkbenchUrl(projectId, id);
@@ -184,19 +230,24 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     } finally {
       if (!signal.aborted) setLoading(false);
     }
-  }, [apply, client, dispatch, navigationOptions, newKey, resetRequests, selectedKey, selectedProjectKey]);
+  }, [apply, chatClient, client, dispatch, navigationOptions, newKey, resetRequests, selectedKey, selectedProjectKey]);
 
-  const openProject = useCallback((project: ProjectSummary) => {
-    void open({ conversationId: project.conversation_id, projectId: project.project_id, cluster: project.cluster });
-  }, [open]);
+  const selectConversation = (selection: ConversationSelection & { conversationId: string }) => {
+    const alreadySelected = loading
+      ? target.current?.conversationId === selection.conversationId
+        || (!!selection.projectId && target.current?.projectId === selection.projectId)
+      : state.conversationId === selection.conversationId;
+    if (!openError && alreadySelected) return;
+    void open(selection);
+  };
 
   useEffect(() => {
     const controller = new AbortController();
     const { signal } = controller;
-    localStorage.setItem(`${storageNamespace}.userId`, userId);
     const params = new URLSearchParams(window.location.search);
     const conversationId = params.get('conversation')?.trim() || undefined;
     const projectId = params.get('project')?.trim() || undefined;
+    if (!conversationId && !projectId) localStorage.setItem(`${storageNamespace}.userId`, userId);
     const initialGeneration = generation.current;
     const listed = client.list(navigationOptions, signal).then(items => {
       if (!signal.aborted) setConversations(current => {
@@ -204,10 +255,11 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         for (const item of current) {
           const listed = byId.get(item.conversation_id);
           if (!listed || item.through_seq >= listed.through_seq) {
-            byId.set(item.conversation_id, { ...item, title: item.title ?? listed?.title ?? null });
+            byId.set(item.conversation_id, { ...item, title: item.title ?? listed?.title ?? null,
+              created_at: item.created_at ?? listed?.created_at });
           }
         }
-        return [...byId.values()].sort((a, b) => (b.updated_at ?? '').localeCompare(a.updated_at ?? ''));
+        return [...byId.values()];
       });
       return items;
     });
@@ -231,14 +283,17 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         savedProjectId: localStorage.getItem(selectedProjectKey),
         savedConversationId: localStorage.getItem(selectedKey),
         projects: projectsResult.status === 'fulfilled' ? projectsResult.value : [],
-        conversations: conversationsResult.status === 'fulfilled' ? conversationsResult.value : [],
+        conversations: conversationsResult.status === 'fulfilled' ? conversationsResult.value.toSorted(newestCreatedFirst) : [],
       });
-      if (selection?.project) openProject(selection.project);
-      else if (selection) void open({ conversationId: selection.conversationId });
+      if (selection) void open({
+        conversationId: selection.conversationId,
+        projectId: selection.project?.project_id,
+        cluster: selection.project?.cluster,
+      });
       else if (conversationsResult.status === 'rejected') setError(String(conversationsResult.reason));
     });
     return () => controller.abort();
-  }, [client, navigationOptions, open, openProject, storageNamespace, userId, selectedKey, selectedProjectKey, newKey]);
+  }, [client, navigationOptions, open, storageNamespace, userId, selectedKey, selectedProjectKey, newKey]);
 
   useEffect(() => resetRequests, [resetRequests]);
 
@@ -256,11 +311,10 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
 
   const onEvent = useCallback((event: ProductEvent) => {
     if (event.conversation_id !== activeId.current) return;
-    if (event.type === 'message.delta') return;
-    if (event.type === 'message.started' || event.type === 'message.completed') {
-      if (event.payload.role !== 'user') return;
+    if (event.type === 'message.started' || event.type === 'message.delta' || event.type === 'message.completed') {
+      if (typeof event.payload.message_id !== 'string') return;
       dispatch({ type: 'APPLY_MESSAGE_EVENTS', events: [event] });
-      if (event.type === 'message.started') return;
+      if (event.type !== 'message.completed') return;
     }
     if (event.type === 'project.changed') {
       void refreshProjects().catch(failure => setError(String(failure)));
@@ -297,6 +351,33 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     return id;
   };
 
+  const sendToMain = async (text: string) => {
+    if (busy || loading || openError || state.snapshot?.project) return;
+    const epoch = generation.current;
+    const commandId = crypto.randomUUID();
+    setBusy(true);
+    setError(null);
+    try {
+      const id = await ensureManager();
+      if (generation.current !== epoch) return;
+      dispatch({ type: 'ADD_PENDING_OUTBOUND', message: { commandId, text, timestamp: new Date().toISOString(), status: 'pending' } });
+      const receipt = await client.command(id, {
+        type: 'user_message', command_id: commandId, content: [{ type: 'text', text }],
+      }, options);
+      if (generation.current !== epoch) return;
+      if (receipt.status === 'failed' || receipt.response.accepted === false) throw new Error('EchoMind 未接收消息，请重试。');
+      dispatch({ type: 'SET_PENDING_OUTBOUND_STATUS', commandId, status: 'acknowledged' });
+      scheduleRefresh();
+    } catch (failure) {
+      if (generation.current === epoch) {
+        setError(String(failure));
+        dispatch({ type: 'MARK_PENDING_OUTBOUND_FAILED', commandId });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const respondToPermission = async (accept: boolean) => {
     const id = activeId.current;
     const permission = state.snapshot?.pending_permissions[0];
@@ -331,6 +412,9 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     localStorage.setItem(newKey, '1');
     updateWorkbenchUrl(null, null);
     dispatch({ type: 'RESET_CONVERSATION' });
+    setSavedChat(null);
+    setWorkspaceKey(key => key + 1);
+    setActiveTab('chat');
     setError(null); setNotice(null); setAfterSeq(0); setHasConnected(false);
   };
 
@@ -415,7 +499,9 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
 
   const isProject = Boolean(state.snapshot?.project);
   const currentProjectId = state.snapshot?.project?.project_id ?? null;
-  const pendingCount = (state.snapshot?.pending_inputs?.length ?? 0) + (state.snapshot?.pending_permissions.length ?? 0);
+  const pendingCount = state.snapshot && !state.snapshot.capabilities.read_only
+    ? (state.snapshot.pending_inputs?.length ?? 0) + state.snapshot.pending_permissions.length : 0;
+  const workspaceUnavailable = loading || !!openError;
   const queuedCount = state.snapshot?.experiment_queue?.length ?? 0;
   const platformTaskRunning = state.snapshot?.external_tasks?.some(task => task.status === 'running');
   const platformTaskPending = state.snapshot?.external_tasks?.some(task => task.status === 'pending' || task.status === 'waiting');
@@ -435,17 +521,41 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const executionEvents = useMemo(() => visibleExecutionEvents(
     isProject ? managerChatEvents(state.events) : state.events,
   ), [isProject, state.events]);
+  const preparationMessages = useMemo(() => publicChatEvents(state.events.filter(event => !event.task_id)),
+    [state.events]);
+  const historyId = !isProject || state.snapshot?.capabilities.read_only ? state.snapshot?.conversation_id : undefined;
+  const selectedChat = savedChat?.managerId === state.conversationId ? savedChat : null;
+  const preloadedChat = selectedChat && selectedChat.options.userId === options.userId
+    && selectedChat.options.cookie === options.cookie && selectedChat.options.xCluster === options.xCluster
+    ? selectedChat : null;
+  useEffect(() => {
+    if (!historyId || preloadedChat) return;
+    const controller = new AbortController();
+    void chatClient.snapshot(historyId, options, controller.signal).then(snapshot => {
+      if (!controller.signal.aborted) setSavedChat({ managerId: historyId, snapshot, options });
+    }).catch(failure => {
+      if (!controller.signal.aborted) setError(String(failure));
+    });
+    return () => controller.abort();
+  }, [chatClient, historyId, options, preloadedChat]);
+  const savedHistory = historyId ? selectedChat?.snapshot : null;
+  const history = useMemo(() => {
+    const manager = isProject && state.snapshot?.capabilities.read_only
+      ? publicChatEvents(managerChatEvents(state.events))
+      : preparationMessages;
+    return savedHistory ? mergeChatHistory(manager, publicChatEvents(snapshotToChatEvents(savedHistory))) : manager;
+  }, [isProject, state.snapshot?.capabilities.read_only, state.events, preparationMessages, savedHistory]);
   const progressConnection = deriveDisplayConnectionState({
     conversationId: state.conversationId, isCreating: false, connectionState: connection, hasConnected,
   });
   const [confirmationsOpen, setConfirmationsOpen] = useState(false);
   const confirmationsRef = useRef<HTMLDetailsElement>(null);
   const chatAreaRef = useRef<HTMLElement>(null);
-  const executionWorkspaceRef = useRef<HTMLDivElement>(null);
   const openConfirmation = (targetId?: string) => {
     const targetSelector = targetId ? `[data-confirmation-id="${CSS.escape(targetId)}"]` : null;
     if (isProject) {
       const panel = confirmationsRef.current;
+      setActiveTab('main');
       setConfirmationsOpen(true);
       window.requestAnimationFrame(() => {
         const target = targetSelector ? panel?.querySelector(targetSelector) : null;
@@ -465,18 +575,41 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     plan?.scrollIntoView({ block: 'start' });
     plan?.focus({ preventScroll: true });
   };
-  const openExecution = () => {
-    const toggle = executionWorkspaceRef.current?.querySelector<HTMLButtonElement>('button[aria-expanded]');
-    if (toggle?.getAttribute('aria-expanded') === 'false') toggle.click();
-    toggle?.scrollIntoView({ block: 'nearest' });
-    toggle?.focus({ preventScroll: true });
-  };
   useEffect(() => { setConfirmationsOpen(pendingCount > 0); }, [currentProjectId, pendingCount]);
+
+  const managerStatus = state.snapshot && <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-slate-50 px-4 py-2">
+    <span className="flex flex-wrap items-center gap-2 text-sm text-slate-700" role="status">
+      {(state.status === 'running' || platformTaskRunning) && <span aria-hidden="true" className="size-2 rounded-full bg-blue-500" />}
+      {executionStatus}
+      {queuedCount > 0 && <span className="text-xs text-slate-500">待处理 {queuedCount} 项</span>}
+      {pendingCount > 0 && <span className="text-xs text-amber-700">待确认 {pendingCount} 项</span>}
+      {!loading && progressConnection === 'connecting' && <span className="text-xs text-slate-500">正在同步进度</span>}
+      {!loading && progressConnection === 'reconnecting' && <span className="text-xs text-amber-700">正在重新连接</span>}
+    </span>
+    {!state.snapshot.capabilities.read_only && (state.status === 'running' || state.snapshot.automatic_turns_suspended) && (
+      <button type="button" disabled={busy} className="rounded border bg-white px-3 py-1 text-xs disabled:opacity-50"
+        onClick={() => void controlManager(state.status === 'running' ? 'cancel' : 'user_message')}>
+        {state.status === 'running' ? '中断执行' : '继续执行'}
+      </button>
+    )}
+  </div>;
+
+  const archivedHistory = state.snapshot?.capabilities.read_only && <>
+    <ChatPanel active={!isProject || activeTab === 'chat'} autoScroll="follow" logLabel="EchoMind 对话记录" events={history} requestOptions={options}
+      status={state.status} conversationId={state.conversationId} />
+    <p className="border-t bg-amber-50 px-4 py-2 text-xs text-amber-800">此会话已归档，仅可查看历史记录和产物。请新建会话继续。</p>
+  </>;
 
   return <div className="product-planning-chat flex h-screen flex-col bg-white text-left text-slate-900">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
       <div className="min-w-0">
-        <h1 className="font-semibold">{title}</h1>
+        <div className="flex flex-wrap items-center gap-x-3">
+          <h1 className="font-semibold">{title}</h1>
+          <span role="status" className="grid size-3 place-items-center">
+            {loading && <><span aria-hidden="true" className="size-1.5 rounded-full bg-violet-500" />
+              <span className="sr-only">{state.conversationId ? '切换会话…' : '加载会话…'}</span></>}
+          </span>
+        </div>
         {state.conversationId && <div className="text-xs text-slate-500">
           执行会话 ID <code className="select-all break-all">{state.conversationId}</code>
         </div>}
@@ -527,97 +660,138 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
       </button>
     </form>
     </details>
-    {loading && <div role="status" className="border-b px-4 py-2 text-xs text-gray-600">加载会话…</div>}
     {openError && <div role="alert" className="border-b bg-red-50 p-3 text-sm text-red-700">{openError}
       <button type="button" className="ml-3 underline" onClick={() => { if (target.current) void open(target.current); }}>重试</button>
     </div>}
     {error && <div role="alert" className="border-b bg-red-50 p-3 text-sm text-red-700">{error}<button type="button" className="ml-3 underline" onClick={() => setError(null)}>关闭</button></div>}
     {notice && <div role="status" className="border-b bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</div>}
     <div className="rsi-content-with-sidebar">
-    <main className={`grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:overflow-hidden ${isProject ? 'project-workbench lg:grid-cols-[320px_minmax(0,1fr)_360px] 2xl:grid-cols-[340px_minmax(0,1fr)_420px]' : 'lg:grid-cols-[320px_minmax(0,1fr)]'}`}>
-      <nav aria-label="EchoMind 导航" className="min-h-0 overflow-hidden border-r bg-slate-50 lg:grid lg:grid-cols-2">
-        <div className="flex border-b p-2 lg:hidden">
-          <button type="button" onClick={() => setMobilePane('projects')} className={`flex-1 rounded px-3 py-1.5 text-sm ${mobilePane === 'projects' ? 'bg-white font-medium shadow-sm' : 'text-slate-500'}`}>Project</button>
-          <button type="button" onClick={() => setMobilePane('conversations')} className={`flex-1 rounded px-3 py-1.5 text-sm ${mobilePane === 'conversations' ? 'bg-white font-medium shadow-sm' : 'text-slate-500'}`}>对话</button>
-        </div>
-        <section className={`${mobilePane === 'projects' ? 'block' : 'hidden'} min-h-0 overflow-y-auto lg:block lg:border-r`}>
-          <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
-            <span>Project</span><span className="text-slate-400">{projects.length}</span>
-          </div>
-          {projects.length === 0 && <p className="p-3 text-xs text-slate-400">暂无 Project</p>}
-          {projects.map(project => <button key={project.project_id} type="button" disabled={busy} onClick={() => openProject(project)} className={`block w-full border-b p-3 text-left text-sm disabled:opacity-50 ${project.project_id === currentProjectId ? 'bg-blue-50' : 'hover:bg-white'}`}>
-            <span className="block truncate font-medium">{project.name}</span>
-            <span className="mt-1 block truncate font-mono text-[10px] text-slate-500">{project.cluster}</span>
-            <span className="mt-1 flex items-center justify-between gap-2 text-[10px] text-slate-500">
-              <span>{project.lifecycle === 'development' ? '开发中' : '已固化'} · {project.node_count} 节点</span>
-              <time className="shrink-0">{new Date(project.updated_at).toLocaleDateString()}</time>
-            </span>
-          </button>)}
+    <main className="echomind-workbench grid min-h-0 flex-1">
+      <nav aria-label="EchoMind 导航" className="echomind-navigation">
+        <section className="echomind-nav-column" aria-label="对话">
+          <h2>对话 <span>{orderedConversations.length}</span></h2>
+          {orderedConversations.length === 0 && <p>暂无对话</p>}
+          <ul>
+            {orderedConversations.map(item => {
+              const label = item.title || item.conversation_id.slice(0, 12);
+              return <li key={item.conversation_id}>
+                <button type="button" disabled={busy} aria-current={item.conversation_id === state.conversationId}
+                  onClick={() => selectConversation({ conversationId: item.conversation_id, projectId: item.project_id ?? undefined, cluster: item.cluster ?? undefined })}>
+                  <span className="echomind-nav-title" title={label}>{label}</span>
+                  <span className="echomind-nav-meta"><CreatedDate value={item.created_at} /></span>
+                </button>
+              </li>;
+            })}
+          </ul>
         </section>
-        <section className={`${mobilePane === 'conversations' ? 'block' : 'hidden'} min-h-0 overflow-y-auto lg:block`}>
-          <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
-            <span>对话</span><span className="text-slate-400">{conversations.length}</span>
-          </div>
-          {conversations.length === 0 && <p className="p-3 text-xs text-slate-400">暂无对话</p>}
-          {conversations.map(item => <button key={item.conversation_id} type="button" disabled={busy} onClick={() => void open({ conversationId: item.conversation_id, projectId: item.project_id ?? undefined, cluster: item.cluster ?? undefined })} className={`block w-full border-b p-3 text-left text-sm disabled:opacity-50 ${item.conversation_id === state.conversationId ? 'bg-blue-50' : 'hover:bg-white'}`}>
-            <span className="block truncate">{item.title || item.conversation_id.slice(0, 12)}</span>
-            <span className="mt-1 block text-[11px] text-slate-500">{item.project_id ? 'Project · 开发中' : '准备中'} · {item.updated_at ? new Date(item.updated_at).toLocaleString() : '新会话'}</span>
-          </button>)}
+        <section className="echomind-nav-column" aria-label="Project">
+          <h2>Project <span>{orderedProjects.length}</span></h2>
+          {orderedProjects.length === 0 && <p>暂无 Project</p>}
+          <ul>
+            {orderedProjects.map(project => <li key={project.project_id}>
+              <button type="button" disabled={busy} aria-current={project.project_id === currentProjectId}
+                onClick={() => selectConversation({ conversationId: project.conversation_id, projectId: project.project_id, cluster: project.cluster })}>
+                <span className="echomind-nav-title" title={project.name}>{project.name}</span>
+                <span className="echomind-nav-meta">
+                  <span title={`${project.cluster} · ${project.node_count} 节点`}>{project.lifecycle === 'development' ? '开发中' : '已固化'}</span>
+                  <CreatedDate value={project.created_at} />
+                </span>
+              </button>
+            </li>)}
+          </ul>
         </section>
       </nav>
-      <section className="flex min-h-[480px] min-w-0 flex-col lg:min-h-0">
-        {state.snapshot?.project && <div ref={executionWorkspaceRef} className="contents"><StageWorkspace snapshot={state.snapshot} /></div>}
-        <section ref={chatAreaRef} aria-label="聊天区" className="flex min-h-0 flex-1 flex-col bg-white">
-        {state.snapshot && <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-slate-50 px-4 py-2">
-          <span className="flex items-center gap-2 text-sm text-slate-700" role="status">
-            {(state.status === 'running' || platformTaskRunning) && <span aria-hidden="true" className="size-2 rounded-full bg-blue-500" />}
-            {executionStatus}
-            {queuedCount > 0 && <span className="text-xs text-slate-500">待处理 {queuedCount} 项</span>}
-            {pendingCount > 0 && <span className="text-xs text-amber-700">待确认 {pendingCount} 项</span>}
-            {progressConnection === 'connecting' && <span className="text-xs text-slate-500">正在同步进度</span>}
-            {progressConnection === 'reconnecting' && <span className="text-xs text-amber-700">正在重新连接</span>}
-          </span>
-          {!state.snapshot.capabilities.read_only && (state.status === 'running' || state.snapshot.automatic_turns_suspended) && (
-            <button type="button" disabled={busy} className="rounded border bg-white px-3 py-1 text-xs disabled:opacity-50"
-              onClick={() => void controlManager(state.status === 'running' ? 'cancel' : 'user_message')}>
-              {state.status === 'running' ? '中断执行' : '继续执行'}
-            </button>
-          )}
-        </div>}
-        {state.snapshot?.capabilities.read_only ? <>
-          <ChatPanel events={executionEvents} requestOptions={options} status={state.status} conversationId={state.conversationId} />
-          <p className="border-t bg-amber-50 px-4 py-2 text-xs text-amber-800">此会话已归档，仅可查看历史记录和产物。请新建会话继续。</p>
-        </> : <EchoMindAgentChat key={generation.current} client={chatClient} managerId={state.conversationId}
-            ensureManager={ensureManager} options={options} disabled={loading || !!openError}
-            executionEvents={executionEvents} executionSnapshot={state.snapshot}
-            executionIsCondensing={state.isCondensing} onOpenConfirmation={openConfirmation} onOpenPlan={openPlan}
-            onOpenExecution={openExecution}
-            panel={{
-              contentKey: state.snapshot?.preparation?.plan ? state.snapshot.preparation.revision : undefined,
-              pendingInputs: isProject ? undefined : state.snapshot?.pending_inputs,
-              pendingPermission: isProject ? undefined : state.snapshot?.pending_permissions[0],
-              isRespondingToConfirmation: respondingPermission,
-              onRespondToConfirmation: !isProject && state.snapshot?.pending_permissions[0]
-                ? accept => { void respondToPermission(accept); } : undefined,
-              onRespondToUserInput: isProject ? undefined : respondToInput,
-              readInputMedia,
-              children: state.snapshot?.preparation?.plan && !isProject ? <PreparationPlanMessage
-                snapshot={state.snapshot} busy={busy || loading} onCreate={createProject}
-                onReview={() => { void reviewPreparation(); }} /> : undefined,
-            }} />}
-        </section>
+      <section key={workspaceKey} inert={workspaceUnavailable} aria-busy={loading || undefined} className="flex min-h-[480px] min-w-0 flex-col lg:min-h-0">
+        {state.snapshot?.project ? <>
+          <div className="shrink-0 border-b px-4 py-1.5">
+            <div role="tablist" aria-label="EchoMind 工作区" className="inline-flex gap-1 rounded-full bg-slate-100 p-1">
+              {projectTabs.map(tab => <button key={tab.id} type="button" role="tab"
+                id={`${tabsId}-${tab.id}`} aria-controls={`${tabsId}-${tab.id}-panel`}
+                aria-selected={activeTab === tab.id} tabIndex={activeTab === tab.id ? 0 : -1}
+                onClick={() => setActiveTab(tab.id)}
+                onKeyDown={event => {
+                  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                  event.preventDefault();
+                  const next = event.key === 'Home' ? projectTabs[0].id : event.key === 'End' ? projectTabs[1].id
+                    : tab.id === 'main' ? 'chat' : 'main';
+                  setActiveTab(next);
+                  document.getElementById(`${tabsId}-${next}`)?.focus();
+                }}
+                className="min-h-9 rounded-full px-4 text-sm font-medium whitespace-nowrap text-slate-600 hover:bg-slate-200 aria-selected:bg-white aria-selected:text-slate-900 aria-selected:shadow-sm focus-visible:outline-2 focus-visible:outline-blue-600">
+                {tab.label}
+              </button>)}
+            </div>
+          </div>
+          <section role="tabpanel" id={`${tabsId}-main-panel`} aria-labelledby={`${tabsId}-main`}
+            hidden={activeTab !== 'main'} tabIndex={0} className="flex min-h-0 flex-1 flex-col bg-white lg:overflow-y-auto">
+            {managerStatus}
+            <StageWorkspace snapshot={state.snapshot} />
+            {state.snapshot.capabilities.read_only && <ChatPanel active={activeTab === 'main'} events={executionEvents} requestOptions={options}
+              autoScroll="follow" logLabel="Main Agent 执行记录" status={state.status} conversationId={state.conversationId} />}
+            {pendingCount > 0 && <details ref={confirmationsRef} className="project-confirmation-slot mt-auto shrink-0"
+              open={confirmationsOpen} onToggle={event => setConfirmationsOpen(event.currentTarget.open)}>
+              <summary>待确认 <span>{pendingCount} 项</span></summary>
+              <ProjectConfirmationPanel snapshot={state.snapshot} onRespond={respondToInput}
+                onPermission={async (permissionId, decision, commandId) => {
+                  const id = activeId.current; if (!id) throw new Error('会话未打开');
+                  await client.command(id, {type: 'permission_response', command_id: commandId, permission_id: permissionId, decision}, options);
+                  await refresh();
+                }} readMedia={readInputMedia} />
+            </details>}
+          </section>
+          <section role="tabpanel" id={`${tabsId}-chat-panel`} aria-labelledby={`${tabsId}-chat`}
+            hidden={activeTab !== 'chat'} tabIndex={0} className="flex min-h-0 flex-1 flex-col bg-white">
+            {state.snapshot.capabilities.read_only ? archivedHistory : <>
+              <EchoMindAgentChat client={chatClient} preparationHistory={preparationMessages}
+                managerId={state.snapshot.conversation_id} options={options} active={activeTab === 'chat'}
+                initialSnapshot={preloadedChat?.projectId === currentProjectId ? preloadedChat.snapshot : undefined} />
+              {pendingCount > 0 && <ExecutionActions snapshot={state.snapshot} onOpenPlan={openPlan}
+                onOpenConfirmation={() => openConfirmation()} />}
+            </>}
+          </section>
+        </> : <section ref={chatAreaRef} aria-label="会话工作区" className="flex min-h-0 flex-1 flex-col bg-white">
+        {managerStatus}
+        {state.snapshot?.capabilities.read_only ? archivedHistory : <>
+          {!state.conversationId && <PreparationWelcome />}
+          {state.snapshot && <ChatPanel
+            autoScroll="follow" logLabel="EchoMind 对话记录" emptyText="向 EchoMind 描述任务或补充需求。"
+            events={history} pendingOutboundMessages={state.pendingOutboundMessages} status={state.status} requestOptions={options} conversationId={state.conversationId}
+            pendingInputs={state.snapshot.pending_inputs} pendingPermission={state.snapshot.pending_permissions[0]}
+            isRespondingToConfirmation={respondingPermission} onRespondToUserInput={respondToInput} readInputMedia={readInputMedia}
+            onRespondToConfirmation={state.snapshot.pending_permissions[0] ? accept => { void respondToPermission(accept); } : undefined}
+            contentKey={state.snapshot.preparation?.revision}>
+            {state.snapshot.preparation?.plan && <PreparationPlanMessage snapshot={state.snapshot} busy={busy}
+              onCreate={createProject} onReview={() => { void reviewPreparation(); }} />}
+          </ChatPanel>}
+          {state.snapshot && <ExecutionActions snapshot={state.snapshot} onOpenPlan={openPlan}
+            onOpenConfirmation={() => openConfirmation()} />}
+          <MessageInput compact placeholder={ECHOMIND_MESSAGE_PLACEHOLDER}
+            runningMode="send" status={state.status} sending={busy} disabled={busy || pendingCount > 0}
+            onSend={text => { void sendToMain(text); }} canInterrupt={false} onInterrupt={() => {}} />
+        </>}
+        </section>}
       </section>
-      {state.snapshot?.project && <details ref={confirmationsRef} className="project-confirmation-slot" open={confirmationsOpen} onToggle={event => setConfirmationsOpen(event.currentTarget.open)}>
-        <summary>待确认 <span>{pendingCount} 项</span></summary>
-        <ProjectConfirmationPanel snapshot={state.snapshot} onRespond={respondToInput}
-        onPermission={async (permissionId, decision, commandId) => {
-          const id = activeId.current; if (!id) throw new Error('会话未打开');
-          await client.command(id, {type: 'permission_response', command_id: commandId, permission_id: permissionId, decision}, options);
-          await refresh();
-        }}
-        readMedia={readInputMedia} /></details>}
     </main>
-    <ProjectOverview snapshot={state.snapshot} client={client} projectId={currentProjectId} options={options} />
+    {currentProjectId && <ProjectOverview snapshot={state.snapshot} client={client} projectId={currentProjectId} options={options}
+      hidden={activeTab !== 'main'} inert={workspaceUnavailable} />}
     </div>
   </div>;
+}
+
+function ExecutionActions({ snapshot, onOpenPlan, onOpenConfirmation }: {
+  snapshot: ConversationSnapshot;
+  onOpenPlan: () => void; onOpenConfirmation: () => void;
+}) {
+  const pending = (snapshot.pending_inputs?.length ?? 0) + snapshot.pending_permissions.length;
+  const planStatus = preparationPlanStatus(snapshot);
+  const planLabel = planStatus === 'ready' ? '工作流计划待确认' : planStatus === 'review_required' ? '工作流计划需要重新核对' : null;
+  if (!pending && !planLabel) return null;
+  return <aside aria-label="任务提醒" className="shrink-0 space-y-1 border-t bg-slate-50 px-4 py-2 text-xs">
+    <div className="flex flex-wrap items-center justify-between gap-2 text-amber-900">
+      <span role="status">{pending ? `有 ${pending} 项待处理，执行需要你的回复` : planLabel}</span>
+      <button type="button" onClick={pending ? onOpenConfirmation : onOpenPlan} className="font-medium underline">
+        {pending ? '查看待确认事项' : '查看工作流计划'}
+      </button>
+    </div>
+  </aside>;
 }
