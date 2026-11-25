@@ -1,12 +1,13 @@
 import { useRef, useState } from 'react';
-import type { ConversationSnapshot, ProductPermission, RespondToUserInput, ReadInputMedia } from '../types';
+import type { ConversationSnapshot, ProductPermission, RespondToUserInput, ReadInputHtml, ReadInputMedia } from '../types';
 import { UserInputCard } from './UserInputCard';
 
 export type RespondToPermission = (permissionId: string, decision: 'allow_once' | 'deny', commandId: string) => Promise<void>;
-export function ProjectConfirmationPanel({ snapshot, onRespond, onPermission, readMedia }: {
+export function ProjectConfirmationPanel({ snapshot, onRespond, onPermission, readMedia, readHtml }: {
   snapshot: ConversationSnapshot;
   onRespond: RespondToUserInput;
   onPermission: RespondToPermission;
+  readHtml?: ReadInputHtml;
   readMedia: ReadInputMedia;
 }) {
   if (!snapshot.project) return null;
@@ -19,7 +20,7 @@ export function ProjectConfirmationPanel({ snapshot, onRespond, onPermission, re
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
       {inputs.map(request => <UserInputCard
         key={`${snapshot.conversation_id}:${request.request_id}`}
-        request={request} onRespond={onRespond} readMedia={readMedia} />)}
+        request={request} onRespond={onRespond} readHtml={readHtml} readMedia={readMedia} />)}
       {permissions.map(permission => <PermissionCard key={`${snapshot.conversation_id}:${permission.permission_id}`} permission={permission} onRespond={onPermission} />)}
     </div>
   </aside>;

@@ -15,6 +15,7 @@ export function createProductClient(path: string) {
     project: (id: string, options: RequestOptions, signal?: AbortSignal) => productRequest<{ project: Pick<ProjectSummary, 'project_id' | 'conversation_id' | 'cluster'> }>(`${BACKEND_URL}${PROJECTS_PATH}/${encodeURIComponent(id)}`, { signal }, options),
     command: (id: string, command: Record<string, unknown>, options: RequestOptions) => productRequest<CommandReceipt>(`${base}/${encodeURIComponent(id)}/commands`, { method: 'POST', body: JSON.stringify(command) }, options),
     listProjects: (options: RequestOptions, signal?: AbortSignal) => productRequest<ProjectSummary[]>(`${BACKEND_URL}${PROJECTS_PATH}`, { signal }, options),
+    inputHtml: (id: string, requestId: string, options: RequestOptions) => productRequest<{html: string}>(`${base}/${encodeURIComponent(id)}/pending-inputs/${encodeURIComponent(requestId)}/html`, {}, options),
     inputMedia: (id: string, requestId: string, contentIndex: number, imageIndex: number, options: RequestOptions) => productRequest<{url: string}>(`${base}/${encodeURIComponent(id)}/pending-inputs/${encodeURIComponent(requestId)}/media/${contentIndex}/${imageIndex}`, {}, options),
     observations: (id: string, options: RequestOptions, signal?: AbortSignal) => productRequest<ObservationOverview>(`${BACKEND_URL}${PROJECTS_PATH}/${encodeURIComponent(id)}/observations/overview`, { signal, cache: 'no-store' }, options),
     retryArtifactDelivery: (id: string, nodeId: string, options: RequestOptions, reportVersionId?: string) =>

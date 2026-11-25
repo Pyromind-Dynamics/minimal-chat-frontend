@@ -9,7 +9,7 @@ test('workbench client loads summaries and resolves projects independently', asy
   try {
     const {createProductClient} = await server.ssrLoadModule('/src/productClient.ts');
     const client = createProductClient(ECHOMIND_CONVERSATIONS_PATH);
-    assert.deepEqual(Object.keys(client).sort(), ['command', 'create', 'eventsUrl', 'inputMedia', 'list', 'listProjects', 'observationReport', 'observations', 'project', 'retryArtifactDelivery', 'snapshot', 'trainingSeries']);
+    assert.deepEqual(Object.keys(client).sort(), ['command', 'create', 'eventsUrl', 'inputHtml', 'inputMedia', 'list', 'listProjects', 'observationReport', 'observations', 'project', 'retryArtifactDelivery', 'snapshot', 'trainingSeries']);
     const requests: URL[] = [];
     const originalFetch = globalThis.fetch;
     const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
@@ -31,7 +31,8 @@ test('workbench client loads summaries and resolves projects independently', asy
         project_node_id: 'stage/id', analysis_job_id: 'job/id', report_version_id: 'version/id',
       }, {});
       await client.retryArtifactDelivery('project/id', 'stage/id', {});
-      assert.deepEqual(requests.map(url => url.pathname), [`${ECHOMIND_CONVERSATIONS_PATH}/summaries`, `${PROJECTS_PATH}/project%2Fid`, `${PROJECTS_PATH}/project%2Fid/observations/overview`, `${PROJECTS_PATH}/project%2Fid/observations/report-details`, `${PROJECTS_PATH}/project%2Fid/observations/retry-artifact-delivery`]);
+      await client.inputHtml('chat/id', 'review/id', {});
+      assert.deepEqual(requests.map(url => url.pathname), [`${ECHOMIND_CONVERSATIONS_PATH}/summaries`, `${PROJECTS_PATH}/project%2Fid`, `${PROJECTS_PATH}/project%2Fid/observations/overview`, `${PROJECTS_PATH}/project%2Fid/observations/report-details`, `${PROJECTS_PATH}/project%2Fid/observations/retry-artifact-delivery`, `${ECHOMIND_CONVERSATIONS_PATH}/chat%2Fid/pending-inputs/review%2Fid/html`]);
       assert.equal(retryRequests[0].method, 'POST');
       assert.equal(retryRequests[0].body, JSON.stringify({ project_node_id: 'stage/id' }));
       assert.deepEqual(Object.fromEntries(requests[3].searchParams), {

@@ -1,4 +1,4 @@
-import type { ReadInputMedia } from '../types';
+import type { ReadInputHtml, ReadInputMedia } from '../types';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { RequestOptions } from '../api';
@@ -49,6 +49,7 @@ interface ChatPanelProps {
   pendingPermission?: ProductPermission;
   pendingInputs?: PendingUserInput[];
   onRespondToUserInput?: RespondToUserInput;
+  readHtml?: ReadInputHtml;
   readInputMedia?: ReadInputMedia;
   conversationId?: string | null;
 }
@@ -74,6 +75,7 @@ export function ChatPanel({
   pendingPermission,
   pendingInputs = [],
   onRespondToUserInput,
+  readHtml,
   readInputMedia,
   conversationId,
 }: ChatPanelProps) {
@@ -196,7 +198,7 @@ export function ChatPanel({
       {onRespondToUserInput && pendingInputs.length > 0 && (
         <div ref={inputRef} className="mx-auto w-full max-w-3xl">
           {pendingInputs.map((request) => (
-            <UserInputCard key={`${conversationId}:${request.request_id}`} request={request} onRespond={onRespondToUserInput} readMedia={readInputMedia} />
+            <UserInputCard key={`${conversationId}:${request.request_id}`} request={request} onRespond={onRespondToUserInput} readHtml={readHtml} readMedia={readInputMedia} />
           ))}
         </div>
       )}

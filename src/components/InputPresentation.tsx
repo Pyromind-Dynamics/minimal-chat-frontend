@@ -1,12 +1,15 @@
+import { reviewDocument } from '../reviewDocument';
 import { useEffect, useRef, useState } from 'react';
-import type { ReadInputMedia, UserInputPresentation } from '../types';
+import type { ReadInputHtml, ReadInputMedia, UserInputPresentation } from '../types';
 import { ContentList } from './ContentList';
 
 /** The same content renderer as Chat; no task or checkpoint document parsing. */
-export function InputPresentation({presentation, requestId, readMedia}: {
-  presentation: UserInputPresentation; requestId: string; readMedia?: ReadInputMedia;
+export function InputPresentation({presentation, requestId, readMedia, readHtml}: {
+  presentation: UserInputPresentation; requestId: string; readHtml?: ReadInputHtml; readMedia?: ReadInputMedia;
 }) {
   return <div aria-label="确认内容" className="space-y-3 border-b border-slate-100 p-4">
+    {presentation.html_artifact && readHtml && <HtmlView key={requestId + presentation.html_artifact.sha256}
+      requestId={requestId} readHtml={readHtml} />}
     {presentation.content.map((item, contentIndex) => item.type === 'text'
       ? <ContentList key={contentIndex} content={[item]} markdown />
       : <div key={contentIndex} className="flex flex-wrap gap-2">{(item.type === 'image' ? item.image_urls : [item.url]).map((source, imageIndex) =>
@@ -46,4 +49,22 @@ function ImageDialog({url, onClose}: {url: string; onClose: () => void}) {
     <button type="button" onClick={onClose} className="mb-3 ml-auto block rounded border px-3 py-1 text-sm">关闭图片</button>
     <ContentList content={[{type:'image_url',image_url:{url}}]} imageClassName="max-h-[75vh] max-w-full object-contain" />
   </dialog>;
+}
+
+function HtmlView({requestId, readHtml}: {requestId: string; readHtml: ReadInputHtml}) {
+  const [document, setDocument] = useState('');
+  const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setDocument('');
+    setError(false);
+    readHtml(requestId).then(({html}) => {
+      if (active) setDocument(reviewDocument(html));
+    }).catch(() => { if (active) setError(true); });
+    return () => { active = false; };
+  }, [requestId, readHtml, attempt]);
+  if (error) return <button type="button" onClick={() => setAttempt(value => value + 1)}>对照图加载失败，重试</button>;
+  return document ? <iframe sandbox="" referrerPolicy="no-referrer" title="标注对照" srcDoc={document}
+    className="h-96 w-full resize-y rounded border bg-white" /> : <p>正在加载对照图…</p>;
 }

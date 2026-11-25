@@ -180,6 +180,12 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     return items;
   }, [client, navigationOptions]);
 
+  const readHtml = useCallback((requestId: string) => {
+    const id = activeId.current;
+    if (!id) return Promise.reject(new Error("会话未打开"));
+    return client.inputHtml(id, requestId, options);
+  }, [client, options]);
+
   const readInputMedia = useCallback((requestId: string, contentIndex: number, imageIndex: number) => {
     const id = activeId.current;
     if (!id) return Promise.reject(new Error('会话未打开'));
@@ -729,7 +735,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
                   const id = activeId.current; if (!id) throw new Error('会话未打开');
                   await client.command(id, {type: 'permission_response', command_id: commandId, permission_id: permissionId, decision}, options);
                   await refresh();
-                }} readMedia={readInputMedia} />
+                }} readHtml={readHtml} readMedia={readInputMedia} />
             </details>}
           </section>
           {pendingCount > 0 && <ExecutionActions snapshot={state.snapshot} onOpenPlan={openPlan}
@@ -755,7 +761,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
               messages={history} executionEvents={conversationExecutionEvents} snapshot={state.snapshot}
               options={options} onOpenConfirmation={() => openConfirmation()} />}
             pendingInputs={state.snapshot.pending_inputs} pendingPermission={state.snapshot.pending_permissions[0]}
-            isRespondingToConfirmation={respondingPermission} onRespondToUserInput={respondToInput} readInputMedia={readInputMedia}
+            isRespondingToConfirmation={respondingPermission} onRespondToUserInput={respondToInput} readHtml={readHtml} readInputMedia={readInputMedia}
             onRespondToConfirmation={state.snapshot.pending_permissions[0] ? accept => { void respondToPermission(accept); } : undefined}
             contentKey={state.snapshot.preparation?.revision}>
             {state.snapshot.preparation?.plan && <PreparationPlanMessage snapshot={state.snapshot} busy={busy}

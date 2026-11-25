@@ -357,7 +357,10 @@ export interface UserInputQuestion {
   options: { id: string; label: string; description?: string | null }[];
 }
 
+export type ReadInputHtml = (requestId: string) => Promise<{html: string}>;
+
 export interface UserInputPresentation {
+  html_artifact?: {path: string; sha256: string};
   title?: string | null;
   content: ProductContent[];
 }

@@ -1,12 +1,12 @@
 import { useRef, useState } from 'react';
-import type { PendingUserInput, RespondToUserInput, ReadInputMedia } from '../types';
+import type { PendingUserInput, RespondToUserInput, ReadInputHtml, ReadInputMedia } from '../types';
 import { InputPresentation } from './InputPresentation';
 import { buildUserInputAnswers, recommendedUserInputDrafts, type AnswerDraft } from '../userInput';
 
-export function UserInputCard({ request, onRespond, readMedia }: {
+export function UserInputCard({ request, onRespond, readMedia, readHtml }: {
   request: PendingUserInput;
   onRespond: RespondToUserInput;
-  readMedia?: ReadInputMedia;
+  readHtml?: ReadInputHtml; readMedia?: ReadInputMedia;
 }) {
   const [drafts, setDrafts] = useState<Record<string, AnswerDraft>>({});
   const [submitting, setSubmitting] = useState<'answered' | 'cancelled' | null>(null);
@@ -58,7 +58,7 @@ export function UserInputCard({ request, onRespond, readMedia }: {
           已回答 {completed.size}/{request.questions.length}
         </span>
       </div>
-      {request.presentation && <InputPresentation presentation={request.presentation} requestId={request.request_id} readMedia={readMedia} />}
+      {request.presentation && <InputPresentation presentation={request.presentation} requestId={request.request_id} readHtml={readHtml} readMedia={readMedia} />}
       {recommendedCount > 0 && (
         <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-5 py-3 sm:px-6">
           <button type="button" disabled={busy}
