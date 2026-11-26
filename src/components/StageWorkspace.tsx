@@ -4,12 +4,27 @@ import { executionProgressLabel, type ExperimentExecution } from '../experimentE
 import { stageOperations } from '../preparation';
 import { WorkflowStageRow } from './WorkflowPlanPreview';
 
+const BASELINE_ANALYSIS_TITLE = '基线解读与 badcase 归因';
+
+function baselineAnalysisTurnStatus(snapshot: ConversationSnapshot, taskId: string): string | undefined {
+  const command = `project-continue:${snapshot.project?.project_id}:${taskId}`;
+  if (snapshot.experiment_queue?.some(task => task.task_id === command)) return '排队中';
+  const activeRunId = snapshot.active_run_id;
+  if (snapshot.status === 'running' && activeRunId && (
+    snapshot.task_runs?.[activeRunId]?.task_id === command ||
+    snapshot.timeline.some(item => 'run_id' in item && item.run_id === activeRunId && item.task_id === command)
+  )) return '正在分析';
+  const latestTask = snapshot.timeline.findLast(item => item.task_id)?.task_id;
+  return snapshot.status === 'paused' && latestTask === command ? '已暂停' : undefined;
+}
+
 function statusLabel(run: ExperimentExecution) {
+  if (run.report_required || run.state === 'waiting_analysis') return executionProgressLabel(run);
   return run.state === 'succeeded' || run.state === 'reported' ? '已完成' : executionProgressLabel(run);
 }
 
 function deliveryLabel(run: ExperimentExecution) {
-  if (run.state !== 'succeeded' && run.state !== 'reported') return null;
+  if (run.state !== 'succeeded' && run.state !== 'reported' && run.state !== 'waiting_analysis') return null;
   switch (run.report_state) {
     case 'ready': return '报告已就绪';
     case 'registering': return '正在登记产物';
@@ -36,7 +51,11 @@ export function StageWorkspace({ snapshot, onOpenRuntime }: {
     .map(run => ({ id: run.stage_id!, kind: run.stage_snapshot!.kind, name: run.stage_snapshot!.name, description: '历史阶段', enabled: false, placeholder: false }));
   const stages = [...project.plan.stages, ...historical];
   const stageActivity = new Map(stages.map(stage => {
-    const runs = executions.filter(run => run.stage_id === stage.id);
+    const tasks = (project.plan.tasks ?? []).filter(task => task.stage_id === stage.id);
+    const analysisTasks = stage.kind === 'init' ? tasks.filter(task => task.kind === 'analysis') : [];
+    const analysisTaskIds = new Set(analysisTasks.map(task => task.id));
+    const stageRuns = executions.filter(run => run.stage_id === stage.id);
+    const runs = stageRuns.filter(run => !analysisTaskIds.has(run.task_id));
     const operations = stageOperations(snapshot, stage.id);
     const lastActivity = new Map<string, number>();
     for (const operation of operations) {
@@ -44,10 +63,13 @@ export function StageWorkspace({ snapshot, onOpenRuntime }: {
       const seq = operation.completed_seq ?? operation.started_seq;
       lastActivity.set(runId, Math.max(lastActivity.get(runId) ?? 0, seq));
     }
-    const last = runs.at(-1);
+    const matchingPlan = runs.filter(run => run.plan_sequence == null || run.plan_sequence === project.plan_sequence);
+    const currentRuns = matchingPlan.filter(run => run.plan_attempt == null || !matchingPlan.some(other =>
+      other.task_id === run.task_id && (other.plan_attempt ?? 1) > run.plan_attempt!));
+    const last = currentRuns.at(-1) ?? runs.at(-1);
     // A newly queued execution may not have produced any agent activity yet.
     const latest = last && lastActivity.has(last.run_id)
-      ? runs.reduce((current, run) =>
+      ? currentRuns.reduce((current, run) =>
         (lastActivity.get(run.run_id) ?? -1) > (lastActivity.get(current.run_id) ?? -1) ? run : current, last)
       : last;
     const byTask = new Map<string, typeof runs>();
@@ -56,15 +78,34 @@ export function StageWorkspace({ snapshot, onOpenRuntime }: {
       attempts.push(run);
       byTask.set(run.task_id, attempts);
     }
-    const planned = (project.plan.tasks ?? []).filter(task => task.stage_id === stage.id);
-    const current = planned.map(task => byTask.get(task.id)?.at(-1));
-    const unfinished = current.find(run => run && run.state !== 'succeeded' && run.state !== 'reported');
+    const planned = tasks.filter(task => !analysisTaskIds.has(task.id));
+    const current = planned.map(task => currentRuns.filter(run => run.task_id === task.id)
+      .sort((a, b) => (a.plan_attempt ?? 1) - (b.plan_attempt ?? 1)).at(-1));
+    const isComplete = (run?: ExperimentExecution) => run?.state === 'succeeded' || run?.state === 'reported';
+    const unfinished = current.find(run => run && !isComplete(run));
+    const pendingDelivery = current.find(run => run?.report_required &&
+      isComplete(run) && run.report_state !== 'ready');
+    const executionRuns = current.filter((_, index) => planned[index].kind !== 'analysis');
+    const waitingForAnalysis = !pendingDelivery && executionRuns.length > 0 && executionRuns.every(isComplete) &&
+      executionRuns.some(run => run?.report_state === 'ready') && current.some((run, index) =>
+        planned[index].kind === 'analysis' && (!run || ['queued', 'preparing', 'analyzing', 'waiting_analysis'].includes(run.state)));
     let status = latest ? statusLabel(latest) : '待执行';
     if (planned.length > 1 && latest) {
-      if (unfinished) status = statusLabel(unfinished);
+      if (waitingForAnalysis) status = '报告已交付 · 等待阶段分析';
+      else if (unfinished) status = statusLabel(unfinished);
+      else if (pendingDelivery) status = statusLabel(pendingDelivery);
       else if (current.some(run => !run)) status = '部分完成';
     }
-    return [stage.id, { runs, latest, byTask, status }];
+    const analysis = analysisTasks.map(task => {
+      const run = stageRuns.filter(run => run.task_id === task.id && run.plan_sequence === project.plan_sequence)
+        .sort((a, b) => (a.plan_attempt ?? 1) - (b.plan_attempt ?? 1)).at(-1);
+      const blocked = run && ['failed', 'cancelled', 'needs_input'].includes(run.state);
+      const delivery = run && deliveryLabel(run);
+      const label = blocked ? statusLabel(run) : delivery
+        ?? baselineAnalysisTurnStatus(snapshot, task.id) ?? (run ? statusLabel(run) : '待执行');
+      return {id: task.id, title: analysisTasks.length === 1 ? BASELINE_ANALYSIS_TITLE : task.name, label};
+    });
+    return [stage.id, { runs, latest, byTask, status, analysis }];
   }));
   const stageWidth = 360;
   const columns = { gridTemplateColumns: `repeat(${stages.length}, ${stageWidth}px)` };
@@ -84,27 +125,34 @@ export function StageWorkspace({ snapshot, onOpenRuntime }: {
           : !stage.enabled ? '未启用' : stageActivity.get(stage.id)!.status} />
       <div className="mt-3 grid w-max items-start gap-3" style={columns}>
         {stages.map(stage => {
-          const { runs, latest, byTask } = stageActivity.get(stage.id)!;
+          const { runs, latest, byTask, analysis } = stageActivity.get(stage.id)!;
           const selectionKey = `${project.project_id}:${stage.id}`;
           const selected = runs.find(run => run.run_id === selectedRuns[selectionKey]) ?? latest;
           const delivery = selected && deliveryLabel(selected);
-          return <section key={stage.id} data-stage-id={stage.id} aria-label={`阶段 ${stage.name}`}
-            className="min-w-0 break-words rounded-lg border bg-white p-3">
-            {runs.length === 0 && <p className="my-6 text-center text-xs text-slate-400">{stage.enabled ? '尚未执行' : '此阶段未启用'}</p>}
-            {runs.length === 1 && selected && <p className="text-xs text-slate-700">{selected.task_name} · {statusLabel(selected)}</p>}
-            {runs.length > 1 && <label className="mt-3 block text-xs text-slate-500">执行历史
-              <select aria-label={`${stage.name} 的执行记录`} value={selected?.run_id} onChange={event => setSelectedRuns(current => ({...current, [selectionKey]: event.target.value}))} className="mt-1 block w-full rounded border bg-white p-2 text-xs text-slate-700">
-                {runs.map(run => {
-                  const attempts = byTask.get(run.task_id)!;
-                  const attempt = attempts.length > 1 ? `第 ${attempts.indexOf(run) + 1} 次 · ` : '';
-                  return <option key={run.run_id} value={run.run_id}>{attempt}{run.task_name} · {statusLabel(run)}</option>;
-                })}
-              </select>
-            </label>}
-            {selected?.platform_task_id && <p className="mt-1 text-xs text-slate-500">Studio 任务 #{selected.platform_task_id}</p>}
-            {delivery && <p className="mt-1 text-xs text-slate-500">{delivery}</p>}
-            {selected?.waiting_reason && <p role={selected.report_state === 'failed' ? 'alert' : 'status'} className="mt-2 break-words whitespace-pre-wrap text-xs text-amber-800">{selected.waiting_reason}</p>}
-          </section>;
+          return <div key={stage.id} className="grid min-w-0 gap-2">
+            <section data-stage-id={stage.id} aria-label={`阶段 ${stage.name}`}
+              className="min-w-0 break-words rounded-lg border bg-white p-3">
+              {runs.length === 0 && <p className="my-6 text-center text-xs text-slate-400">{stage.enabled ? '尚未执行' : '此阶段未启用'}</p>}
+              {runs.length === 1 && selected && <p className="text-xs text-slate-700">{selected.task_name} · {statusLabel(selected)}</p>}
+              {runs.length > 1 && <label className="mt-3 block text-xs text-slate-500">执行历史
+                <select aria-label={`${stage.name} 的执行记录`} value={selected?.run_id} onChange={event => setSelectedRuns(current => ({...current, [selectionKey]: event.target.value}))} className="mt-1 block w-full rounded border bg-white p-2 text-xs text-slate-700">
+                  {runs.map(run => {
+                    const attempts = byTask.get(run.task_id)!;
+                    const attempt = attempts.length > 1 ? `第 ${attempts.indexOf(run) + 1} 次 · ` : '';
+                    return <option key={run.run_id} value={run.run_id}>{attempt}{run.task_name} · {statusLabel(run)}</option>;
+                  })}
+                </select>
+              </label>}
+              {selected?.platform_task_id && <p className="mt-1 text-xs text-slate-500">Studio 任务 #{selected.platform_task_id}</p>}
+              {delivery && <p className="mt-1 text-xs text-slate-500">{delivery}</p>}
+              {selected?.waiting_reason && <p role={selected.report_state === 'failed' ? 'alert' : 'status'} className="mt-2 break-words whitespace-pre-wrap text-xs text-amber-800">{selected.waiting_reason}</p>}
+            </section>
+            {stage.enabled && analysis.map(task => <div key={task.id}
+              className="flex items-baseline justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+              <span className="min-w-0 text-slate-700">{task.title}</span>
+              <span className="shrink-0 text-slate-500">{task.label}</span>
+            </div>)}
+          </div>;
         })}
       </div>
     </div>}

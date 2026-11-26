@@ -41,65 +41,46 @@ function group(chat: ConversationSnapshot, execution: ConversationSnapshot) {
   return groupEchoMindTurns(snapshotToChatEvents(chat), snapshotToChatEvents(execution), execution);
 }
 
-test('opening a saved EchoMind chat renders its history before the stream starts', async () => {
+test('project Chat renders its saved messages, tool activity and result notices', async () => {
   const server = await createServer({define: {'window.location.host': JSON.stringify('localhost:5173')},
     server: {middlewareMode: true, ws: false}, optimizeDeps: {noDiscovery: true, include: []}, appType: 'custom'});
   try {
     const { EchoMindAgentChat } = await server.ssrLoadModule('/src/components/EchoMindAgentChat.tsx');
-    const relatedTask = 'requirement:chat:test';
-    const execution = snapshot([
-      { ...operation('report-query', 2, 'follow-up', {name: 'training_analysis', arguments: {operation: 'report'}}), turn_id: 'follow-up' },
-      operation('background-command', 4, 'automatic', {status: 'completed'}),
-    ], {
-      task_origins: { [relatedTask]: 'follow-up' },
-      task_runs: { related: { task_id: relatedTask, status: 'error', seq: 5 } },
-      pending_inputs: [{ request_id: 'confirm', run_id: 'related', questions: [] }],
-    });
     const html = renderToStaticMarkup(createElement(EchoMindAgentChat, {
       client: {}, managerId: 'manager', options: {},
-      executionEvents: visibleExecutionEvents(snapshotToChatEvents(execution)),
-      executionSnapshot: execution, onOpenConfirmation: () => {},
       initialSnapshot: snapshot([
         { ...message('saved-agent-request', 1, 'user', 'follow-up'), turn_id: 'follow-up' },
         { ...operation('chat-status', 2, 'follow-up', {name: 'get_echomind_status', status: 'completed'}), turn_id: 'follow-up' },
         { ...message('saved-agent-reply', 3, 'assistant', 'follow-up'), turn_id: 'follow-up' },
+        { ...message('saved-result-notice', 4, 'assistant', 'manager-run'),
+          execution_notice: { origin_turn_id: 'follow-up', has_result: true } },
       ]),
     }));
-    assert.match(html, /saved-agent-reply/);
-    assert.match(html, /aria-label="本轮执行"/);
-    const groups = html.match(/<details\b[^>]*>.*?<\/details>/g) ?? [];
-    assert.equal(groups.length, 1);
-    assert.match(groups[0], /<summary[^>]*>.*正在查询训练报告….*<\/summary>/);
-    assert.doesNotMatch(html, /会话执行记录/);
-    for (const group of groups) assert.doesNotMatch(group, /<details[^>]*\bopen\b|<button/);
-    assert.match(html, /saved-agent-request.*正在查询训练报告….*需求处理 · 执行失败.*查看待确认事项.*saved-agent-reply/);
+    assert.match(html, /saved-agent-request.*查询项目状态 1 次.*saved-agent-reply.*saved-result-notice/);
+    assert.doesNotMatch(html, /会话执行记录|查看待确认事项/);
     assert.doesNotMatch(html, /可以继续提问或补充需求/);
   } finally { await server.close(); }
 });
 
-test('project Chat keeps local tools and linked Main Agent tools under their originating question', () => {
-  const taskId = 'requirement:chat:first';
+test('project Chat keeps its tools when a linked Main Agent run is active', () => {
+  const taskId = 'requirement:chat:request';
   const chat = snapshot([
-    { ...message('first', 1, 'user', 'first'), turn_id: 'first' },
-    { ...message('second', 2, 'user', 'second'), turn_id: 'second' },
-    { ...operation('shared-id', 3, 'first', { name: 'read_echomind_report' }), turn_id: 'first' },
-    { ...receipt(taskId, 4), turn_id: 'first' },
-    operation('second-status', 5, 'second', { name: 'get_echomind_status', status: 'completed' }),
+    { ...message('question', 1, 'user', 'shared-chat-run'), turn_id: 'question' },
+    { ...operation('shared-id', 2, 'shared-chat-run', {name: 'get_echomind_status'}), turn_id: 'question' },
+    { ...receipt(taskId, 3), turn_id: 'question' },
   ]);
   const manager = snapshot([
-    { ...operation('shared-id', 1, 'execution', { name: 'terminal', status: 'completed' }), task_id: taskId },
-    operation('separate-project-work', 2, 'automatic', { name: 'terminal', status: 'completed' }),
-  ], { active_run_id: 'execution' });
-  const { turns, background, activeExecutionTurnId } = groupEchoMindTurns(snapshotToChatEvents(chat), snapshotToChatEvents(manager), manager, true);
-  const actions = (events: typeof background) => events.flatMap(event => event.kind === 'ActionEvent' ? [event.id] : []);
-  assert.deepEqual(turns.map(turn => actions(turn.execution)), [
-    ['chat:shared-id', `chat:${taskId}`, 'shared-id'], ['chat:second-status'],
-  ]);
-  assert.equal(turns[0].execution.length, 6);
+    { ...operation('shared-id', 1, 'manager-run'), task_id: taskId },
+  ], {
+    active_run_id: 'manager-run',
+    task_origins: {[taskId]: 'question'},
+    task_runs: {'manager-run': {task_id: taskId, seq: 1, status: 'running'}},
+  });
+  const { turns, background } = groupEchoMindTurns(snapshotToChatEvents(chat), snapshotToChatEvents(manager), manager, true);
+  const names = turns[0].execution.flatMap(event => event.kind === 'ActionEvent' ? [event.tool_call.name] : []);
+  assert.deepEqual(names, ['get_echomind_status', 'queue_echomind_requirement']);
+  assert.deepEqual(turns[0].progress, []);
   assert.deepEqual(background, []);
-  assert.equal(activeExecutionTurnId, 'first');
-  assert.equal(groupEchoMindTurns(snapshotToChatEvents(chat), snapshotToChatEvents(manager),
-    { ...manager, status: 'idle' }, true).activeExecutionTurnId, undefined);
 });
 
 test('tool activity changes from a running action to a compact outcome without exposing arguments', () => {

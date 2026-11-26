@@ -223,6 +223,7 @@ export type ExecutionStatus =
   | 'paused'
   | 'waiting_for_confirmation'
   | 'waiting_for_input'
+  | 'waiting_for_external_task'
   | 'finished'
   | 'error'
   | 'stuck'
@@ -415,11 +416,14 @@ export interface ConversationSnapshot {
   plan?: ProductPlanState | null;
   stage_analyses?: import('./observationsContract').StageAnalysis[];
   experiment_executions?: import('./experimentExecutions').ExperimentExecution[] | null;
-  experiment_queue?: { task_id: string; kind: string }[] | null;
+  experiment_queue?: { task_id: string; kind: string; instruction?: string }[] | null;
   task_origins?: Record<string, string>;
   task_runs?: Record<string, { task_id: string; status: ExecutionStatus; seq: number }>;
   external_tasks?: {
-    task_id: string; status: string; run_id?: string | null;
+    task_id: string; status: string; run_id?: string | null; kind?: string;
+    correlation?: {
+      execution?: { project_id: string; plan_sequence: number; task_id: string } | null;
+    } | null;
     error_summary?: string | null; resume_auto_run?: boolean;
   }[];
   pending_permissions: ProductPermission[];

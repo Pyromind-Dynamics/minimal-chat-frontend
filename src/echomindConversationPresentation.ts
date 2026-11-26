@@ -284,20 +284,19 @@ export function groupEchoMindTurns(
         turn: owner, messages: [message] });
       continue;
     }
-    // Chat and Main Agent can independently assign the same operation ID.
-    if (projectChat && owner) {
+    if (projectChat) {
       if (event.kind === 'ActionEvent') {
-        owner.execution.push({ ...event, id: `chat:${event.id}`, thought: [] });
+        (owner?.execution ?? background).push({ ...event, thought: [] });
       } else if (event.kind === 'ObservationEvent') {
-        owner.execution.push({ ...event, id: `chat:${event.id}`,
-          action_id: event.action_id && `chat:${event.action_id}`,
-          tool_call_id: event.tool_call_id && `chat:${event.tool_call_id}` });
+        (owner?.execution ?? background).push(event);
       }
+      continue;
     }
     // Previously saved conversations recorded the binding only in the tool result.
-    const taskId = projectChat || !event.turn_id ? legacyQueuedRequirement(event) : undefined;
+    const taskId = !event.turn_id ? legacyQueuedRequirement(event) : undefined;
     if (owner && taskId && !taskOrigins.has(taskId)) taskOrigins.set(taskId, owner.id);
   }
+  if (projectChat) return { leading, turns, background, entries };
   const lineage = executionLineage(executionSnapshot);
   const parentRunsByTask = new Map(executionSnapshot?.external_tasks?.map(task => [task.task_id, task.run_id]));
   const roots = new Map<string, string | undefined>();
@@ -359,7 +358,7 @@ export function groupEchoMindTurns(
       if (event.kind === 'ServerErrorEvent' && event.severity === 'error') state.reason = event.detail;
     } else if (directTurn) {
       directTurn.execution.push(event);
-    } else if (!projectChat && (!executionSnapshot?.project || !run?.stage_id || (!stages.has(run.stage_id) && !run.stage_snapshot))) {
+    } else if (!executionSnapshot?.project || !run?.stage_id || (!stages.has(run.stage_id) && !run.stage_snapshot)) {
       background.push(event);
     }
   }
@@ -412,9 +411,7 @@ export function groupEchoMindTurns(
       fallbackTitles.set(turn, titles);
     }
   }
-  const activeRunId = executionSnapshot?.status === 'running' ? executionSnapshot.active_run_id : undefined;
-  const activeTask = projectChat && activeRunId ? rootForTask(lineage.taskForRun(activeRunId)) : undefined;
-  return { leading, turns, background, entries, activeExecutionTurnId: activeTask ? taskOrigins.get(activeTask) : undefined };
+  return { leading, turns, background, entries };
 }
 
 function taskProgressTitle(taskId: string, project: ConversationSnapshot['project']): string {

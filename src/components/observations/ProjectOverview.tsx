@@ -17,6 +17,7 @@ import {
 } from '../../observationsPresentation';
 import { observationSections } from '../../observationForms';
 import { ObservationFormSection } from './ObservationFormSection';
+import { BaselineAnalysisReportLinks } from './BaselineAnalysisReportLinks';
 
 type Props = {
   client: ProductClient;
@@ -26,7 +27,7 @@ type Props = {
   hidden?: boolean;
 };
 const modules = [
-  { id: 'orchestrator', label: 'Orchestrator', stageType: 'init' },
+  { id: 'baseline', label: 'Baseline', stageType: 'init' },
   { id: 'tracer', label: 'Tracer', stageType: 'tracer' },
   { id: 'dataset', label: 'Dataset', stageType: 'dataset' },
   { id: 'train', label: 'Train', stageType: 'train' },
@@ -36,12 +37,12 @@ const modules = [
 type Module = typeof modules[number];
 
 const stageSubjects: Record<Module['id'], string> = {
-  orchestrator: '基线评估', tracer: 'Tracer', dataset: '数据准备',
+  baseline: '基线评估', tracer: 'Tracer', dataset: '数据准备',
   train: '训练', inference: '推理', eval: '评估',
 };
 
 const moduleIcons: Record<Module['id'], ReactNode> = {
-  orchestrator: <path d="M16 6a7 7 0 0 0-12-1L2 7m0-4v4h4M4 14a7 7 0 0 0 12 1l2-2m0 4v-4h-4" />,
+  baseline: <><circle cx="10" cy="10" r="6" /><circle cx="10" cy="10" r="2" /><path d="M10 2v2m0 12v2M2 10h2m12 0h2" /></>,
   tracer: <path d="M3 3h5v5H3zM12 12h5v5h-5zM8 5h6v7M5 8v6h7" />,
   dataset: <><ellipse cx="10" cy="4" rx="6" ry="2.5" /><path d="M4 4v11c0 3 12 3 12 0V4M4 9c0 3 12 3 12 0" /></>,
   train: <path d="M3 3v14h14M5 13l4-5 3 3 5-7" />,
@@ -62,7 +63,9 @@ function projectPhase(stages: ObservationOverview['nodes']): string {
 }
 
 function moduleStatus(businessStatuses: string[]): string {
-  const statuses = businessStatuses.map(status => status === 'waiting_analysis' ? 'waiting' : observationBusinessStatus(status));
+  const statuses = businessStatuses.map(status =>
+    ['waiting_analysis', 'waiting_delivery', 'report_ready_pending_analysis'].includes(status)
+      ? 'waiting' : observationBusinessStatus(status));
   if (statuses.length && statuses.every(status => status === 'completed')) return 'completed';
   return ['failed', 'stopped', 'needs_input', 'running', 'waiting'].find(status => statuses.includes(status)) ?? 'pending';
 }
@@ -136,7 +139,7 @@ function ProjectObservationContent({ client, projectId, snapshot, options }: Pro
         });
         const detail = details.length === 1 ? details[0] : undefined;
         const current = detail?.currentReport;
-        const metric = current?.status === 'ready' ? observationHeadlineMetric(module.stageType, current.result?.metrics) : undefined;
+        const metric = module.id !== 'baseline' && current?.status === 'ready' ? observationHeadlineMetric(module.stageType, current.result?.metrics) : undefined;
         const status = overview ? moduleStatus(details.map(item => item.status)) : undefined;
         const runCount = new Set(details.flatMap(detail => detail.bindings.map(binding => binding.task_id))).size;
         let keyMetric = <><strong>{formatMetric(metric?.value, metric?.unit)}</strong>{metric && <small>{metric.label}</small>}</>;
@@ -144,8 +147,8 @@ function ProjectObservationContent({ client, projectId, snapshot, options }: Pro
           keyMetric = <strong>{stages.length} {stages.length === 1 ? 'node' : 'nodes'}</strong>;
         } else if (module.id === 'train' && runCount) {
           keyMetric = <strong>{runCount} {runCount === 1 ? 'run' : 'runs'}</strong>;
-        } else if ((module.id === 'orchestrator' || module.id === 'eval') && !metric &&
-          status === 'completed' && detail?.stage.report_version_ids?.length) {
+        } else if ((module.id === 'baseline' || module.id === 'eval') && !metric &&
+          detail?.stage.report_version_ids?.length) {
           keyMetric = <RegisteredReportMetric client={client} projectId={projectId} options={options} node={detail.stage} />;
         }
         const emptyMessage = error ? '暂时无法读取模块状态'
@@ -164,6 +167,9 @@ function ProjectObservationContent({ client, projectId, snapshot, options }: Pro
                 section={section} node={stage} status={status} reports={reports} currentReport={currentReport}
                 bindings={bindings} panel={panel} configVersion={overview.config_version}
                 client={client} projectId={projectId} options={options} onDeliveryRetry={refresh} />)}
+              {module.id === 'baseline' && !!stage.analysis_report_version_ids?.length &&
+                <BaselineAnalysisReportLinks client={client} projectId={projectId} nodeId={stage.id}
+                  reportIds={stage.analysis_report_version_ids} options={options} />}
             </Fragment>;
           }) : <p role="status" className="rsi-detail-help">{emptyMessage}</p>}
         </ModuleRow>;

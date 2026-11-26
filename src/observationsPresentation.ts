@@ -52,6 +52,8 @@ export function observationStageMessage(subject: string, status?: string): strin
 }
 
 export function observationReportMessage(subject: string, businessStatus: string, reportStatus?: StageAnalysis['status']): string {
+  if (businessStatus === 'waiting_delivery') return '结果已返回，等待提交报告';
+  if (businessStatus === 'report_ready_pending_analysis') return '报告已交付，等待阶段分析';
   if (reportStatus === 'queued') return '正在校验产物并生成报告';
   if (reportStatus === 'failed') return `${subject}已完成，报告生成失败`;
   if (reportStatus === 'ready') return '报告已生成，详情暂不可用';
@@ -67,8 +69,11 @@ export function observationNodeStatus(
   snapshot?: ConversationSnapshot | null,
 ): string {
   const status = node.business_status;
-  if (status === 'succeeded' && node.delivery_status) {
-    return node.delivery_status === 'failed' ? 'failed' : 'running';
+  if (status === 'succeeded' || status === 'waiting_analysis') {
+    if (node.delivery_status === 'failed') return 'failed';
+    if (node.delivery_status === 'registering') return 'running';
+    if (node.delivery_status === 'pending') return 'waiting_delivery';
+    if (status === 'waiting_analysis' && node.report_version_ids?.length) return 'report_ready_pending_analysis';
   }
   const project = snapshot?.project;
   if (status !== 'running' || !project || project.project_id !== overview.project_id ||
@@ -88,7 +93,8 @@ export function observationNodeStatus(
   const runs = [...latestByTask.values()];
   if (runs.length !== taskIds.size || runs.some(run => !node.current_run_ids.includes(run.run_id))) return status;
   return runs.some(run => run.state === 'waiting_analysis') &&
-    runs.every(run => run.state === 'waiting_analysis' || run.state === 'succeeded') ? 'waiting_analysis' : status;
+    runs.every(run => run.state === 'waiting_analysis' || run.state === 'succeeded')
+    ? node.report_version_ids?.length ? 'report_ready_pending_analysis' : 'waiting_analysis' : status;
 }
 
 export function observationEvidenceVersion(snapshot: ConversationSnapshot | null | undefined, projectId: string): string {
@@ -97,7 +103,8 @@ export function observationEvidenceVersion(snapshot: ConversationSnapshot | null
   const tasks = (snapshot.external_tasks ?? []).map(task => [task.task_id, task.status]);
   return JSON.stringify([
     snapshot.project.plan_sequence,
-    runs.map(run => [run.run_id, run.state, run.report_state, run.platform_task_id]),
+    runs.map(run => [run.run_id, run.state, run.report_state, run.platform_task_id,
+      run.artifacts?.map(artifact => artifact.artifact_id)]),
     tasks,
     snapshot.stage_analyses?.map(job => [job.job_id, job.status]),
   ]);

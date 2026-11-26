@@ -28,6 +28,7 @@ import { ProjectRuntimeWorkbench } from './ProjectRuntimeWorkbench';
 import { ProjectOverview } from './observations/ProjectOverview';
 import { ProjectConfirmationPanel } from './ProjectConfirmationPanel';
 import { ProjectChatDrawer } from './ProjectChatDrawer';
+import { ProjectExecutionQueue } from './ProjectExecutionQueue';
 import { managerChatEvents, preparationPlanStatus } from '../preparation';
 
 type RuntimeWorkbenchLocation = {projectId: string; preferredDebugRunId?: string};
@@ -584,12 +585,16 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const platformTaskRunning = state.snapshot?.external_tasks?.some(task => task.status === 'running');
   const platformTaskPending = state.snapshot?.external_tasks?.some(task => task.status === 'pending' || task.status === 'waiting');
   const restingStatus = platformTaskRunning ? '项目任务运行中' : platformTaskPending ? '等待任务结果' : queuedCount > 0 ? '等待执行' : null;
+  const executionSuspended = state.snapshot?.automatic_turns_suspended;
+  const canInterruptExecution = state.status === 'running'
+    || (isProject && state.status === 'waiting_for_external_task' && !executionSuspended);
   const executionStatus = {
     idle: restingStatus ?? '空闲',
     running: isProject ? '正在执行项目' : '正在准备项目',
     paused: '已暂停',
     waiting_for_confirmation: '等待确认',
     waiting_for_input: '等待回答',
+    waiting_for_external_task: executionSuspended ? '已暂停' : restingStatus ?? '等待任务结果',
     finished: restingStatus ?? '已结束',
     error: '执行失败',
     stuck: '执行等待超时',
@@ -633,7 +638,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     });
     return () => controller.abort();
   }, [chatClient, historyId, options, preloadedChat]);
-  const savedHistory = historyId ? selectedChat?.snapshot : null;
+  const savedHistory = historyId ? selectedChat?.snapshot ?? null : null;
   const savedChatEvents = useMemo(() => savedHistory ? snapshotToChatEvents(savedHistory) : [], [savedHistory]);
   const history = useMemo(() => {
     const chat = publicChatEvents(savedChatEvents);
@@ -672,26 +677,28 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
 
   const managerStatus = state.snapshot && <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-slate-50 px-4 py-2">
     <span className="flex flex-wrap items-center gap-2 text-sm text-slate-700" role="status">
-      {(state.status === 'running' || platformTaskRunning) && <span aria-hidden="true" className="size-2 rounded-full bg-blue-500" />}
-      {executionStatus}
+      {(state.status === 'running' || (platformTaskRunning && !executionSuspended)) && <span aria-hidden="true" className="size-2 rounded-full bg-blue-500" />}
+      <span>{executionStatus}</span>
       {queuedCount > 0 && <span className="text-xs text-slate-500">待处理 {queuedCount} 项</span>}
       {pendingCount > 0 && <span className="text-xs text-amber-700">待确认 {pendingCount} 项</span>}
       {!loading && progressConnection === 'connecting' && <span className="text-xs text-slate-500">正在同步进度</span>}
       {!loading && progressConnection === 'reconnecting' && <span className="text-xs text-amber-700">正在重新连接</span>}
     </span>
-    {!state.snapshot.capabilities.read_only && (state.status === 'running' || state.status === 'error' || state.status === 'stuck' || state.snapshot.automatic_turns_suspended) && (
+    {!state.snapshot.capabilities.read_only && (canInterruptExecution || state.status === 'error' || state.status === 'stuck' || executionSuspended) && (
       <button type="button" disabled={busy} className="rounded border bg-white px-3 py-1 text-xs disabled:opacity-50"
-        onClick={() => void controlManager(state.status === 'running' ? 'cancel' : 'user_message')}>
-        {state.status === 'running' ? '中断执行' : '继续执行'}
+        onClick={() => void controlManager(canInterruptExecution ? 'cancel' : 'user_message')}>
+        {canInterruptExecution ? '中断执行' : '继续执行'}
       </button>
     )}
   </div>;
 
   const archivedHistory = (active = true) => <>
     <ChatPanel active={active} autoScroll="follow" logLabel="EchoMind 对话记录" events={history} requestOptions={options}
-      timeline={(history.length > 0 || (!isProject && conversationExecutionEvents.length > 0))
-        ? <EchoMindConversationTimeline projectChat={isProject} events={isProject ? savedChatEvents : history}
-            executionEvents={isProject ? projectTools.project : conversationExecutionEvents}
+      timeline={isProject
+        ? savedChatEvents.length > 0 && <EchoMindConversationTimeline projectChat readOnly
+            events={savedChatEvents} snapshot={savedHistory} options={options} />
+        : (history.length > 0 || conversationExecutionEvents.length > 0)
+        ? <EchoMindConversationTimeline events={history} executionEvents={conversationExecutionEvents}
             snapshot={state.snapshot} options={options} /> : undefined}
       status={state.status} conversationId={state.conversationId} />
     <p className="border-t bg-amber-50 px-4 py-2 text-xs text-amber-800">此会话已归档，仅可查看历史记录和产物。请新建会话继续。</p>
@@ -864,6 +871,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
           </section>
           {pendingCount > 0 && <ExecutionActions snapshot={state.snapshot} onOpenPlan={openPlan}
             onOpenConfirmation={() => openConfirmation()} />}
+          {isManagerProject && !state.snapshot.capabilities.read_only && <ProjectExecutionQueue snapshot={state.snapshot} />}
           {state.snapshot.capabilities.read_only ? <ProjectChatDrawer
             history={archivedHistory}
             composer={panel => <button type="button" aria-controls={panel.id} aria-expanded={panel.expanded}
@@ -871,8 +879,6 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
               onClick={event => event.currentTarget.focus()}>查看归档对话</button>}
           /> : <EchoMindAgentChat client={chatClient}
             managerId={state.snapshot.conversation_id} options={options} onActivity={recordChatActivity}
-            executionEvents={projectTools.project} executionSnapshot={state.snapshot}
-            onOpenConfirmation={() => openConfirmation()}
             initialSnapshot={preloadedChat?.projectId === currentProjectId ? preloadedChat.snapshot : undefined} />}
         </> : <section ref={chatAreaRef} aria-label="会话工作区" className="flex min-h-0 flex-1 flex-col bg-white">
         {managerStatus}

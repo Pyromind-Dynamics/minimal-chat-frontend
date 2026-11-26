@@ -255,3 +255,54 @@
     border-color: #e2e8f0;
   }
 }
+
+.project-execution-queue {
+  align-self: flex-end;
+  flex: none;
+  width: min(390px, 100%);
+  min-width: 0;
+  padding: 0 8px 6px;
+  color: #334155;
+  font-size: 13px;
+}
+.project-execution-queue > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+}
+.project-execution-queue h2 { font-size: inherit; font-weight: 600; }
+.project-execution-queue header > span { color: #64748b; font-size: 12px; }
+.project-execution-queue ul {
+  max-height: clamp(44px, 17cqh, 132px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #f8fafc;
+}
+.project-execution-queue li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-inline: 10px 4px;
+}
+.project-execution-queue li + li { border-top: 1px solid #e2e8f0; }
+.project-queued-task-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-execution-queue button {
+  flex: none;
+  min-height: 36px;
+  padding: 0 8px;
+  border-radius: 5px;
+  color: #6546a7;
+  font-size: 12px;
+  cursor: pointer;
+}
+.project-execution-queue button:hover { background: #f0eafa; }
+.project-execution-queue button:focus-visible { outline: 2px solid #7050c8; outline-offset: -2px; }
+.project-queue-copy-error { margin: 4px 8px 0; color: #991b1b; }
+@media (pointer: coarse) {
+  .project-execution-queue button { min-height: 44px; }
+}

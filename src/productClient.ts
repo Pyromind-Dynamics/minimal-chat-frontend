@@ -42,6 +42,10 @@ function readProduct<T>(url: string, options: RequestOptions, label: string, sig
 export function createProductClient(path: string) {
   const base = `${BACKEND_URL}${path}`;
   const projectBase = (projectId: string) => `${BACKEND_URL}${PROJECTS_PATH}/${encodeURIComponent(projectId)}`;
+  const analysisReportUrl = (projectId: string, nodeId: string, reportId: string) => {
+    const params = new URLSearchParams({project_node_id: nodeId, report_version_id: reportId});
+    return `${projectBase(projectId)}/observations/analysis-report?${params}`;
+  };
   const graphRunBase = (projectId: string, runId?: string) => {
     const runs = `${projectBase(projectId)}/graph-runs`;
     return runId ? `${runs}/${encodeURIComponent(runId)}` : runs;
@@ -174,6 +178,9 @@ export function createProductClient(path: string) {
       if (query.report_version_id) params.set('report_version_id', query.report_version_id);
       return productRequest<ObservationReportDetails>(`${BACKEND_URL}${PROJECTS_PATH}/${encodeURIComponent(id)}/observations/report-details?${params}`, { signal, cache: 'no-store' }, options);
     },
+    analysisReportUrl,
+    observationAnalysisReport: (projectId: string, nodeId: string, reportId: string, options: RequestOptions, signal?: AbortSignal) =>
+      productRequest<{filename: string; text: string}>(analysisReportUrl(projectId, nodeId, reportId), {signal, cache: 'no-store'}, options),
     trainingSeries: (id: string, query: SeriesQuery, options: RequestOptions, signal?: AbortSignal) => {
       const params = new URLSearchParams({ project_node_id: query.project_node_id, run_id: query.run_id, limit: String(query.limit ?? 1000) });
       for (const key of query.keys ?? []) params.append('keys', key);

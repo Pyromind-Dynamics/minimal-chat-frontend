@@ -37,6 +37,7 @@ export function StatusBar({
     paused: 'Paused',
     waiting_for_confirmation: 'Waiting for confirmation',
     waiting_for_input: '等待你的回答',
+    waiting_for_external_task: 'Waiting for an external task',
     finished: 'Finished',
     error: 'Error',
     stuck: 'Stuck',

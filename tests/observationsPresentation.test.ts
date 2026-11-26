@@ -9,7 +9,7 @@ test('detail forms use the published block order and tolerate an older or unsupp
     { project_node_id: 'init-a', sections: [{ id: 'metrics-only', label: 'Configured details', selection: 'report_version',
       blocks: [{ type: 'metrics', source: 'report' }, { type: 'select', label: 'Evaluation version' }] }] },
   ] } };
-  const details = (value: ObservationsConfig) => observationSections(value, 'init-a', 'init', 'Orchestrator', '基线评估');
+  const details = (value: ObservationsConfig) => observationSections(value, 'init-a', 'init', 'Baseline', '基线评估');
   assert.equal(details(config)[0].label, 'Configured details');
   assert.deepEqual(details(config)[0].blocks.map(block => block.type), ['metrics', 'select']);
   const legacy = details({ schema_version: 1, panels: [] });
@@ -42,7 +42,7 @@ test('a readable subset of the registered reports remains visible', () => {
   assert.equal(matchesObservationReportVersions(['v2', 'v3'], []), false);
 });
 
-test('the Orchestrator headline shows accuracy independently of report order', () => {
+test('the Baseline headline shows accuracy independently of report order', () => {
   const samples = { label: 'evaluated_samples', value: 120, unit: 'count' };
   const resultAccuracy = { label: 'result_accuracy', value: 0.81, unit: 'ratio' };
   const labelAccuracy = { label: 'label_accuracy', value: 0.82, unit: 'ratio' };
@@ -136,6 +136,12 @@ test('the sidebar shows delivery waiting only for the current attempts of all st
   } as ConversationSnapshot;
   assert.equal(observationNodeStatus(overview, node, snapshot), 'waiting_analysis');
   assert.equal(observationNodeStatus(overview, { ...node, business_status: 'succeeded' }, snapshot), 'succeeded');
+  assert.equal(observationNodeStatus(overview, {
+    ...node, business_status: 'waiting_analysis', report_version_ids: ['v3'],
+  }, snapshot), 'report_ready_pending_analysis');
+  assert.equal(observationNodeStatus(overview, {
+    ...node, business_status: 'waiting_analysis', delivery_status: 'pending',
+  }, snapshot), 'waiting_delivery');
   assert.equal(observationNodeStatus(overview, { ...node, business_status: 'succeeded', delivery_status: 'registering' }, snapshot), 'running');
   assert.equal(observationNodeStatus(overview, { ...node, business_status: 'succeeded', delivery_status: 'failed' }, snapshot), 'failed');
   assert.equal(observationNodeStatus({ ...overview, plan_sequence: 3 }, node, snapshot), 'running');
