@@ -136,6 +136,76 @@
 
 .echomind-nav-meta time { flex: none; white-space: nowrap; }
 
+.echomind-conversation-row { position: relative; }
+
+.echomind-nav-column .echomind-conversation-delete {
+  position: absolute;
+  inset-inline-end: 4px;
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+  place-items: center;
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
+  color: #5d687a;
+}
+
+.echomind-nav-column .echomind-conversation-delete:hover {
+  background: #fef2f2;
+  color: #b42318;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .echomind-conversation-row:not(:hover):not(:has(> :focus-visible)) .echomind-conversation-delete {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .echomind-conversation-row:is(:hover, :has(> :focus-visible)) > button:first-child { padding-inline-end: 38px; }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .echomind-conversation-row > button:first-child { padding-inline-end: 38px; }
+}
+
+.echomind-delete-dialog {
+  position: fixed;
+  inset: 0;
+  width: min(420px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  margin: auto;
+  padding: 20px;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  color: #172033;
+  box-shadow: 0 12px 40px rgb(23 32 51 / 18%);
+}
+
+.echomind-delete-dialog::backdrop { background: rgb(23 32 51 / 35%); }
+.echomind-delete-dialog h2 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
+.echomind-delete-dialog p, .echomind-delete-dialog ul { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.echomind-delete-dialog ul { margin-top: 10px; padding-inline-start: 20px; list-style: disc; }
+.echomind-delete-dialog .echomind-delete-error { margin-top: 12px; color: #b42318; }
+.echomind-delete-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
+.echomind-delete-dialog footer button {
+  padding: 6px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.echomind-delete-dialog footer button:last-child {
+  border-color: #b42318;
+  background: #b42318;
+  color: #fff;
+}
+
+.echomind-delete-dialog footer button:focus-visible { outline: 2px solid #7050c8; outline-offset: 2px; }
+.echomind-delete-dialog footer button:disabled { cursor: default; opacity: .6; }
+
 .stage-workspace-track {
   scrollbar-width: thin;
 }

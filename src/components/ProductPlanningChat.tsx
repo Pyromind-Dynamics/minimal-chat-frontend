@@ -29,6 +29,7 @@ import { ProjectOverview } from './observations/ProjectOverview';
 import { ProjectConfirmationPanel } from './ProjectConfirmationPanel';
 import { ProjectChatDrawer } from './ProjectChatDrawer';
 import { ProjectExecutionQueue } from './ProjectExecutionQueue';
+import { DeleteConversationDialog } from './DeleteConversationDialog';
 import { managerChatEvents, preparationPlanStatus } from '../preparation';
 
 type RuntimeWorkbenchLocation = {projectId: string; preferredDebugRunId?: string};
@@ -103,12 +104,16 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const [openError, setOpenError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ConversationSummary | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [afterSeq, setAfterSeq] = useState(0);
   const [hasConnected, setHasConnected] = useState(false);
   const selectedKey = `${storageNamespace}.${userId}.selected`;
   const selectedProjectKey = `${storageNamespace}.${userId}.project`;
   const newKey = `${storageNamespace}.${userId}.new`;
   const activeId = useRef<string | null>(null);
+  const deletedConversations = useRef(new Set<string>());
+  const newConversationButton = useRef<HTMLButtonElement>(null);
   const didRestore = useRef(false);
   const generation = useRef(0);
   const request = useRef<AbortController | null>(null);
@@ -121,7 +126,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const reviewRequest = useRef<{conversation: string; revision: number; command: string} | null>(null);
 
   const apply = useCallback((snapshot: ConversationSnapshot, chatUpdatedAt?: string | null) => {
-    if (activeId.current !== snapshot.conversation_id) return;
+    if (activeId.current !== snapshot.conversation_id || deletedConversations.current.has(snapshot.conversation_id)) return;
     dispatch({ type: 'SET_PRODUCT_SNAPSHOT', snapshot });
     const summary: ConversationSummary = {
       conversation_id: snapshot.conversation_id,
@@ -198,7 +203,8 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   }, [apply, client, loading, openError, options]);
 
   const refreshProjects = useCallback(async () => {
-    const items = await client.listProjects(navigationOptions);
+    const items = (await client.listProjects(navigationOptions))
+      .filter(item => !deletedConversations.current.has(item.conversation_id));
     setProjects(items);
     return items;
   }, [client, navigationOptions]);
@@ -291,7 +297,8 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     const initialGeneration = generation.current;
     const listed = client.list(navigationOptions, signal).then(items => {
       if (!signal.aborted) setConversations(current => {
-        const byId = new Map(items.map(item => [item.conversation_id, item]));
+        const byId = new Map(items.filter(item => !deletedConversations.current.has(item.conversation_id))
+          .map(item => [item.conversation_id, item]));
         for (const item of current) {
           const listed = byId.get(item.conversation_id);
           const latest = !listed || item.through_seq >= listed.through_seq ? item : listed;
@@ -301,11 +308,12 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         }
         return [...byId.values()];
       });
-      return items;
+      return items.filter(item => !deletedConversations.current.has(item.conversation_id));
     });
     const projectsListed = client.listProjects(navigationOptions, signal).then(items => {
-      if (!signal.aborted) setProjects(items);
-      return items;
+      const visible = items.filter(item => !deletedConversations.current.has(item.conversation_id));
+      if (!signal.aborted) setProjects(visible);
+      return visible;
     });
 
     if (!didRestore.current && (conversationId || projectId)) {
@@ -489,6 +497,29 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     setSavedChat(null);
     setWorkspaceKey(key => key + 1);
     setError(null); setNotice(null); setAfterSeq(0); setHasConnected(false);
+  };
+
+  const deleteConversation = async () => {
+    if (!deleteTarget || busy) return;
+    const id = deleteTarget.conversation_id;
+    setBusy(true);
+    setDeleteError(null);
+    try {
+      await client.deleteConversation(id, navigationOptions);
+      deletedConversations.current.add(id);
+      setConversations(current => current.filter(item => item.conversation_id !== id));
+      setProjects(current => current.filter(item => item.conversation_id !== id));
+      if (id === state.conversationId || id === activeId.current || id === target.current?.conversationId) {
+        newConversation();
+      }
+      setDeleteTarget(null);
+      setNotice('会话已删除。');
+      window.requestAnimationFrame(() => newConversationButton.current?.focus());
+    } catch (failure) {
+      setDeleteError(messageOf(failure));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const controlManager = async (type: 'cancel' | 'user_message') => {
@@ -718,7 +749,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
           执行会话 ID <code className="select-all break-all">{state.conversationId}</code>
         </div>}
       </div>
-      <div className="flex items-center gap-3 text-sm"><span>用户 {userId}</span><a href="./" className="text-blue-700">Workbench</a><button type="button" onClick={newConversation} disabled={busy || loading} className="rounded border px-3 py-1 disabled:opacity-40">新会话</button></div>
+      <div className="flex items-center gap-3 text-sm"><span>用户 {userId}</span><a href="./" className="text-blue-700">Workbench</a><button ref={newConversationButton} type="button" onClick={newConversation} disabled={busy || loading} className="rounded border px-3 py-1 disabled:opacity-40">新会话</button></div>
     </header>
     <details className="shrink-0 border-b bg-slate-50 px-4 py-2 text-xs text-slate-500">
       <summary className="cursor-pointer">连接设置 · 用户 {userId}{credentials.xCluster ? ` · ${credentials.xCluster}` : ''}</summary>
@@ -779,11 +810,19 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
           <ul>
             {orderedConversations.map(item => {
               const label = item.title || item.conversation_id.slice(0, 12);
-              return <li key={item.conversation_id}>
+              return <li key={item.conversation_id} className="echomind-conversation-row">
                 <button type="button" disabled={busy} aria-current={item.conversation_id === state.conversationId}
                   onClick={() => selectConversation({ conversationId: item.conversation_id, projectId: item.project_id ?? undefined, cluster: item.cluster ?? undefined })}>
                   <span className="echomind-nav-title" title={label}>{label}</span>
                   <span className="echomind-nav-meta"><ActivityDate value={conversationActivityAt(item)} /></span>
+                </button>
+                <button type="button" className="echomind-conversation-delete" disabled={busy || loading}
+                  title="删除会话" aria-label={`删除会话 ${label}`}
+                  onClick={() => { setDeleteTarget(item); setDeleteError(null); }}>
+                  <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5" />
+                  </svg>
                 </button>
               </li>;
             })}
@@ -906,6 +945,11 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         </section>}
       </section>
     </main>
+    {deleteTarget && <DeleteConversationDialog
+      title={deleteTarget.title || deleteTarget.conversation_id.slice(0, 12)}
+      projectNames={projects.filter(item => item.conversation_id === deleteTarget.conversation_id).map(item => item.name)}
+      pending={busy} error={deleteError} onClose={() => setDeleteTarget(null)}
+      onConfirm={() => { void deleteConversation(); }} />}
     {currentProjectId && <ProjectOverview snapshot={state.snapshot} client={client} projectId={currentProjectId} options={runtimeOptions}
       inert={workspaceUnavailable} />}
     </div>

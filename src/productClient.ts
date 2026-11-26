@@ -56,6 +56,8 @@ export function createProductClient(path: string) {
     }, options),
     list: (options: RequestOptions, signal?: AbortSignal) => readProduct<ConversationSummary[]>(`${base}/summaries`, options, '对话列表', signal),
     snapshot: (id: string, options: RequestOptions, signal?: AbortSignal) => readProduct<ConversationSnapshot>(`${base}/${encodeURIComponent(id)}/snapshot`, options, '对话', signal),
+    deleteConversation: (id: string, options: RequestOptions) =>
+      productRequest<{ deleted: boolean }>(`${base}/${encodeURIComponent(id)}`, { method: 'DELETE' }, options),
     project: (id: string, options: RequestOptions, signal?: AbortSignal) => productRequest<{ project: Pick<ProjectSummary, 'project_id' | 'conversation_id' | 'cluster'> }>(`${BACKEND_URL}${PROJECTS_PATH}/${encodeURIComponent(id)}`, { signal }, options),
     command: (id: string, command: Record<string, unknown>, options: RequestOptions) => productRequest<CommandReceipt>(`${base}/${encodeURIComponent(id)}/commands`, { method: 'POST', body: JSON.stringify(command) }, options),
     listProjects: (options: RequestOptions, signal?: AbortSignal) => readProduct<ProjectSummary[]>(`${BACKEND_URL}${PROJECTS_PATH}`, options, '项目列表', signal),

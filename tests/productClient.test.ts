@@ -23,6 +23,7 @@ test('workbench client exposes conversation, project, publication, and graph-run
       'consolidationJobs',
       'controlConsolidationJob',
       'create',
+      'deleteConversation',
       'eventsUrl',
       'generateConsolidation',
       'getGraphRepairProposal',
@@ -81,6 +82,7 @@ test('workbench client exposes conversation, project, publication, and graph-run
     await client.retryArtifactDelivery('project/id', 'stage/id', {});
     await client.inputHtml('chat/id', 'review/id', {});
     await client.observationAnalysisReport('project/id', 'stage/id', 'report/id', {});
+    await client.deleteConversation('chat/id', {});
     assert.deepEqual(fetch.mock.calls.map(call => new URL(String(call.arguments[0]), 'http://localhost').pathname), [
       `${ECHOMIND_CONVERSATIONS_PATH}/summaries`, `${PROJECTS_PATH}/project%2Fid`,
       `${PROJECTS_PATH}/project%2Fid/observations/overview`,
@@ -88,6 +90,7 @@ test('workbench client exposes conversation, project, publication, and graph-run
       `${PROJECTS_PATH}/project%2Fid/observations/retry-artifact-delivery`,
       `${ECHOMIND_CONVERSATIONS_PATH}/chat%2Fid/pending-inputs/review%2Fid/html`,
       `${PROJECTS_PATH}/project%2Fid/observations/analysis-report`,
+      `${ECHOMIND_CONVERSATIONS_PATH}/chat%2Fid`,
     ]);
     assert.deepEqual(Object.fromEntries(new URL(fetch.mock.calls[3].arguments[0], 'http://localhost').searchParams), {
       project_node_id: 'stage/id', analysis_job_id: 'job/id', report_version_id: 'version/id',
@@ -95,6 +98,7 @@ test('workbench client exposes conversation, project, publication, and graph-run
     assert.equal(fetch.mock.calls[4].arguments[1].method, 'POST');
     assert.equal(fetch.mock.calls[4].arguments[1].body, JSON.stringify({project_node_id: 'stage/id'}));
     assert.equal(fetch.mock.calls[6].arguments[0], client.analysisReportUrl('project/id', 'stage/id', 'report/id'));
+    assert.equal(fetch.mock.calls[7].arguments[1].method, 'DELETE');
     assert.deepEqual(Object.fromEntries(new URL(fetch.mock.calls[6].arguments[0], 'http://localhost').searchParams), {
       project_node_id: 'stage/id', report_version_id: 'report/id',
     });
