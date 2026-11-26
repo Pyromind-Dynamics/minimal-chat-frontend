@@ -139,6 +139,7 @@ export function ProjectRuntimeWorkbench({
   const activeRunId = activeRun?.run_id;
   const productionReleaseId = publication?.publication_mode === 'production' ? publication.release_id : undefined;
   const datasetConfig = publication?.nodes.find(node => node.type === 'dataset')?.config;
+  const validationSource = datasetConfig?.batch_validation_source;
   const productionRun = productionReleaseId ? selectProductionRun(runs, productionReleaseId) : undefined;
   const collectionBeforeRun = collection?.auto_start_graph_run
     && !collection.graph_run_ids.some(id => runs.some(run => run.run_id === id))
@@ -523,7 +524,7 @@ export function ProjectRuntimeWorkbench({
           {!historicalRun && collectionState && demoSeed?.source && <DemoImageCollection key={`${projectId}:${previousDemo?.simulation_id ?? demoSeed.simulation_id}`}
             projectId={projectId} imageRoot={demoSeed.source.image_root} previous={previousDemo} batchSize={collectionState.batchSize} requestOptions={requestOptions}
             datasetLabels={datasetConfig?.batch_label_source === 'dataset'}
-            fixedValidation={datasetConfig?.batch_validation_source === 'fixed'}
+            validationSource={validationSource === 'fixed' || validationSource === 'none' ? validationSource : 'batch'}
             disabled={!collectionState.canRunBatch || !!activeRun || !!(collection && collectionSimulationActive(collection)
               && !(collection.manual_start && collection.status === 'pending' && collection.simulation_id !== submittedCollection?.simulation_id))}
             onStarted={value => {

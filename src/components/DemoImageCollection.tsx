@@ -4,13 +4,13 @@ import { demoCollectionSelection, startDemoCollection, type CollectionSimulation
 
 const inputClass = 'mt-1 block w-full rounded border border-slate-300 px-2 py-1.5 text-sm';
 
-export function DemoImageCollection({projectId, imageRoot, previous, batchSize, datasetLabels, fixedValidation, disabled, requestOptions, onStarted}: {
+export function DemoImageCollection({projectId, imageRoot, previous, batchSize, datasetLabels, validationSource, disabled, requestOptions, onStarted}: {
   projectId: string;
   imageRoot: string;
   previous?: CollectionSimulation | null;
   batchSize: number;
   datasetLabels?: boolean;
-  fixedValidation?: boolean;
+  validationSource: 'fixed' | 'batch' | 'none';
   disabled: boolean;
   requestOptions: RequestOptions;
   onStarted: (simulation: CollectionSimulation) => void;
@@ -21,6 +21,11 @@ export function DemoImageCollection({projectId, imageRoot, previous, batchSize, 
   const submitting = useRef(false);
   const selection = demoCollectionSelection(previous);
   const root = imageRoot.replace(/\/+$/, '');
+  const validationHint = {
+    none: `本批 ${batchSize} 组全部用于训练。Eval 使用独立评测集。`,
+    fixed: `本批 ${batchSize} 组全部用于训练。训练验证使用固定验证集，Eval 使用独立评测集。起始位置按排除这两个集合后的顺序计算。`,
+    batch: '训练和验证样本按执行方案划分。',
+  }[validationSource];
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -58,9 +63,7 @@ export function DemoImageCollection({projectId, imageRoot, previous, batchSize, 
     </fieldset>
     <p className="mt-2 text-xs text-slate-600">
       {datasetLabels ? '封批后由 Dataset 通过平台 DataFlow 预打标。' : '缺少标签的样本由当前 Inference 预标注。'}
-      {fixedValidation
-        ? `本批 ${batchSize} 组全部用于训练。训练验证使用固定验证集，Eval 使用独立评测集。起始位置按排除这两个集合后的顺序计算。`
-        : '训练和验证样本按执行方案划分。'}
+      {validationHint}
     </p>
     <p className="mt-1 text-xs text-slate-600">封批后自动进入 Dataset → Train → Eval。</p>
     {error && <p role="alert" className="mt-2 break-words text-xs text-red-700">{error}</p>}

@@ -195,20 +195,24 @@ test('production flywheel keeps the active release and shows live and final stag
     const prepared = {simulation_id: 'reserved', status: 'pending', manual_start: true,
       auto_start_graph_run: true, requested_samples: 5, completed_samples: 0, graph_run_ids: [], batch_ids: []};
     const { DemoImageCollection } = await server.ssrLoadModule('/src/components/DemoImageCollection.tsx');
-    const renderCollection = (simulation: typeof prepared, disabled = false, datasetLabels = false, fixedValidation = false, previous?: {request_id: string; status: string; source: {image_root: string}}) => renderToStaticMarkup(createElement(ProductionFlywheel, {
+    const renderCollection = (simulation: typeof prepared, disabled = false, datasetLabels = false, validationSource: 'fixed' | 'batch' | 'none' = 'batch', previous?: {request_id: string; status: string; source: {image_root: string}}) => renderToStaticMarkup(createElement(ProductionFlywheel, {
       simulation, onOpenRun: () => {},
     }, simulation.manual_start && createElement(DemoImageCollection, {
       projectId: 'demo', imageRoot: '/workspace/example', previous, batchSize: simulation.requested_samples,
-      disabled, datasetLabels, fixedValidation, requestOptions: {}, onStarted: () => assert.fail('render must not start a simulation'),
+      disabled, datasetLabels, validationSource, requestOptions: {}, onStarted: () => assert.fail('render must not start a simulation'),
     })));
     assert.match(renderCollection(prepared), /等待手动启动/);
     assert.match(renderCollection({...prepared, status: 'feeding', completed_samples: 2}), /已采集 2\/5 条 · 正在采样/);
     assert.match(renderCollection(prepared), /封批后自动进入 Dataset → Train → Eval/);
     const rawBatch = renderCollection(prepared, false, true);
     assert.match(rawBatch, /Dataset 通过平台 DataFlow 预打标/);
+    assert.match(rawBatch, /训练和验证样本按执行方案划分/);
+    const fullBatch = renderCollection(prepared, false, true, 'none');
+    assert.match(fullBatch, /本批 5 组全部用于训练。Eval 使用独立评测集/);
+    assert.doesNotMatch(fullBatch, /训练验证使用固定验证集|按执行方案划分/);
     assert.doesNotMatch(rawBatch, /由当前 Inference 预标注/);
-    assert.match(renderCollection(prepared, false, true, true), /本批 5 组全部用于训练。训练验证使用固定验证集/);
-    const collectedLabels = renderCollection(prepared, false, false, true);
+    assert.match(renderCollection(prepared, false, true, 'fixed'), /本批 5 组全部用于训练。训练验证使用固定验证集/);
+    const collectedLabels = renderCollection(prepared, false, false, 'fixed');
     assert.match(collectedLabels, /当前 Inference 预标注/);
     assert.match(collectedLabels, /本批 5 组全部用于训练。训练验证使用固定验证集/);
     assert.match(renderCollection(prepared), /采集 5 条并运行一轮/);
@@ -216,7 +220,7 @@ test('production flywheel keeps the active release and shows live and final stag
     assert.match(renderCollection(prepared), /name="directory"[^>]*value="\/workspace\/example\/images"/);
     assert.match(renderCollection(prepared), /name="first_group"[^>]*value="1"/);
     const failedAttempt = {request_id: 'demo:85cb4dd2-8d39-4827-822c-45a2e6f8e146:5', status: 'failed', source: {image_root: '/workspace/other/raw'}};
-    const restored = renderCollection(prepared, false, false, false, failedAttempt);
+    const restored = renderCollection(prepared, false, false, 'batch', failedAttempt);
     assert.match(restored, /name="first_group"[^>]*value="6"/);
     assert.match(restored, /name="directory"[^>]*value="\/workspace\/other\/raw"/);
     assert.match(renderCollection(prepared), /<input(?=[^>]*name="limit")(?=[^>]*readonly)(?=[^>]*value="5")/i);
