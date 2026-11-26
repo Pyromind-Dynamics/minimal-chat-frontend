@@ -8,7 +8,11 @@ import type { ChatEvent, ConversationSnapshot, TimelineOperation } from '../src/
 
 const snapshot = {
   conversation_id: 'chat', status: 'idle', pending_permissions: [], pending_inputs: [], timeline: [],
-  preparation: {phase: 'ready', revision: 2, review_pending: false, plan: null, policy: {allowed_roles: [], workflow_nodes: []}},
+  preparation: {
+    phase: 'ready', revision: 2, review_pending: false,
+    plan: {goal: 'Evaluate', resources: [], stages: [{id: 'eval', name: 'Eval', enabled: true}], tasks: [], edges: []},
+    policy: {allowed_roles: ['eval'], workflow_nodes: [{id: 'eval', name: 'Eval', description: '', roles: ['eval'], tasks: []}]},
+  },
 } as unknown as ConversationSnapshot;
 
 test('creation is offered only for the current ready draft after the turn ends', () => {
@@ -16,7 +20,7 @@ test('creation is offered only for the current ready draft after the turn ends',
   assert.equal(canCreateProject({...snapshot, status: 'running'}), false);
   assert.equal(canCreateProject({...snapshot, experiment_queue: [{task_id: 'requirement:1', kind: 'requirement'}]}), false);
   assert.equal(canCreateProject({...snapshot, preparation: {...snapshot.preparation!, review_pending: true}}), false);
-  assert.equal(canCreateProject({...snapshot, preparation: {...snapshot.preparation!, phase: 'planning'}}), false);
+  assert.equal(canCreateProject({...snapshot, preparation: {...snapshot.preparation!, phase: 'collecting', plan: null}}), false);
   assert.equal(canCreateProject({...snapshot, pending_inputs: [{request_id: 'question', questions: []}]}), false);
 });
 
@@ -26,13 +30,13 @@ test('stage projection uses business execution bindings and never the native run
   assert.deepEqual(stageOperations(state, 'init').map(item => item.execution?.task_run_id), ['business-one']);
 });
 
-test('review plan and creation remain available without the checklist panel', async () => {
+test('preparation card and workspace render the current plan, creation and stage columns', async () => {
   const server = await createServer({define: {'window.location.host': JSON.stringify('localhost:5173')}, server: {middlewareMode: true, ws: false}, optimizeDeps: {noDiscovery: true, include: []}, appType: 'custom'});
   try {
     const {PreparationWelcome} = await server.ssrLoadModule('/src/components/PreparationWelcome.tsx');
     const welcome = renderToStaticMarkup(createElement(PreparationWelcome));
     assert.match(welcome, /收集信息/); assert.match(welcome, /审阅计划/); assert.match(welcome, /阶段执行/);
-    const prep = {...snapshot, preparation: {...snapshot.preparation!, plan: {goal: 'Evaluate', resources: [], stages: [{id: 'eval', name: 'Eval', enabled: true}], tasks: [], edges: []}}};
+    const prep = {...snapshot, preparation: snapshot.preparation!};
     const {PreparationPlanMessage} = await server.ssrLoadModule('/src/components/PreparationPlanMessage.tsx');
     const {ChatPanel} = await server.ssrLoadModule('/src/components/ChatPanel.tsx');
     const props = {snapshot: prep, busy: false, onCreate: () => {}, onReview: () => {}};
@@ -54,7 +58,8 @@ test('review plan and creation remain available without the checklist panel', as
     assert.equal(preparationPlanStatus({...stale, pending_inputs: [{request_id: 'question', questions: []}]}), 'input');
     const {StageWorkspace} = await server.ssrLoadModule('/src/components/StageWorkspace.tsx');
     const state = {...snapshot, project: {project_id: 'project', plan: {goal: 'Evaluate', resources: [], stages: [{id: 'init', name: 'Init', enabled: true}, {id: 'eval', name: 'Eval', enabled: true}], edges: [{source: 'init', target: 'eval'}]}}};
-    const workspace = renderToStaticMarkup(createElement(StageWorkspace, {snapshot: state}));
+    const workspace = renderToStaticMarkup(createElement(StageWorkspace, {snapshot: state, onOpenRuntime: () => {}}));
+    assert.match(workspace.slice(0, workspace.indexOf('</header>')), /<button[^>]*>调试与发布<\/button>/);
     assert.match(workspace, /阶段 Init/); assert.match(workspace, /阶段 Eval/);
     assert.match(workspace, /<div role="region" aria-label="工作流阶段与执行详情" tabindex="0" class="stage-workspace-track/);
     assert.equal((workspace.match(/repeat\(2, 360px\)/g) ?? []).length, 2);

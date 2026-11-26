@@ -35,9 +35,19 @@ export function publicChatEvents(events: ChatEvent[]): ChatEvent[] {
   )).map(presentEchoMindMessage);
 }
 
+function isMainAgentMessage(event: ChatEvent): event is MessageEvent {
+  return hasVisibleMessage(event) && event.source === 'agent' && event.project_reply === true;
+}
+
 export function mainAgentMessages(events: ChatEvent[]): MessageEvent[] {
-  return events.filter((event): event is MessageEvent =>
-    hasVisibleMessage(event) && event.source === 'agent' && event.project_reply === true);
+  return events.filter(isMainAgentMessage);
+}
+
+export function mainAgentEvents(events: ChatEvent[]): ChatEvent[] {
+  return events.filter(event => isMainAgentMessage(event)
+    || event.kind === 'ActionEvent' || event.kind === 'ObservationEvent' || event.kind === 'ServerErrorEvent')
+    .map(event => event.kind === 'ActionEvent' && event.thought?.length
+      ? { ...event, thought: [] } : event);
 }
 
 type MainAgentEntry =

@@ -22,7 +22,9 @@ function deliveryLabel(run: ExperimentExecution) {
   }
 }
 
-export function StageWorkspace({ snapshot }: {snapshot: ConversationSnapshot}) {
+export function StageWorkspace({ snapshot, onOpenRuntime }: {
+  snapshot: ConversationSnapshot; onOpenRuntime?: () => void;
+}) {
   const [selectedRuns, setSelectedRuns] = useState<Record<string, string>>({});
   const project = snapshot.project;
   if (!project) return null;
@@ -70,6 +72,7 @@ export function StageWorkspace({ snapshot }: {snapshot: ConversationSnapshot}) {
     <header className="flex flex-wrap items-center justify-between gap-2">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h2>workflowPLAN · 阶段状态</h2>
+        {onOpenRuntime && <button type="button" onClick={onOpenRuntime} className="rounded bg-emerald-700 px-2.5 py-1 text-xs font-medium text-white">调试与发布</button>}
         <span className="text-xs text-slate-500">{stages.length} 个阶段</span>
       </div>
       <span className="font-mono text-xs text-slate-500" title={project.project_id}>Project {project.project_id.slice(0, 12)}</span>

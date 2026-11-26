@@ -24,12 +24,14 @@ import { EchoMindAgentChat } from './EchoMindAgentChat';
 import { deriveDisplayConnectionState } from '../productStreamState';
 import { PreparationPlanMessage } from './PreparationPlanMessage';
 import { StageWorkspace } from './StageWorkspace';
+import { ProjectRuntimeWorkbench } from './ProjectRuntimeWorkbench';
 import { ProjectOverview } from './observations/ProjectOverview';
 import { ProjectConfirmationPanel } from './ProjectConfirmationPanel';
 import { ProjectChatDrawer } from './ProjectChatDrawer';
 import { managerChatEvents, preparationPlanStatus } from '../preparation';
 
-type ConversationSelection = { conversationId?: string; projectId?: string; cluster?: string };
+type RuntimeWorkbenchLocation = {projectId: string; preferredDebugRunId?: string};
+type ConversationSelection = { conversationId?: string; projectId?: string; cluster?: string; runtime?: RuntimeWorkbenchLocation };
 type SavedChat = {
   managerId: string;
   projectId?: string;
@@ -48,13 +50,25 @@ function ActivityDate({ value }: { value?: string | null }) {
   return <time dateTime={value} title={`更新时间：${date.toLocaleString()}`}>{activityDateFormat.format(date)}</time>;
 }
 
-function updateWorkbenchUrl(projectId: string | null, conversationId: string | null) {
+function workbenchUrl(projectId: string | null, conversationId: string | null, runtime?: RuntimeWorkbenchLocation | null) {
   const url = new URL(window.location.href);
   if (projectId) url.searchParams.set('project', projectId);
   else url.searchParams.delete('project');
   if (conversationId) url.searchParams.set('conversation', conversationId);
   else url.searchParams.delete('conversation');
-  window.history.replaceState(null, '', url);
+  if (runtime) url.searchParams.set('view', 'runtime');
+  else url.searchParams.delete('view');
+  if (runtime?.preferredDebugRunId) url.searchParams.set('debugRun', runtime.preferredDebugRunId);
+  else url.searchParams.delete('debugRun');
+  return url;
+}
+
+function updateWorkbenchUrl(projectId: string | null, conversationId: string | null, runtime?: RuntimeWorkbenchLocation | null) {
+  window.history.replaceState(null, '', workbenchUrl(projectId, conversationId, runtime));
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function ProductPlanningChat({ client, chatClient, title, storageNamespace }: {
@@ -77,6 +91,9 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const orderedConversations = useMemo(() => conversations.toSorted(newestActivityFirst), [conversations]);
   const orderedProjects = useMemo(() => projectsByConversationActivity(projects, conversations), [projects, conversations]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [runtimeWorkbench, setRuntimeWorkbench] = useState<RuntimeWorkbenchLocation | null>(null);
+  const [snapshotRefreshFailed, setSnapshotRefreshFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [respondingPermission, setRespondingPermission] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -158,9 +175,11 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     const pending = client.snapshot(id, options, signal).then(snapshot => {
       if (generation.current !== epoch) return 0;
       apply(snapshot);
+      setSnapshotRefreshFailed(false);
       return snapshot.through_seq;
     }).catch(failure => {
       if (generation.current !== epoch) return 0;
+      setSnapshotRefreshFailed(true);
       throw failure;
     }).finally(() => {
       if (generation.current !== epoch) return;
@@ -169,7 +188,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         refreshAgain.current = false;
         refreshTimer.current = window.setTimeout(() => {
           refreshTimer.current = null;
-          void refresh().catch(failure => setError(String(failure)));
+          void refresh().catch(() => undefined);
         }, Math.max(0, 300 - (performance.now() - lastRefresh.current)));
       }
     });
@@ -200,6 +219,9 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     const controller = new AbortController();
     request.current = controller;
     target.current = selection;
+    setRuntimeWorkbench(null);
+    setSelectedProjectId(null);
+    setSnapshotRefreshFailed(false);
     const { signal } = controller;
     activeId.current = null;
     setOpenError(null); setLoading(true);
@@ -230,8 +252,11 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
       setError(null); setNotice(null);
       setHasConnected(false);
       setAfterSeq(snapshot.through_seq);
-      const projectId = snapshot.project?.project_id ?? null;
-      updateWorkbenchUrl(projectId, id);
+      const projectId = selection.projectId ?? snapshot.project?.project_id ?? null;
+      setSelectedProjectId(projectId);
+      const runtime = projectId && selection.runtime?.projectId === projectId ? selection.runtime : null;
+      setRuntimeWorkbench(runtime);
+      updateWorkbenchUrl(projectId, id, runtime);
       if (projectId) localStorage.setItem(selectedProjectKey, projectId);
       else localStorage.removeItem(selectedProjectKey);
       localStorage.setItem(selectedKey, id); localStorage.removeItem(newKey);
@@ -246,7 +271,8 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     const alreadySelected = loading
       ? target.current?.conversationId === selection.conversationId
         || (!!selection.projectId && target.current?.projectId === selection.projectId)
-      : state.conversationId === selection.conversationId;
+      : state.conversationId === selection.conversationId
+        && (!selection.projectId || selection.projectId === (selectedProjectId ?? state.snapshot?.project?.project_id));
     if (!openError && alreadySelected) return;
     void open(selection);
   };
@@ -258,6 +284,9 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     const conversationId = params.get('conversation')?.trim() || undefined;
     const projectId = params.get('project')?.trim() || undefined;
     if (!conversationId && !projectId) localStorage.setItem(`${storageNamespace}.userId`, userId);
+    const runtime = projectId && params.get('view') === 'runtime'
+      ? { projectId, preferredDebugRunId: params.get('debugRun') || undefined }
+      : undefined;
     const initialGeneration = generation.current;
     const listed = client.list(navigationOptions, signal).then(items => {
       if (!signal.aborted) setConversations(current => {
@@ -282,7 +311,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
       queueMicrotask(() => {
         if (signal.aborted || generation.current !== initialGeneration) return;
         didRestore.current = true;
-        void open({ conversationId, projectId });
+        void open({ conversationId, projectId, runtime });
       });
     }
     void Promise.allSettled([listed, projectsListed]).then(([conversationsResult, projectsResult]) => {
@@ -314,7 +343,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
       refreshTimer.current = window.setTimeout(() => {
         refreshTimer.current = null;
         refreshAgain.current = false;
-        void refresh().catch(failure => setError(String(failure)));
+        void refresh().catch(() => undefined);
       }, Math.max(0, 300 - (performance.now() - lastRefresh.current)));
     }
   }, [refresh]);
@@ -330,7 +359,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
       dispatch({ type: 'APPLY_OPERATION_EVENT', event });
     }
     if (event.type === 'project.changed') {
-      void refreshProjects().catch(failure => setError(String(failure)));
+      void refreshProjects().catch(failure => console.warn('Project list refresh failed:', messageOf(failure)));
     }
     scheduleRefresh();
   }, [dispatch, isProject, refreshProjects, scheduleRefresh]);
@@ -345,6 +374,36 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     window.addEventListener('focus', scheduleRefresh);
     return () => window.removeEventListener('focus', scheduleRefresh);
   }, [scheduleRefresh]);
+
+  const send = async (text: string) => {
+    if (busy || loading || openError || state.snapshot?.capabilities.read_only) return false;
+    setBusy(true); setError(null); setNotice(null);
+    const commandId = crypto.randomUUID();
+    const timestamp = new Date().toISOString();
+    dispatch({ type: 'ADD_PENDING_OUTBOUND', message: { commandId, text, timestamp, status: 'pending' } });
+    try {
+      let id = activeId.current;
+      if (!id) {
+        const snapshot = await client.create(options);
+        id = snapshot.conversation_id;
+        activeId.current = id;
+        request.current = new AbortController();
+        dispatch({ type: 'SET_CONVERSATION_ID', id });
+        dispatch({ type: 'ADD_PENDING_OUTBOUND', message: { commandId, text, timestamp, status: 'pending' } });
+        apply(snapshot); setAfterSeq(snapshot.through_seq); setHasConnected(false);
+        localStorage.setItem(selectedKey, id); localStorage.removeItem(newKey);
+        updateWorkbenchUrl(null, id);
+      }
+      const receipt = await client.command(id, { type: 'user_message', command_id: commandId, content: [{ type: 'text', text }] }, options);
+      if (receipt.status === 'failed') throw new Error(JSON.stringify(receipt.response));
+      void refresh().catch(() => undefined);
+      return true;
+    } catch (failure) {
+      setError(messageOf(failure));
+      dispatch({ type: 'MARK_PENDING_OUTBOUND_FAILED', commandId });
+      return false;
+    } finally { setBusy(false); }
+  };
 
   const ensureManager = async () => {
     if (activeId.current) return activeId.current;
@@ -417,6 +476,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const newConversation = () => {
     resetRequests();
     target.current = null;
+    setSelectedProjectId(null); setRuntimeWorkbench(null); setSnapshotRefreshFailed(false);
     activeId.current = null;
     setLoading(false);
     setOpenError(null);
@@ -466,7 +526,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
           localStorage.setItem(selectedProjectKey, current.project_id);
           updateWorkbenchUrl(current.project_id, current.conversation_id);
         }
-      }).catch(failure => { setError(String(failure)); void refresh(); }).finally(() => setBusy(false));
+      }).catch(failure => { setError(messageOf(failure)); void refresh().catch(() => undefined); }).finally(() => setBusy(false));
   };
 
   const reviewPreparation = async () => {
@@ -510,7 +570,13 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   };
 
 
-  const currentProjectId = state.snapshot?.project?.project_id ?? null;
+  const snapshot = state.snapshot;
+  const managerProject = snapshot?.project;
+  const currentProjectId = managerProject ? selectedProjectId ?? managerProject.project_id : null;
+  const selectedProject = projects.find(project => project.project_id === currentProjectId);
+  const isManagerProject = currentProjectId?.replaceAll('-', '') === managerProject?.project_id.replaceAll('-', '');
+  const runtimeOptions = useMemo(() => selectedProject?.cluster && selectedProject.cluster !== options.xCluster
+    ? { ...options, xCluster: selectedProject.cluster } : options, [options, selectedProject?.cluster]);
   const pendingCount = state.snapshot && !state.snapshot.capabilities.read_only
     ? (state.snapshot.pending_inputs?.length ?? 0) + state.snapshot.pending_permissions.length : 0;
   const workspaceUnavailable = loading || !!openError;
@@ -613,7 +679,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
       {!loading && progressConnection === 'connecting' && <span className="text-xs text-slate-500">正在同步进度</span>}
       {!loading && progressConnection === 'reconnecting' && <span className="text-xs text-amber-700">正在重新连接</span>}
     </span>
-    {!state.snapshot.capabilities.read_only && (state.status === 'running' || state.snapshot.automatic_turns_suspended) && (
+    {!state.snapshot.capabilities.read_only && (state.status === 'running' || state.status === 'error' || state.status === 'stuck' || state.snapshot.automatic_turns_suspended) && (
       <button type="button" disabled={busy} className="rounded border bg-white px-3 py-1 text-xs disabled:opacity-50"
         onClick={() => void controlManager(state.status === 'running' ? 'cancel' : 'user_message')}>
         {state.status === 'running' ? '中断执行' : '继续执行'}
@@ -695,6 +761,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
       <button type="button" className="ml-3 underline" onClick={() => { if (target.current) void open(target.current); }}>重试</button>
     </div>}
     {error && <div role="alert" className="border-b bg-red-50 p-3 text-sm text-red-700">{error}<button type="button" className="ml-3 underline" onClick={() => setError(null)}>关闭</button></div>}
+    {snapshotRefreshFailed && <div role="status" className="border-b bg-slate-50 px-4 py-2 text-xs text-slate-600">对话暂未同步，正在显示上次加载的内容。<button type="button" className="ml-3 underline" onClick={() => void refresh().catch(() => undefined)}>重新同步</button></div>}
     {notice && <div role="status" className="border-b bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</div>}
     <div className="rsi-content-with-sidebar">
     <main className="echomind-workbench grid min-h-0 flex-1">
@@ -722,9 +789,9 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
             {orderedProjects.map(({ project, updated_at }) => <li key={project.project_id}>
               <button type="button" disabled={busy} aria-current={project.project_id === currentProjectId}
                 onClick={() => selectConversation({ conversationId: project.conversation_id, projectId: project.project_id, cluster: project.cluster })}>
-                <span className="echomind-nav-title" title={project.name}>{project.name}</span>
+                <span className="echomind-nav-title" title={project.name}>{project.name}{project.name.endsWith(' (Runtime Contract)') && <span className="ml-1 rounded bg-emerald-100 px-1 text-[10px] text-emerald-800">副本</span>}</span>
                 <span className="echomind-nav-meta">
-                  <span title={`${project.cluster} · ${project.node_count} 节点`}>{project.lifecycle === 'development' ? '开发中' : '已固化'}</span>
+                  <span title={`${project.cluster} · ${project.node_count} 节点`}>{project.lifecycle === 'development' ? '开发中' : '已发布'}</span>
                   <ActivityDate value={updated_at} />
                 </span>
               </button>
@@ -737,7 +804,31 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         {state.snapshot?.project ? <>
           <section aria-label="Main Agent" tabIndex={0} className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-white">
             {managerStatus}
-            <StageWorkspace snapshot={state.snapshot} />
+            {managerProject && currentProjectId && snapshot && <div className="contents">{runtimeWorkbench?.projectId === currentProjectId
+              ? <ProjectRuntimeWorkbench
+                key={currentProjectId}
+                client={client}
+                projectId={currentProjectId}
+                projectName={selectedProject?.name ?? managerProject.plan.goal}
+                requestOptions={runtimeOptions}
+                onClose={() => {
+                  setRuntimeWorkbench(null);
+                  updateWorkbenchUrl(currentProjectId, snapshot.conversation_id);
+                }}
+                onProjectChanged={() => refreshProjects().then(() => undefined)}
+                onRequestResourceProposal={isManagerProject ? send : undefined}
+                managerWorkbenchHref={isManagerProject ? undefined : preferredDebugRunId => workbenchUrl(
+                  managerProject.project_id, snapshot.conversation_id,
+                  {projectId: managerProject.project_id, preferredDebugRunId},
+                ).href}
+                preferredDebugRunId={runtimeWorkbench.preferredDebugRunId}
+                resourceProposalDisabled={loading || busy || !!snapshot.capabilities.read_only}
+              />
+              : <StageWorkspace snapshot={snapshot} onOpenRuntime={() => {
+                const runtime = {projectId: currentProjectId};
+                setRuntimeWorkbench(runtime);
+                updateWorkbenchUrl(currentProjectId, snapshot.conversation_id, runtime);
+              }} />}</div>}
             <section aria-label="Main Agent 消息" className="mx-4 mb-4 flex max-h-80 shrink-0 flex-col overflow-hidden rounded-lg border bg-white sm:mx-5">
               <h2 className="shrink-0 border-b bg-slate-50 px-4 py-2">Main Agent</h2>
               <ChatPanel autoScroll="follow" logLabel="Main Agent 消息记录" events={mainAgentHistory}
@@ -809,7 +900,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
         </section>}
       </section>
     </main>
-    {currentProjectId && <ProjectOverview snapshot={state.snapshot} client={client} projectId={currentProjectId} options={options}
+    {currentProjectId && <ProjectOverview snapshot={state.snapshot} client={client} projectId={currentProjectId} options={runtimeOptions}
       inert={workspaceUnavailable} />}
     </div>
   </div>;

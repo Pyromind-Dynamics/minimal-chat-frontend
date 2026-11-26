@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
-import { groupEchoMindTurns, mainAgentMessages, mainAgentProjectEntries, mergeChatHistory, publicChatEvents, splitPreparationTools, visibleExecutionEvents } from '../src/echomindConversationPresentation.ts';
+import { groupEchoMindTurns, mainAgentEvents, mainAgentMessages, mainAgentProjectEntries, mergeChatHistory, publicChatEvents, splitPreparationTools, visibleExecutionEvents } from '../src/echomindConversationPresentation.ts';
 import { snapshotToChatEvents } from '../src/productSnapshot.ts';
 import { projectTimelineEvents } from '../src/productMessages.ts';
 import { summarizeToolActivity } from '../src/toolActivityPresentation.ts';
@@ -375,6 +375,26 @@ test('the main activity view omits model text and tool thoughts, preserving user
   assert.deepEqual(visible.map(event => event.kind), ['MessageEvent', 'ActionEvent', 'ObservationEvent', 'ServerErrorEvent']);
   assert.equal(JSON.stringify(visible).includes(privateText), false);
   assert.match(JSON.stringify(visible), /任务失败/);
+});
+
+test('Main Agent interleaves public progress and tool events without private reasoning', () => {
+  const events = snapshotToChatEvents(snapshot([
+    {...message('public-first', 1, 'assistant', 'run'), project_reply: 'progress'},
+    operation('completed-tool', 2, 'run', {status: 'completed'}),
+    message('private-model-text', 3, 'assistant', 'run'),
+    {...message('public-second', 4, 'assistant', 'run'), project_reply: 'progress'},
+    operation('running-tool', 5, 'run', {thought: [{type: 'text', text: 'private-tool-thought'}]}),
+    {kind: 'notice', item_id: 'failed', started_seq: 6, severity: 'error', code: 'failed', message: '任务失败'},
+  ]));
+  const visible = mainAgentEvents(events);
+  assert.deepEqual(visible.map(event => 'id' in event ? event.id : null), [
+    'public-first', 'completed-tool', 'completed-tool:observation', 'public-second',
+    'running-tool', 'running-tool:observation', 'failed',
+  ]);
+  assert.doesNotMatch(JSON.stringify(visible), /private-model-text|private-tool-thought/);
+  assert.deepEqual(mainAgentMessages(events).map(event => event.id), ['public-first', 'public-second']);
+  assert.equal(events.find(event => event.kind === 'ActionEvent' && event.id === 'running-tool')?.thought?.[0].text,
+    'private-tool-thought');
 });
 
 test('a late submission receipt shows the actual terminal status of just its own jobs', () => {

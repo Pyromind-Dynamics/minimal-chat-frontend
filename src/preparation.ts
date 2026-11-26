@@ -3,7 +3,7 @@ import type { ChatEvent, ConversationSnapshot, TimelineOperation } from './types
 
 export type { WorkflowContext } from './workflowPlan';
 export interface WorkflowNodeDefinition {
-  id: string; name: string; description: string; roles: string[];
+  id: string; name: string; description: string; roles: string[]; max_instances?: number | null;
   tasks: {id: string; description: string; display_name?: string | null; requires_report?: boolean}[];
 }
 export interface PreparationView {
@@ -25,7 +25,7 @@ export interface ExecutionBinding {
 }
 export function canCreateProject(snapshot: ConversationSnapshot): boolean {
   const preparation = snapshot.preparation;
-  return !!preparation && !snapshot.project && preparation.phase === 'ready'
+  return !!preparation?.plan && !snapshot.project && preparation.phase === 'ready'
     && !preparation.review_pending
     && snapshot.status !== 'running' && !(snapshot.pending_inputs?.length)
     && !snapshot.experiment_queue?.length

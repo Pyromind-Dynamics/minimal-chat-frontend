@@ -211,6 +211,17 @@ export async function productRequest<T>(
   return response.json() as Promise<T>;
 }
 
+export async function productBlobRequest(url: string, options?: RequestOptions): Promise<Blob> {
+  await prepareProductRequest(options);
+  const response = await fetch(url, {
+    credentials: 'include',
+    headers: getProductRequestHeaders(options),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) throw new Error(formatApiError(response.status, await response.text()));
+  return response.blob();
+}
+
 export interface DataPreparationProgress {
   output_dir: string;
   progress_found: boolean;

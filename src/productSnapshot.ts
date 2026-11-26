@@ -64,6 +64,7 @@ export function snapshotToChatEvents(
       continue;
     }
     if (item.kind === 'compaction') {
+      if (item.status !== 'completed') continue;
       const event: CondensationEvent = {
         kind: 'Condensation',
         id: item.item_id,
