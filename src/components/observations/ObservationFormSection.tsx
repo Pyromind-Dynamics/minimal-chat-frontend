@@ -5,7 +5,7 @@ import type {
   PanelConfig, RunBinding, StageAnalysis,
 } from '../../observationsContract';
 import { useObservationReport } from '../../hooks/useProjectObservations';
-import { formatMetric, matchesObservationReportVersions, observationBusinessStatus, observationReportMessage } from '../../observationsPresentation';
+import { formatMetric, matchesObservationReportVersions, observationReportMessage } from '../../observationsPresentation';
 import type { ProductClient } from '../../productClient';
 import { DatasetResultPanel } from './DatasetResultPanel';
 import { TrainingMetricPanel } from './TrainingMetricPanel';
@@ -41,7 +41,8 @@ function sectionChoices({ section, node, reports, currentReport, bindings }: Sec
     case 'report_version': {
       const versions = new Map<string, string | undefined>();
       for (const id of [...(node.report_version_ids ?? []), ...(node.historical_report_version_ids ?? [])]) versions.set(id, undefined);
-      for (const report of reports.toReversed()) {
+      const selectableAnalyses = node.type === 'init' ? [] : reports;
+      for (const report of selectableAnalyses.toReversed()) {
         if (report.status !== 'ready') continue;
         for (const id of report.report_ids ?? []) {
           if (!versions.has(id)) versions.set(id, report.job_id);
@@ -49,7 +50,7 @@ function sectionChoices({ section, node, reports, currentReport, bindings }: Sec
       }
       return Array.from(versions, ([id, analysisJobId]) => ({
         value: id, label: id, reportVersionId: id, analysisJobId,
-        analysis: reports.findLast(report => report.status === 'ready' &&
+        analysis: selectableAnalyses.findLast(report => report.status === 'ready' &&
           report.report_ids?.length === 1 && report.report_ids[0] === id),
       }));
     }
@@ -146,7 +147,7 @@ export function ObservationFormSection(props: SectionProps) {
   const needsReport = section.blocks.some(block => block.type === 'dataset_files' ||
     ((block.type === 'metrics' || block.type === 'status') && block.source === 'report'));
   const needsRegisteredMetrics = (node.type === 'train' || node.type === 'eval') && section.selection === 'analysis_version' &&
-    observationBusinessStatus(status) === 'completed' && (!selected || selected.analysis === currentReport) &&
+    !!node.report_version_ids?.length && (!selected || selected.analysis === currentReport) &&
     !analysis?.result?.metrics.length;
   const query: ObservationReportQuery = { project_node_id: node.id };
   if (needsReport) {
@@ -164,6 +165,23 @@ export function ObservationFormSection(props: SectionProps) {
   const issues = (needsReport || registeredReport || (needsRegisteredMetrics && !report))
     ? source.report?.issues ?? [] : [];
   const checks = node.type === 'dataset' ? Object.entries(report?.checks ?? {}) : [];
+  const trainingNarrative = node.type === 'train'
+    ? section.blocks.findLast(block => block.type === 'summary' || block.type === 'findings')
+    : undefined;
+
+  function trainingConclusion() {
+    const summaries = [...new Set((result?.summary?.trim()
+      ? [result.summary] : registeredReport?.summaries ?? []).map(text => text.trim()).filter(Boolean))];
+    const seen = new Set(summaries);
+    const findings = [...new Set((result?.findings ?? []).map(text => text.trim()).filter(Boolean))]
+      .filter(text => !seen.has(text));
+    if (!summaries.length && !findings.length) return null;
+    return <section className="training-conclusion" aria-label="训练结论">
+      <h5>训练结论</h5>
+      {summaries.map(summary => <p key={summary}>{summary}</p>)}
+      {findings.length > 0 && <ul>{findings.map(finding => <li key={finding}>{finding}</li>)}</ul>}
+    </section>;
+  }
 
   if (section.selection === 'task_id' && !selected?.run) return null;
 
@@ -181,6 +199,7 @@ export function ObservationFormSection(props: SectionProps) {
     }
   }
   const deliveryNotice = section.selection !== 'task_id' && (
+    node.delivery_status === 'pending' ? statusText('结果已返回，等待提交报告') :
     node.delivery_status === 'registering' ? statusText('正在登记产物') :
     node.delivery_status === 'failed' ? <>
       {statusText(`产物登记失败。 ${deliveryErrorMessages[node.delivery_error ?? ''] ?? '请检查当前执行的产物。'}`)}
@@ -216,7 +235,10 @@ export function ObservationFormSection(props: SectionProps) {
           </>;
           if (!registeredReport) return statusText('已登记的报告未通过当前执行归属校验');
           if (analysis?.status === 'failed') return statusText(`${block.subject}报告已登记，阶段分析暂不可用`);
-          if (analysis?.status !== 'queued') return null;
+          if (analysis?.status === 'queued' || status === 'report_ready_pending_analysis') {
+            return statusText('报告已交付，等待阶段分析');
+          }
+          return null;
         }
         if (block.source === 'report') {
           if (source.loading) return statusText(block.loading_message || '正在读取报告');
@@ -224,7 +246,8 @@ export function ObservationFormSection(props: SectionProps) {
             {statusText(block.unavailable_message || '暂时无法读取报告')}
             <button type="button" className="observation-report-retry" onClick={source.retry}>重试</button>
           </>;
-          if (report) return null;
+          if (report) return status === 'report_ready_pending_analysis'
+            ? statusText('报告已交付，等待阶段分析') : null;
           if (source.report) return statusText('已登记的报告未通过当前执行归属校验');
         }
         return deliveryNotice ? null : statusText(observationReportMessage(block.subject, status, analysis?.status));
@@ -238,15 +261,17 @@ export function ObservationFormSection(props: SectionProps) {
             {retryControl('从原始产物补登指标', reportId)}
           </>;
         }
-        return metrics?.length ? <ReportMetrics metrics={metrics} groups={block.groups ?? []} asTable={node.type === 'init' || node.type === 'eval'} />
+        return metrics?.length ? <ReportMetrics metrics={metrics} groups={block.groups ?? []} asTable={node.type === 'init' || node.type === 'train' || node.type === 'eval'} />
           : metrics && block.empty_message ? statusText(block.empty_message) : null;
       }
       case 'dataset_files':
         return report?.files.length ? <DatasetResultPanel files={report.files} />
           : report && statusText(block.empty_message);
       case 'summary':
+        if (trainingNarrative) return block === trainingNarrative ? trainingConclusion() : null;
         return result?.summary ? <p>{result.summary}</p> : registeredReport?.summaries?.map(summary => <p key={summary}>{summary}</p>);
       case 'findings':
+        if (trainingNarrative) return block === trainingNarrative ? trainingConclusion() : null;
         return result && result.findings.length > 0 && <ul>{result.findings.map((finding, index) => <li key={index}>{finding}</li>)}</ul>;
       case 'artifacts':
         return result && result.artifacts.length > 0 && <details className="stage-report-artifacts">

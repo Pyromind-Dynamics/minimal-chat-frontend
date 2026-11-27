@@ -7,24 +7,22 @@ import { ChatEventList } from './ChatPanel';
 import { ExecutionDetails } from './ExecutionDetails';
 
 export function EchoMindConversationTimeline({
-  events, executionEvents, snapshot, options, onOpenConfirmation, projectChat = false, chatRunning, activeRunId,
+  events, executionEvents, snapshot, options, onOpenConfirmation, activeRunId, projectChat, readOnly,
 }: {
   events: ChatEvent[];
-  executionEvents: ChatEvent[];
   snapshot: ConversationSnapshot | null;
   options: RequestOptions;
   onOpenConfirmation?: () => void;
-  projectChat?: boolean;
-  chatRunning?: boolean;
   activeRunId?: string | null;
-}) {
-  const { entries, turns, background, activeExecutionTurnId } = useMemo(() => groupEchoMindTurns(events, executionEvents, snapshot, projectChat),
+  readOnly?: boolean;
+} & ({ projectChat: true; executionEvents?: never } | { projectChat?: false; executionEvents: ChatEvent[] })) {
+  const { entries, turns, background } = useMemo(() => groupEchoMindTurns(events, executionEvents ?? [], snapshot, projectChat),
     [events, executionEvents, snapshot, projectChat]);
   const backgroundActivity = summarizeToolActivity(background);
   const activeTurn = activeRunId && (turns.find(turn => turn.id === activeRunId) ?? turns.findLast(turn =>
     turn.messages.some(event => event.kind === 'MessageEvent' && event.run_id === activeRunId)));
-  const readOnly = snapshot?.capabilities.read_only === true;
-  const unboundRunActive = (chatRunning ?? (snapshot?.status === 'running')) && !activeRunId;
+  const executionReadOnly = readOnly || snapshot?.capabilities.read_only === true;
+  const unboundRunActive = snapshot?.status === 'running' && !activeRunId;
   const activeBackground = Boolean(activeRunId && background.some(event => event.kind === 'ActionEvent' && event.run_id === activeRunId));
   return <>
     {entries.map(entry => {
@@ -35,14 +33,14 @@ export function EchoMindConversationTimeline({
       return <Fragment key={entry.id}>
         <ChatEventList events={entry.messages.slice(0, 1)} requestOptions={options} />
         <TurnExecution turn={entry.turn} options={options} onOpenConfirmation={onOpenConfirmation}
-          readOnly={readOnly} unboundRunActive={unboundRunActive}
-          active={entry.turn === activeTurn || entry.turn.id === activeExecutionTurnId} />
+          readOnly={executionReadOnly} unboundRunActive={unboundRunActive}
+          active={entry.turn === activeTurn} />
         <ChatEventList events={entry.messages.slice(1)} requestOptions={options} />
       </Fragment>;
     })}
     {background.length > 0 && <ExecutionDetails label="会话执行记录"
       summary={backgroundActivity ? `会话执行记录 · ${backgroundActivity.text}` : '会话执行记录'}
-      running={!readOnly && (activeBackground
+      running={!executionReadOnly && (activeBackground
         ? !!backgroundActivity && backgroundActivity.status !== 'waiting'
         : unboundRunActive && backgroundActivity?.status === 'running')}
       events={background} options={options} />}

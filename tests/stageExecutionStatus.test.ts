@@ -77,6 +77,53 @@ test('current stage workspace displays blocked artifact delivery without old con
     assert.match(sidebar, /产物登记失败/);
     assert.doesNotMatch(sidebar, /数据准备执行失败/);
 
+    const trainReport = renderToStaticMarkup(createElement(ObservationFormSection, {
+      section: {id: 'analysis', label: 'Train report', selection: 'analysis_version',
+        blocks: [{type: 'summary'}, {type: 'metrics', source: 'analysis'}, {type: 'findings'}]},
+      node: {id: 'stage', type: 'train', business_status: 'succeeded',
+        current_run_ids: ['run1'], report_version_ids: ['v96']},
+      status: 'succeeded', reports: [], bindings: [], configVersion: '1',
+      projectId: 'project', client: {}, options: {},
+      currentReport: {job_id: 'analysis', status: 'ready', result: {
+        summary: '损失下降', findings: ['损失下降', '需要独立评测', '需要独立评测'],
+        metrics: [{label: 'global_step', value: 72, unit: 'number'}],
+      }},
+    }));
+    assert.match(trainReport, /class="observation-data-table" aria-label="指标"/);
+    assert.match(trainReport, /<th scope="row">global_step<\/th><td>72<\/td>/);
+    assert.equal((trainReport.match(/损失下降/g) ?? []).length, 1);
+    assert.match(trainReport, /<section class="training-conclusion" aria-label="训练结论"><h5>训练结论<\/h5><p>损失下降<\/p><ul><li>需要独立评测<\/li>/);
+    assert.ok(trainReport.indexOf('</table>') < trainReport.indexOf('class="training-conclusion"'));
+
+    const {ProjectExecutionQueue} = await server.ssrLoadModule('/src/components/ProjectExecutionQueue.tsx');
+    const queue = renderToStaticMarkup(createElement(ProjectExecutionQueue, {snapshot: {
+      project: {project_id: 'project', plan_sequence: 3, plan: {tasks: [{id: 'train', name: 'LoRA 训练'}]}},
+      experiment_queue: [{task_id: 'project-continue:project:train', kind: 'project_continue'}],
+    }}));
+    assert.match(queue, /LoRA 训练/);
+    assert.match(queue, /1 项排队中/);
+    assert.match(queue, /aria-label="复制任务 ID：LoRA 训练"/);
+    assert.doesNotMatch(queue, /project-continue:project:train/);
+
+    const baseline = renderToStaticMarkup(createElement(StageWorkspace, {snapshot: {
+      conversation_id: 'chat', status: 'paused',
+      project: {project_id: 'project', plan_sequence: 3, plan: {
+        stages: [{id: 'init', kind: 'init', name: 'Init', enabled: true},
+          {id: 'dataset', kind: 'dataset', name: 'Dataset', enabled: true}],
+        tasks: [{id: 'bench', kind: 'bench', stage_id: 'init', name: '基线评测'},
+          {id: 'explain', kind: 'analysis', stage_id: 'init', name: '基线解读与 badcase 归因'}],
+        edges: [{source: 'init', target: 'dataset'}],
+      }},
+      experiment_executions: [{...run, stage_id: 'init', task_id: 'bench', task_name: '基线评测',
+        plan_sequence: 3, report_required: true, state: 'succeeded', report_state: 'ready'}],
+      timeline: [{kind: 'notice', task_id: 'project-continue:project:explain'}],
+    }}));
+    assert.match(baseline, /repeat\(2, 360px\)/);
+    assert.match(baseline, /基线评测 · 已交付报告/);
+    assert.match(baseline, /基线解读与 badcase 归因<\/span><span[^>]*>已暂停/);
+    assert.match(baseline, /aria-label="阶段 Init"[\s\S]*?基线解读与 badcase 归因[\s\S]*?aria-label="阶段 Dataset"/);
+    assert.match(baseline, /Init → Dataset/);
+
     const model = {...run, role_id: 'main', task_id: 'model', task_name: '评测合并模型',
       state: 'needs_input', platform_task_id: '1272'};
     const analysis = {...run, role_id: 'main', run_id: 'run2', task_id: 'analysis', task_name: '评测结果分析',
@@ -96,6 +143,18 @@ test('current stage workspace displays blocked artifact delivery without old con
     assert.match(repaired, /第 2 次 · 评测合并模型 · 已完成/);
     assert.match(repaired, /Studio 任务 #1273/);
     assert.doesNotMatch(repaired.split('<select')[0], /执行受阻/);
+
+    const delivered = renderToStaticMarkup(createElement(StageWorkspace, {
+      snapshot: {...snapshot, project: {...snapshot.project, plan: {
+        ...snapshot.project.plan,
+        tasks: [{id: 'model', stage_id: 'stage'}, {id: 'analysis', stage_id: 'stage', kind: 'analysis'}],
+      }}, experiment_executions: [
+        {...retry, plan_attempt: 2, report_required: true, report_state: 'ready'},
+        {...analysis, state: 'queued'},
+        {...model, plan_attempt: 1},
+      ]}}));
+    assert.match(delivered.split('<select')[0], /报告已交付 · 等待阶段分析/);
+    assert.match(delivered, /已交付报告/);
   } finally { await server.close(); }
 });
 

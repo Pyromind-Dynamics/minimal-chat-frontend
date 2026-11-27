@@ -3,7 +3,7 @@ import type { RequestOptions } from '../api';
 import { ChatProvider, useChatContext } from '../ChatContext';
 import { useProductEventStream } from '../hooks/useProductEventStream';
 import type { EchoMindChatClient } from '../productClient';
-import type { ChatEvent, ConversationSnapshot, ProductEvent } from '../types';
+import type { ConversationSnapshot, ProductEvent } from '../types';
 import { ChatPanel } from './ChatPanel';
 import { EchoMindConversationTimeline } from './EchoMindConversationTimeline';
 import { ECHOMIND_MESSAGE_PLACEHOLDER, publicChatEvents } from '../echomindConversationPresentation';
@@ -13,10 +13,7 @@ import { ProjectChatDrawer } from './ProjectChatDrawer';
 interface AgentChatProps {
   client: EchoMindChatClient;
   managerId: string;
-  executionEvents: ChatEvent[];
-  executionSnapshot: ConversationSnapshot;
   options: RequestOptions;
-  onOpenConfirmation: () => void;
   initialSnapshot?: ConversationSnapshot | null;
   onActivity?: (managerId: string, updatedAt: string) => void;
 }
@@ -26,8 +23,7 @@ export function EchoMindAgentChat(props: AgentChatProps) {
 }
 
 function AgentChat({
-  client, managerId, executionEvents, executionSnapshot,
-  options, onOpenConfirmation, initialSnapshot, onActivity,
+  client, managerId, options, initialSnapshot, onActivity,
 }: AgentChatProps) {
   const { state, dispatch } = useChatContext();
   const [stream, setStream] = useState<{ managerId: string; afterSeq: number } | null>(() =>
@@ -166,10 +162,8 @@ function AgentChat({
     history={expanded => <>
       <ChatPanel active={expanded} autoScroll="follow" logLabel="EchoMind 对话记录" emptyText="可以继续提问或补充需求。"
         events={messages} requestOptions={options} status={state.status}
-        timeline={messages.length > 0 && <EchoMindConversationTimeline projectChat
-          events={state.events} executionEvents={executionEvents} snapshot={executionSnapshot}
-          options={options} onOpenConfirmation={onOpenConfirmation}
-          chatRunning={state.status === 'running'}
+        timeline={state.events.length > 0 && <EchoMindConversationTimeline projectChat
+          events={state.events} snapshot={state.snapshot} options={options}
           activeRunId={state.status === 'running' ? state.snapshot?.active_run_id : undefined} />}
         conversationId={state.conversationId} isCondensing={state.isCondensing}
         pendingOutboundMessages={state.pendingOutboundMessages} />

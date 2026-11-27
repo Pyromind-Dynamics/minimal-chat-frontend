@@ -21,12 +21,14 @@ export interface ExperimentExecution {
   role_id: string;
   state: string;
   report_state: string;
+  report_required?: boolean;
+  plan_attempt?: number | null;
   fingerprint: string | null;
   proposal: Record<string, unknown> | null;
   metrics: Record<string, unknown> | null;
   platform_task_id: string | null;
   platform_task_ids?: string[];
-  artifacts: { name: string; uri: string; sha256: string }[];
+  artifacts: { artifact_id?: string; name: string; uri: string; sha256: string }[];
 }
 
 const labels: Record<string, string> = {
@@ -43,6 +45,9 @@ const labels: Record<string, string> = {
 export function executionLabel(state: string): string { return labels[state] ?? `状态：${state}`; }
 
 export function executionProgressLabel(run: ExperimentExecution): string {
+  if (run.report_state === 'ready' && run.state === 'waiting_analysis') return '报告已交付 · 等待阶段分析';
+  if (run.report_required && run.report_state === 'not_started' &&
+      ['waiting_analysis', 'succeeded'].includes(run.state)) return '结果已返回 · 等待提交报告';
   if (run.state === 'waiting_artifacts') return run.report_state === 'failed' ? '产物登记失败' : '正在整理产物';
   if (run.report_state === 'failed') return `${executionLabel(run.state)} · 报告失败`;
   if (run.state === 'succeeded' && run.report_state === 'not_started') return '已完成';

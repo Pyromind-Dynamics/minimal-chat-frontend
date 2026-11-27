@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
-import { canCreateProject, managerChatEvents, preparationPlanStatus, stageOperations } from '../src/preparation.ts';
+import { canCreateProject, managerChatEvents, preparationPlanStatus, projectExecutionQueue, stageOperations } from '../src/preparation.ts';
 import type { ChatEvent, ConversationSnapshot, TimelineOperation } from '../src/types.ts';
 
 const snapshot = {
@@ -14,6 +14,38 @@ const snapshot = {
     policy: {allowed_roles: ['eval'], workflow_nodes: [{id: 'eval', name: 'Eval', description: '', roles: ['eval'], tasks: []}]},
   },
 } as unknown as ConversationSnapshot;
+
+test('the project queue follows local dispatch priority and scopes pending platform tasks', () => {
+  const queued = {
+    ...snapshot,
+    project: { project_id: 'p', plan_sequence: 2, plan: {
+      tasks: [{id: 'init', name: '基线评测'}, {id: 'train', name: 'LoRA 训练'}],
+    } },
+    preparation: {...snapshot.preparation!, entry_task: {request_id: 'init'}},
+    experiment_queue: [
+      {task_id: 'req-01', kind: 'requirement', instruction: '核对划分比例\n保留完整明细'},
+      {task_id: 'project-start:p', kind: 'project_start'},
+      {task_id: 'project-continue:p:train', kind: 'project_continue'},
+      {task_id: 'project-continue:other:train', kind: 'project_continue'},
+      {task_id: 'chat-message:question', kind: 'chat_message'},
+    ],
+    external_tasks: [
+      {task_id: 'studio-queue', status: 'pending', kind: 'workflow_run',
+        correlation: {execution: {project_id: 'p', plan_sequence: 2, task_id: 'train'}}},
+      {task_id: 'studio-running', status: 'running', kind: 'workflow_run'},
+      {task_id: 'studio-paused', status: 'waiting', kind: 'workflow_run'},
+      {task_id: 'studio-stale', status: 'pending', kind: 'workflow_run',
+        correlation: {execution: {project_id: 'p', plan_sequence: 1, task_id: 'train'}}},
+    ],
+  } as ConversationSnapshot;
+  assert.deepEqual(projectExecutionQueue(queued), [
+    {id: 'project-continue:p:train', name: 'LoRA 训练'},
+    {id: 'req-01', name: '核对划分比例'},
+    {id: 'project-start:p', name: '基线评测'},
+    {id: 'studio-queue', name: 'LoRA 训练'},
+  ]);
+  assert.deepEqual(projectExecutionQueue({...queued, project: null}), []);
+});
 
 test('creation is offered only for the current ready draft after the turn ends', () => {
   assert.equal(canCreateProject(snapshot), true);

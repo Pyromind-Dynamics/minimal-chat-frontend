@@ -110,3 +110,40 @@
 .dataset-frequency-table tbody tr:last-child > * { border-bottom: 0; }
 .dataset-distribution summary { padding: 7px 10px; border-top: 1px solid var(--rsi-line); color: var(--rsi-muted); cursor: pointer; }
 .dataset-frequency-more { max-height: 230px; overflow-y: auto; padding-top: 7px; }
+
+.training-conclusion {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+  padding: 9px 12px;
+  border: 1px solid var(--rsi-line);
+  border-radius: 6px;
+  background: #fff;
+  overflow-wrap: anywhere;
+}
+.training-conclusion h5 { font-weight: 600; }
+.training-conclusion p { white-space: pre-line; }
+.training-conclusion ul { display: grid; gap: 4px; padding-inline-start: 1.3em; list-style: disc; }
+.training-conclusion li { white-space: pre-line; }
+
+.baseline-report-links { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 10px 0 0; }
+.baseline-report-links > a { color: var(--rsi-accent); text-decoration: underline; text-underline-offset: 3px; }
+.baseline-report-links > a:focus-visible { outline: 2px solid var(--rsi-accent); outline-offset: 2px; }
+.baseline-report-dialog {
+  position: fixed;
+  inset: 0;
+  width: min(720px, calc(100% - 32px));
+  max-height: 82dvh;
+  margin: auto;
+  padding: 16px;
+  overflow: auto;
+  border: 1px solid var(--rsi-line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--rsi-ink);
+}
+.baseline-report-dialog::backdrop { background: #0f172a70; }
+.baseline-report-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.baseline-report-dialog h2 { font-weight: 600; }
+.baseline-report-dialog button { min-height: 32px; padding: 0 8px; border-radius: 5px; color: var(--rsi-accent); background: #f4f0fc; }
+.baseline-report-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }

@@ -43,6 +43,72 @@ export function preparationPlanStatus(snapshot: ConversationSnapshot | null) {
   if (canCreateProject(snapshot)) return 'ready';
   return view.review_pending ? 'review_required' : 'incomplete';
 }
+const platformQueueNames: Readonly<Record<string, string>> = {
+  workflow_run: '工作流任务',
+  workflow_debug: '工作流调试',
+  echomind_debug_repair: '工作流调试修复',
+  data_preparation: '数据准备',
+  data_cleaning: '数据清洗',
+  environment_processing: '环境处理',
+  environment_processing_render: '环境渲染',
+  environment_processing_aggregate: '环境结果汇总',
+};
+
+export function projectExecutionQueue(snapshot: ConversationSnapshot): { id: string; name: string }[] {
+  const project = snapshot.project;
+  if (!project) return [];
+  const names = new Map(project.plan.tasks?.map(task => [task.id, task.name]));
+  const nextTaskPrefix = `project-continue:${project.project_id}:`;
+  const queued = new Map<string, string>();
+
+  // The runtime dispatches approved continuation tasks before other local work.
+  const localQueue = (snapshot.experiment_queue ?? []).toSorted(
+    (a, b) => Number(b.kind === 'project_continue') - Number(a.kind === 'project_continue'),
+  );
+  for (const task of localQueue) {
+    switch (task.kind) {
+      case 'project_start':
+        if (task.task_id === `project-start:${project.project_id}`) {
+          queued.set(task.task_id, names.get(snapshot.preparation?.entry_task?.request_id ?? '') ?? '启动项目');
+        }
+        break;
+      case 'project_continue':
+        if (task.task_id.startsWith(nextTaskPrefix)) {
+          queued.set(task.task_id, names.get(task.task_id.slice(nextTaskPrefix.length)) ?? '继续执行项目');
+        }
+        break;
+      case 'requirement': {
+        const firstLine = task.instruction?.trim().split(/\r?\n/, 1)[0]?.trim();
+        queued.set(task.task_id, firstLine && firstLine !== task.task_id ? firstLine : '处理项目需求');
+        break;
+      }
+    }
+  }
+
+  const bound = new Map<string, string | null>();
+  for (const run of snapshot.experiment_executions ?? []) {
+    const currentPlan = run.project_id === project.project_id && run.plan_sequence === project.plan_sequence;
+    const taskName = names.get(run.task_id) ?? run.task_name;
+    for (const id of run.platform_task_ids ?? []) {
+      if (currentPlan || !bound.has(id)) bound.set(id, currentPlan ? taskName : null);
+    }
+    if (run.platform_task_id && (currentPlan || !bound.has(run.platform_task_id))) {
+      bound.set(run.platform_task_id, currentPlan ? taskName : null);
+    }
+  }
+  for (const task of snapshot.external_tasks ?? []) {
+    if (task.status !== 'pending' || queued.has(task.task_id)) continue;
+    const reference = task.correlation?.execution;
+    if (reference && (reference.project_id !== project.project_id || reference.plan_sequence !== project.plan_sequence)) continue;
+    const boundName = bound.get(task.task_id);
+    if (boundName === null && !reference) continue;
+    const name = (reference ? names.get(reference.task_id) : boundName)
+      ?? (task.kind && Object.hasOwn(platformQueueNames, task.kind) ? platformQueueNames[task.kind] : undefined);
+    if (name) queued.set(task.task_id, name);
+  }
+  return Array.from(queued, ([id, name]) => ({ id, name }));
+}
+
 export function stageOperations(snapshot: ConversationSnapshot, stageId: string): TimelineOperation[] {
   return snapshot.timeline.filter((item): item is TimelineOperation => item.kind === 'operation'
     && item.category === 'subagent' && item.execution?.project_id === snapshot.project?.project_id

@@ -49,8 +49,9 @@ export interface StageAnalysis {
 export interface ObservationNode {
   id: string; title: string; type: string; business_status: string; current_run_ids: string[];
   report_version_ids?: string[];
+  analysis_report_version_ids?: string[];
   historical_report_version_ids?: string[];
-  delivery_status?: 'registering' | 'failed';
+  delivery_status?: 'pending' | 'registering' | 'failed';
   delivery_error?: string;
   delivery_error_field?: string;
 }
