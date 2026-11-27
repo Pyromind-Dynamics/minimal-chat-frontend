@@ -101,6 +101,7 @@ export function ProjectRuntimeWorkbench({
   const collection = collectionState?.simulation;
   const previousDemo = demoCollectionSelection(collection) ? collection : collectionState?.lastDemo;
   const demoSeed = collectionState?.demoSeed;
+  const seedRoot = demoSeed?.source?.image_root.replace(/\/+$/, '');
   const [submittedCollection, setSubmittedCollection] = useState<CollectionSimulation | null>(null);
   const [repairProposal, setRepairProposal] = useState<GraphRepairProposal | null>(null);
   const [repairError, setRepairError] = useState<string | null>(null);
@@ -521,8 +522,8 @@ export function ProjectRuntimeWorkbench({
             key={roundReport.candidate_id} projectId={projectId} candidateId={roundReport.candidate_id}
             requestOptions={requestOptions} onClose={() => setOpenReportId(null)} />}
           onOpenRun={() => flywheelRun && openRunRecord(flywheelRun.run_id)}>
-          {!historicalRun && collectionState && demoSeed?.source && <DemoImageCollection key={`${projectId}:${previousDemo?.simulation_id ?? demoSeed.simulation_id}`}
-            projectId={projectId} imageRoot={demoSeed.source.image_root} previous={previousDemo} batchSize={collectionState.batchSize} requestOptions={requestOptions}
+          {!historicalRun && collectionState && demoSeed && seedRoot && <DemoImageCollection key={`${projectId}:${previousDemo?.simulation_id ?? demoSeed.simulation_id}`}
+            projectId={projectId} imageDirectory={seedRoot.endsWith('/images') ? seedRoot : `${seedRoot}/images`} previous={previousDemo} batchSize={collectionState.batchSize} requestOptions={requestOptions}
             datasetLabels={datasetConfig?.batch_label_source === 'dataset'}
             validationSource={validationSource === 'fixed' || validationSource === 'none' ? validationSource : 'batch'}
             disabled={!collectionState.canRunBatch || !!activeRun || !!(collection && collectionSimulationActive(collection)
@@ -608,7 +609,7 @@ export function ProjectRuntimeWorkbench({
           {runDetail && <RunDetail detail={runDetail} busy={busyAction !== null} onAdvance={() => void advanceRun()} onPause={() => void pauseRun()} onResume={() => void resumeRun()} onRetry={() => void retryRun()} onCancel={() => void cancelRun()} onRepair={() => void requestRepair()} repairing={repairingRunId !== null} repairProposal={repairProposal} repairError={repairError} onRefreshRepair={() => setRepairRefresh(count => count + 1)} onReviseRepair={() => void requestRepair(true)} onRepairDebug={() => void startRepairDebug()} />}
         </section>
         <ProjectRuntimeResources key={publication?.release_id ?? resourceReleaseId ?? 'unconfigured'}
-          projectId={projectId} requestOptions={requestOptions} published={publication} stagingReleaseId={resourceReleaseId} canRunCollectionBatch
+          projectId={projectId} requestOptions={requestOptions} published={publication} stagingReleaseId={resourceReleaseId} canRunCollectionBatch graphRunActive={!!activeRun}
           onResourcesReady={setReadyResourceReleaseId} onRequestResourceProposal={onRequestResourceProposal} resourceProposalDisabled={resourceProposalDisabled}
           onCollectionChanged={setCollectionState} submittedCollection={submittedCollection}
           managerWorkbenchHref={debugRunToAdopt || !loading ? managerWorkbenchHref?.(debugRunToAdopt) : undefined}

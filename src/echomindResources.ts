@@ -156,6 +156,10 @@ export function listCollectionSimulations(projectId: string, options: RequestOpt
   return readResource<CollectionSimulation[]>(resourcesUrl(projectId, 'collection-simulations'), options);
 }
 
+export function getImageCollectionConfig(projectId: string, options: RequestOptions) {
+  return readResource<{image_directory: string} | null>(resourcesUrl(projectId, 'demo-collection/config'), options);
+}
+
 export function getCollectionSimulation(projectId: string, simulationId: string, options: RequestOptions) {
   return readResource<CollectionSimulation>(resourcesUrl(projectId, `collection-simulations/${encodeURIComponent(simulationId)}`), options);
 }

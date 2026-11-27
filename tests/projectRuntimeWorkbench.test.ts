@@ -205,10 +205,10 @@ test('production flywheel keeps the active release and shows live and final stag
     const prepared = {simulation_id: 'reserved', status: 'pending', manual_start: true,
       auto_start_graph_run: true, requested_samples: 5, completed_samples: 0, graph_run_ids: [], batch_ids: []};
     const { DemoImageCollection } = await server.ssrLoadModule('/src/components/DemoImageCollection.tsx');
-    const renderCollection = (simulation: typeof prepared, disabled = false, datasetLabels = false, validationSource: 'fixed' | 'batch' | 'none' = 'batch', previous?: {request_id: string; status: string; source: {image_root: string}}) => renderToStaticMarkup(createElement(ProductionFlywheel, {
+    const renderCollection = (simulation: typeof prepared, disabled = false, datasetLabels = false, validationSource: 'fixed' | 'batch' | 'none' = 'batch', previous?: {request_id: string; status: string; requested_samples?: number; source: {image_root: string}}) => renderToStaticMarkup(createElement(ProductionFlywheel, {
       simulation, onOpenRun: () => {},
     }, simulation.manual_start && createElement(DemoImageCollection, {
-      projectId: 'demo', imageRoot: '/workspace/example', previous, batchSize: simulation.requested_samples,
+      projectId: 'demo', imageDirectory: '/workspace/example/images', previous, batchSize: simulation.requested_samples,
       disabled, datasetLabels, validationSource, requestOptions: {}, onStarted: () => assert.fail('render must not start a simulation'),
     })));
     assert.match(renderCollection(prepared), /等待手动启动/);
@@ -233,6 +233,8 @@ test('production flywheel keeps the active release and shows live and final stag
     const restored = renderCollection(prepared, false, false, 'batch', failedAttempt);
     assert.match(restored, /name="first_group"[^>]*value="6"/);
     assert.match(restored, /name="directory"[^>]*value="\/workspace\/other\/raw"/);
+    const next = renderCollection(prepared, false, true, 'none', {...failedAttempt, status: 'succeeded', requested_samples: 5});
+    assert.match(next, /name="first_group"[^>]*value="11"/);
     assert.match(renderCollection(prepared), /<input(?=[^>]*name="limit")(?=[^>]*readonly)(?=[^>]*value="5")/i);
     assert.match(renderCollection(prepared, true), /<button[^>]*disabled[^>]*>采集 5 条/);
     assert.doesNotMatch(renderCollection({...prepared, manual_start: false}), /并运行一轮/);

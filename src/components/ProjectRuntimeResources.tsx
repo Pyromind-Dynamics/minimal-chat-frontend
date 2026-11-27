@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { RequestOptions } from '../api';
 import type { PublishedGraph } from '../echomindRuntime';
 import { ProjectStorageBinding } from './ProjectStorageBinding';
+import { DemoImageCollection } from './DemoImageCollection';
 import {
   applyRuntimeResourceProposal,
   checkRuntimeSlotHealth,
@@ -10,6 +11,7 @@ import {
   demoCollectionSelection,
   ensureRuntimeSlot,
   getCollectionSimulation,
+  getImageCollectionConfig,
   getRuntimeSlot,
   getRuntimeResourceProposal,
   isPlatformTracerScript,
@@ -52,7 +54,7 @@ export interface CollectionState {
 }
 
 export function ProjectRuntimeResources({
-  projectId, requestOptions, published, stagingReleaseId, canRunCollectionBatch = false,
+  projectId, requestOptions, published, stagingReleaseId, canRunCollectionBatch = false, graphRunActive = false,
   onGraphRunStarted, onResourcesReady, onCollectionChanged, submittedCollection, onRequestResourceProposal, managerWorkbenchHref, resourceProposalDisabled = false,
 }: {
   projectId: string;
@@ -60,6 +62,7 @@ export function ProjectRuntimeResources({
   published: PublishedGraph | null;
   stagingReleaseId?: string | null;
   canRunCollectionBatch?: boolean;
+  graphRunActive?: boolean;
   onGraphRunStarted?: (id: string) => void;
   onResourcesReady?: (id: string | null) => void;
   onCollectionChanged?: (state: CollectionState) => void;
@@ -74,6 +77,7 @@ export function ProjectRuntimeResources({
   const [simulation, setSimulation] = useState<CollectionSimulation | null>(null);
   const [lastDemo, setLastDemo] = useState<CollectionSimulation | null>(null);
   const [demoSeed, setDemoSeed] = useState<CollectionSimulation | null>(null);
+  const [imageDirectory, setImageDirectory] = useState<string | null>(null);
   const [proposal, setProposal] = useState<RuntimeResourceProposal | null>(null);
   const [setupAttempt, setSetupAttempt] = useState<{previousSlotUpdatedAt?: string} | null>(null);
   const [setupPollExpired, setSetupPollExpired] = useState(false);
@@ -96,7 +100,11 @@ export function ProjectRuntimeResources({
   const batchSize = slot?.tracer?.buffer_config.batch_size ?? demoSeed?.requested_samples ?? 10;
   const platformBatchTrigger = isPlatformTracerScript(projectId, slot?.tracer?.custom_runtime_script_path);
   const batchExecutionAvailable = canRunCollectionBatch && slot?.batch_execution_available === true;
+  const validationBinding = published?.nodes.find(node => node.type === 'evaluator')?.inputs.validation_dataset?.binding;
+  const evalDataset = validationBinding?.kind === 'literal' && typeof validationBinding.value === 'string' ? validationBinding.value : undefined;
+  const batchValidation = published?.nodes.find(node => node.type === 'dataset')?.config.batch_validation_source;
   const active = simulation ? collectionSimulationActive(simulation) : false;
+  const previousImageCollection = demoCollectionSelection(simulation) ? simulation : lastDemo;
   const activeSimulationId = publishedReleaseId && active ? simulation?.simulation_id : undefined;
   const newRunId = simulation?.graph_run_ids[0];
 
@@ -107,9 +115,9 @@ export function ProjectRuntimeResources({
   useEffect(() => {
     onCollectionChanged?.({
       simulation: publishedReleaseId ? simulation : null, canRunBatch: ready && batchExecutionAvailable,
-      demoSeed: publishedReleaseId ? demoSeed : null, lastDemo, batchSize,
+      demoSeed: publishedReleaseId && !imageDirectory ? demoSeed : null, lastDemo, batchSize,
     });
-  }, [onCollectionChanged, publishedReleaseId, simulation, ready, batchExecutionAvailable, demoSeed, lastDemo, batchSize]);
+  }, [onCollectionChanged, publishedReleaseId, simulation, ready, batchExecutionAvailable, demoSeed, imageDirectory, lastDemo, batchSize]);
 
   useEffect(() => {
     if (submittedCollection) setSimulation(submittedCollection);
@@ -122,6 +130,9 @@ export function ProjectRuntimeResources({
     setLoadedRelease(null);
     setResourceError(null);
     setCollectionError(null);
+    const collectionConfig = publishedReleaseId ? getImageCollectionConfig(projectId, requestOptions).then(config => {
+      if (!disposed) setImageDirectory(config?.image_directory ?? null);
+    }).catch(error => { if (!disposed) setCollectionError(messageOf(error)); }) : Promise.resolve();
     const resources = getRuntimeSlot(projectId, requestOptions).then(value => {
       if (!disposed) {
         setSlot(value);
@@ -141,7 +152,7 @@ export function ProjectRuntimeResources({
         setProposalPending(false);
       }
     }).catch(error => { if (!disposed) setResourceError(messageOf(error)); });
-    void Promise.all([resources, collections, loadProposal]).then(() => { if (!disposed) setLoading(false); });
+    void Promise.all([resources, collections, loadProposal, collectionConfig]).then(() => { if (!disposed) setLoading(false); });
     return () => { disposed = true; };
   }, [projectId, releaseId, publishedReleaseId, reload, requestOptions]);
 
@@ -455,7 +466,12 @@ export function ProjectRuntimeResources({
           {simulation.error && <p className="break-words text-amber-800">{simulation.error}</p>}
           {ready && simulation.status === 'paused' && <button type="button" className={buttonClass} disabled={busy !== null || (simulation.auto_start_graph_run && !batchExecutionAvailable)} onClick={() => void resumeCollection()}>继续本次采集</button>}
         </div>}
-        {ready && !demoSeed && <form onSubmit={event => void collect(event)} className="mt-2 space-y-2">
+        {ready && imageDirectory && <DemoImageCollection key={`${imageDirectory}:${previousImageCollection?.simulation_id ?? ''}:${previousImageCollection?.status === 'succeeded'}`}
+          projectId={projectId} imageDirectory={imageDirectory} fixedDirectory previous={previousImageCollection} batchSize={batchSize} datasetLabels
+          validationSource={batchValidation === 'fixed' ? 'fixed' : 'none'} evalDataset={evalDataset} requestOptions={requestOptions}
+          disabled={loading || busy !== null || active || graphRunActive || !platformBatchTrigger || !batchExecutionAvailable}
+          onStarted={value => { setSimulation(value); setLastDemo(value); }} />}
+        {ready && !loading && !imageDirectory && !demoSeed && <form onSubmit={event => void collect(event)} className="mt-2 space-y-2">
           <p className="text-xs text-slate-600">使用含样本 ID、提示词、图片路径和标准答案的 Storage JSONL。采集后封存一批。</p>
           {platformBatchTrigger && batchExecutionAvailable && <p className="text-xs text-slate-600">运行一轮需至少 {Math.ceil(batchSize / 2)} 条训练样本和 {Math.floor(batchSize / 2)} 条验证样本，样本 ID 不可重复。</p>}
           <fieldset disabled={loading || busy !== null || active} className="grid gap-2 sm:grid-cols-2">
