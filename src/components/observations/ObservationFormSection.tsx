@@ -165,24 +165,6 @@ export function ObservationFormSection(props: SectionProps) {
   const issues = (needsReport || registeredReport || (needsRegisteredMetrics && !report))
     ? source.report?.issues ?? [] : [];
   const checks = node.type === 'dataset' ? Object.entries(report?.checks ?? {}) : [];
-  const trainingNarrative = node.type === 'train'
-    ? section.blocks.findLast(block => block.type === 'summary' || block.type === 'findings')
-    : undefined;
-
-  function trainingConclusion() {
-    const summaries = [...new Set((result?.summary?.trim()
-      ? [result.summary] : registeredReport?.summaries ?? []).map(text => text.trim()).filter(Boolean))];
-    const seen = new Set(summaries);
-    const findings = [...new Set((result?.findings ?? []).map(text => text.trim()).filter(Boolean))]
-      .filter(text => !seen.has(text));
-    if (!summaries.length && !findings.length) return null;
-    return <section className="training-conclusion" aria-label="训练结论">
-      <h5>训练结论</h5>
-      {summaries.map(summary => <p key={summary}>{summary}</p>)}
-      {findings.length > 0 && <ul>{findings.map(finding => <li key={finding}>{finding}</li>)}</ul>}
-    </section>;
-  }
-
   if (section.selection === 'task_id' && !selected?.run) return null;
 
   async function retryDelivery(reportVersionId?: string) {
@@ -217,6 +199,8 @@ export function ObservationFormSection(props: SectionProps) {
   }
 
   function renderBlock(block: ObservationDetailBlock) {
+    if (node.type === 'train' && section.selection !== 'task_id' &&
+        (block.type === 'summary' || block.type === 'findings')) return null;
     switch (block.type) {
       case 'select':
         return selected && choices.length >= (block.min_options ?? 1) && <label className="observation-field">{block.label}
@@ -268,10 +252,8 @@ export function ObservationFormSection(props: SectionProps) {
         return report?.files.length ? <DatasetResultPanel files={report.files} />
           : report && statusText(block.empty_message);
       case 'summary':
-        if (trainingNarrative) return block === trainingNarrative ? trainingConclusion() : null;
         return result?.summary ? <p>{result.summary}</p> : registeredReport?.summaries?.map(summary => <p key={summary}>{summary}</p>);
       case 'findings':
-        if (trainingNarrative) return block === trainingNarrative ? trainingConclusion() : null;
         return result && result.findings.length > 0 && <ul>{result.findings.map((finding, index) => <li key={index}>{finding}</li>)}</ul>;
       case 'artifacts':
         return result && result.artifacts.length > 0 && <details className="stage-report-artifacts">

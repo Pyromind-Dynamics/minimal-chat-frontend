@@ -91,9 +91,8 @@ test('current stage workspace displays blocked artifact delivery without old con
     }));
     assert.match(trainReport, /class="observation-data-table" aria-label="指标"/);
     assert.match(trainReport, /<th scope="row">global_step<\/th><td>72<\/td>/);
-    assert.equal((trainReport.match(/损失下降/g) ?? []).length, 1);
-    assert.match(trainReport, /<section class="training-conclusion" aria-label="训练结论"><h5>训练结论<\/h5><p>损失下降<\/p><ul><li>需要独立评测<\/li>/);
-    assert.ok(trainReport.indexOf('</table>') < trainReport.indexOf('class="training-conclusion"'));
+    assert.match(trainReport, /训练报告汇总/);
+    assert.doesNotMatch(trainReport, /训练结论|损失下降|需要独立评测/);
 
     const {ProjectExecutionQueue} = await server.ssrLoadModule('/src/components/ProjectExecutionQueue.tsx');
     const queue = renderToStaticMarkup(createElement(ProjectExecutionQueue, {snapshot: {
@@ -155,6 +154,24 @@ test('current stage workspace displays blocked artifact delivery without old con
       ]}}));
     assert.match(delivered.split('<select')[0], /报告已交付 · 等待阶段分析/);
     assert.match(delivered, /已交付报告/);
+
+    const reportStage = (reportState: string, artifacts: {artifact_id: string}[]) => renderToStaticMarkup(
+      createElement(StageWorkspace, {snapshot: {...snapshot, project: {...snapshot.project, plan_sequence: 3,
+        plan: {...snapshot.project.plan, tasks: [
+          {id: 'model', stage_id: 'stage'}, {id: 'analysis', name: '候选对比', stage_id: 'stage', kind: 'analysis',
+            outputs: [{name: 'comparison', kind: 'report'}]},
+        ]}}, experiment_executions: [
+          {...retry, plan_sequence: 3, report_required: true, report_state: 'ready', report_evidence_key: 'model'},
+          {...analysis, plan_sequence: 3, report_required: true, report_state: reportState, artifacts},
+        ]}}));
+    for (const state of ['not_started', 'ready']) {
+      const pending = reportStage(state, []);
+      assert.match(pending, /候选对比<\/span><span[^>]*>待校验登记/);
+      assert.match(pending, /报告已交付 · 等待阶段分析/);
+    }
+    const complete = reportStage('ready', [{artifact_id: 'comparison-version'}]);
+    assert.match(complete, /候选对比<\/span><span[^>]*>报告已就绪/);
+    assert.doesNotMatch(complete, /等待阶段分析/);
   } finally { await server.close(); }
 });
 

@@ -28,6 +28,11 @@ export function presentEchoMindMessage<T extends ChatEvent>(event: T): T {
   };
 }
 
+// Older Chat snapshots can contain notices copied from the Main Agent.
+export function projectChatEvents(events: ChatEvent[]): ChatEvent[] {
+  return events.filter(event => event.kind !== 'MessageEvent' || !event.execution_notice);
+}
+
 export function publicChatEvents(events: ChatEvent[]): ChatEvent[] {
   return withRecoveredMessages(events).filter(event => event.kind === 'ServerErrorEvent' || (
     hasVisibleMessage(event)

@@ -41,7 +41,7 @@ function group(chat: ConversationSnapshot, execution: ConversationSnapshot) {
   return groupEchoMindTurns(snapshotToChatEvents(chat), snapshotToChatEvents(execution), execution);
 }
 
-test('project Chat renders its saved messages, tool activity and result notices', async () => {
+test('project Chat shows its own messages and tools and hides historical Main Agent notices', async () => {
   const server = await createServer({define: {'window.location.host': JSON.stringify('localhost:5173')},
     server: {middlewareMode: true, ws: false}, optimizeDeps: {noDiscovery: true, include: []}, appType: 'custom'});
   try {
@@ -56,7 +56,8 @@ test('project Chat renders its saved messages, tool activity and result notices'
           execution_notice: { origin_turn_id: 'follow-up', has_result: true } },
       ]),
     }));
-    assert.match(html, /saved-agent-request.*查询项目状态 1 次.*saved-agent-reply.*saved-result-notice/);
+    assert.match(html, /saved-agent-request.*查询项目状态 1 次.*saved-agent-reply/);
+    assert.doesNotMatch(html, /saved-result-notice/);
     assert.doesNotMatch(html, /会话执行记录|查看待确认事项/);
     assert.doesNotMatch(html, /可以继续提问或补充需求/);
   } finally { await server.close(); }

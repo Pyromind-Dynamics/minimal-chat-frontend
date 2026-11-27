@@ -19,6 +19,7 @@ function baselineAnalysisTurnStatus(snapshot: ConversationSnapshot, taskId: stri
 }
 
 function statusLabel(run: ExperimentExecution) {
+  if (run.report_evidence_key && run.state === 'succeeded') return '执行已完成';
   if (run.report_required || run.state === 'waiting_analysis') return executionProgressLabel(run);
   return run.state === 'succeeded' || run.state === 'reported' ? '已完成' : executionProgressLabel(run);
 }
@@ -52,7 +53,8 @@ export function StageWorkspace({ snapshot, onOpenRuntime }: {
   const stages = [...project.plan.stages, ...historical];
   const stageActivity = new Map(stages.map(stage => {
     const tasks = (project.plan.tasks ?? []).filter(task => task.stage_id === stage.id);
-    const analysisTasks = stage.kind === 'init' ? tasks.filter(task => task.kind === 'analysis') : [];
+    const separateAnalysis = stage.kind === 'init' || executions.some(run => run.stage_id === stage.id && run.report_evidence_key);
+    const analysisTasks = separateAnalysis ? tasks.filter(task => task.kind === 'analysis') : [];
     const analysisTaskIds = new Set(analysisTasks.map(task => task.id));
     const stageRuns = executions.filter(run => run.stage_id === stage.id);
     const runs = stageRuns.filter(run => !analysisTaskIds.has(run.task_id));
@@ -100,11 +102,20 @@ export function StageWorkspace({ snapshot, onOpenRuntime }: {
       const run = stageRuns.filter(run => run.task_id === task.id && run.plan_sequence === project.plan_sequence)
         .sort((a, b) => (a.plan_attempt ?? 1) - (b.plan_attempt ?? 1)).at(-1);
       const blocked = run && ['failed', 'cancelled', 'needs_input'].includes(run.state);
-      const delivery = run && deliveryLabel(run);
+      const requiresReport = run?.report_required || task.outputs?.some(output => output.kind === 'report');
+      const registered = run?.report_state === 'ready' && run.artifacts?.some(item => item.artifact_id);
+      const awaitingReport = requiresReport && !registered;
+      const delivery = run && (awaitingReport && (run.report_state === 'ready' || run.report_state === 'not_started')
+        ? '待校验登记' : deliveryLabel(run));
       const label = blocked ? statusLabel(run) : delivery
         ?? baselineAnalysisTurnStatus(snapshot, task.id) ?? (run ? statusLabel(run) : '待执行');
-      return {id: task.id, title: analysisTasks.length === 1 ? BASELINE_ANALYSIS_TITLE : task.name, label};
+      return {id: task.id, title: stage.kind === 'init' && analysisTasks.length === 1 ? BASELINE_ANALYSIS_TITLE : task.name,
+        label, awaitingReport, failed: blocked || run?.report_state === 'registration_failed' || run?.report_state === 'failed'};
     });
+    if (executionRuns.length && executionRuns.every(isComplete) && !pendingDelivery) {
+      const outstanding = analysis.filter(item => item.awaitingReport);
+      if (outstanding.length) status = outstanding.find(item => item.failed)?.label ?? '报告已交付 · 等待阶段分析';
+    }
     return [stage.id, { runs, latest, byTask, status, analysis }];
   }));
   const stageWidth = 360;
@@ -144,7 +155,7 @@ export function StageWorkspace({ snapshot, onOpenRuntime }: {
                 </select>
               </label>}
               {selected?.platform_task_id && <p className="mt-1 text-xs text-slate-500">Studio 任务 #{selected.platform_task_id}</p>}
-              {delivery && <p className="mt-1 text-xs text-slate-500">{delivery}</p>}
+              {delivery && <p className="mt-1 text-xs text-slate-500">{selected?.report_evidence_key && 'Subagent · '}{delivery}</p>}
               {selected?.waiting_reason && <p role={selected.report_state === 'failed' ? 'alert' : 'status'} className="mt-2 break-words whitespace-pre-wrap text-xs text-amber-800">{selected.waiting_reason}</p>}
             </section>
             {stage.enabled && analysis.map(task => <div key={task.id}

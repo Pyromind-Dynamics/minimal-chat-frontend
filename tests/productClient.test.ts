@@ -100,7 +100,7 @@ test('workbench client exposes conversation, project, publication, and graph-run
     assert.equal(fetch.mock.calls[6].arguments[0], client.analysisReportUrl('project/id', 'stage/id', 'report/id'));
     assert.equal(fetch.mock.calls[7].arguments[1].method, 'DELETE');
     assert.deepEqual(Object.fromEntries(new URL(fetch.mock.calls[6].arguments[0], 'http://localhost').searchParams), {
-      project_node_id: 'stage/id', report_version_id: 'report/id',
+      project_node_id: 'stage/id', report_version_id: 'report/id', include_task_source: 'true',
     });
     fetch.mock.resetCalls();
     const reviewed = {expected_contract_sha256: 'sha256:reviewed', validation_project_id: 'recipe'};

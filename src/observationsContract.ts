@@ -51,6 +51,7 @@ export interface ObservationNode {
   report_version_ids?: string[];
   analysis_report_version_ids?: string[];
   historical_report_version_ids?: string[];
+  execution_complete?: boolean;
   delivery_status?: 'pending' | 'registering' | 'failed';
   delivery_error?: string;
   delivery_error_field?: string;

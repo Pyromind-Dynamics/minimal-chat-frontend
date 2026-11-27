@@ -43,7 +43,7 @@ export function createProductClient(path: string) {
   const base = `${BACKEND_URL}${path}`;
   const projectBase = (projectId: string) => `${BACKEND_URL}${PROJECTS_PATH}/${encodeURIComponent(projectId)}`;
   const analysisReportUrl = (projectId: string, nodeId: string, reportId: string) => {
-    const params = new URLSearchParams({project_node_id: nodeId, report_version_id: reportId});
+    const params = new URLSearchParams({project_node_id: nodeId, report_version_id: reportId, include_task_source: 'true'});
     return `${projectBase(projectId)}/observations/analysis-report?${params}`;
   };
   const graphRunBase = (projectId: string, runId?: string) => {
@@ -182,7 +182,7 @@ export function createProductClient(path: string) {
     },
     analysisReportUrl,
     observationAnalysisReport: (projectId: string, nodeId: string, reportId: string, options: RequestOptions, signal?: AbortSignal) =>
-      productRequest<{filename: string; text: string}>(analysisReportUrl(projectId, nodeId, reportId), {signal, cache: 'no-store'}, options),
+      productRequest<{filename: string; text: string; task_source_text?: string; task_source_markdown?: string}>(analysisReportUrl(projectId, nodeId, reportId), {signal, cache: 'no-store'}, options),
     trainingSeries: (id: string, query: SeriesQuery, options: RequestOptions, signal?: AbortSignal) => {
       const params = new URLSearchParams({ project_node_id: query.project_node_id, run_id: query.run_id, limit: String(query.limit ?? 1000) });
       for (const key of query.keys ?? []) params.append('keys', key);
@@ -203,6 +203,9 @@ export function createEchoMindChatClient(path: string) {
       body: JSON.stringify({ model: LLM_MODEL || undefined, api_key: LLM_API_KEY || undefined, base_url: LLM_BASE_URL || undefined }),
     }, options),
     snapshot: (id: string, options: RequestOptions, signal?: AbortSignal) => productRequest<ConversationSnapshot | null>(`${chatUrl(id)}/snapshot`, { signal }, options),
+    reportFile: (id: string, report: string, file: string, options: RequestOptions, signal?: AbortSignal) => productRequest<{url: string}>(
+      `${chatUrl(id)}/reports/${encodeURIComponent(report)}/files/${encodeURIComponent(file)}/preview`, {signal, cache: 'no-store'}, options,
+    ),
     report: (id: string, artifactId: string, options: RequestOptions, signal?: AbortSignal) => productRequest<{text: string}>(
       `${chatUrl(id)}/reports/${encodeURIComponent(artifactId)}`, { signal, cache: 'no-store' }, options,
     ),

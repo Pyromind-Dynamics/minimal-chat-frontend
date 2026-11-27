@@ -6,7 +6,7 @@ import type { EchoMindChatClient } from '../productClient';
 import type { ConversationSnapshot, ProductEvent } from '../types';
 import { ChatPanel } from './ChatPanel';
 import { EchoMindConversationTimeline } from './EchoMindConversationTimeline';
-import { ECHOMIND_MESSAGE_PLACEHOLDER, publicChatEvents } from '../echomindConversationPresentation';
+import { ECHOMIND_MESSAGE_PLACEHOLDER, projectChatEvents, publicChatEvents } from '../echomindConversationPresentation';
 import { MessageInput } from './MessageInput';
 import { ProjectChatDrawer } from './ProjectChatDrawer';
 
@@ -157,13 +157,14 @@ function AgentChat({
     }
   };
 
-  const messages = useMemo(() => publicChatEvents(state.events), [state.events]);
+  const events = useMemo(() => projectChatEvents(state.events), [state.events]);
+  const messages = useMemo(() => publicChatEvents(events), [events]);
   return <ProjectChatDrawer
     history={expanded => <>
       <ChatPanel active={expanded} autoScroll="follow" logLabel="EchoMind 对话记录" emptyText="可以继续提问或补充需求。"
         events={messages} requestOptions={options} status={state.status}
-        timeline={state.events.length > 0 && <EchoMindConversationTimeline projectChat
-          events={state.events} snapshot={state.snapshot} options={options}
+        timeline={events.length > 0 && <EchoMindConversationTimeline projectChat
+          events={events} snapshot={state.snapshot} options={options}
           activeRunId={state.status === 'running' ? state.snapshot?.active_run_id : undefined} />}
         conversationId={state.conversationId} isCondensing={state.isCondensing}
         pendingOutboundMessages={state.pendingOutboundMessages} />

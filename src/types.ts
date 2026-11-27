@@ -400,6 +400,14 @@ export interface ConversationSummary {
   cluster: string | null;
 }
 
+export interface SubagentActivity {
+  job_id: string;
+  role: string;
+  task_name: string;
+  phase: 'delivery' | 'analysis';
+  tool?: string | null;
+}
+
 export interface ConversationSnapshot {
   preparation?: import('./preparation').PreparationView | null;
   project?: import('./preparation').ProjectView | null;
@@ -414,6 +422,7 @@ export interface ConversationSnapshot {
   timeline: TimelineItem[];
   current_workflow?: ProductWorkflowState | null;
   plan?: ProductPlanState | null;
+  active_subagents?: SubagentActivity[];
   stage_analyses?: import('./observationsContract').StageAnalysis[];
   experiment_executions?: import('./experimentExecutions').ExperimentExecution[] | null;
   experiment_queue?: { task_id: string; kind: string; instruction?: string }[] | null;

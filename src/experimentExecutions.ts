@@ -22,6 +22,7 @@ export interface ExperimentExecution {
   state: string;
   report_state: string;
   report_required?: boolean;
+  report_evidence_key?: string | null;
   plan_attempt?: number | null;
   fingerprint: string | null;
   proposal: Record<string, unknown> | null;

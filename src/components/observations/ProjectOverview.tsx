@@ -13,11 +13,12 @@ import {
   observationHeadlineMetric,
   observationNodeStatus,
   observationStatusTone,
+  stageReportLinks,
   trainingPanelBindings,
 } from '../../observationsPresentation';
 import { observationSections } from '../../observationForms';
 import { ObservationFormSection } from './ObservationFormSection';
-import { BaselineAnalysisReportLinks } from './BaselineAnalysisReportLinks';
+import { StageReportLinks } from './StageReportLinks';
 
 type Props = {
   client: ProductClient;
@@ -140,7 +141,8 @@ function ProjectObservationContent({ client, projectId, snapshot, options }: Pro
         const detail = details.length === 1 ? details[0] : undefined;
         const current = detail?.currentReport;
         const metric = module.id !== 'baseline' && current?.status === 'ready' ? observationHeadlineMetric(module.stageType, current.result?.metrics) : undefined;
-        const status = overview ? moduleStatus(details.map(item => item.status)) : undefined;
+        const executionComplete = stages.length > 0 && stages.every(stage => stage.execution_complete);
+        const status = executionComplete ? 'completed' : overview ? moduleStatus(details.map(item => item.status)) : undefined;
         const runCount = new Set(details.flatMap(detail => detail.bindings.map(binding => binding.task_id))).size;
         let keyMetric = <><strong>{formatMetric(metric?.value, metric?.unit)}</strong>{metric && <small>{metric.label}</small>}</>;
         if (module.id === 'dataset' && stages.length) {
@@ -167,9 +169,8 @@ function ProjectObservationContent({ client, projectId, snapshot, options }: Pro
                 section={section} node={stage} status={status} reports={reports} currentReport={currentReport}
                 bindings={bindings} panel={panel} configVersion={overview.config_version}
                 client={client} projectId={projectId} options={options} onDeliveryRetry={refresh} />)}
-              {module.id === 'baseline' && !!stage.analysis_report_version_ids?.length &&
-                <BaselineAnalysisReportLinks client={client} projectId={projectId} nodeId={stage.id}
-                  reportIds={stage.analysis_report_version_ids} options={options} />}
+              <StageReportLinks nodeId={stage.id}
+                links={stageReportLinks(projectId, stage, stageSubjects[module.id], snapshot?.experiment_executions ?? [], reports, currentReport)} />
             </Fragment>;
           }) : <p role="status" className="rsi-detail-help">{emptyMessage}</p>}
         </ModuleRow>;

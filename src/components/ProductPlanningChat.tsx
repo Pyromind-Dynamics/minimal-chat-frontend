@@ -4,7 +4,7 @@ import type { RequestOptions } from '../api';
 import { useChatContext } from '../ChatContext';
 import { useProductEventStream } from '../hooks/useProductEventStream';
 import type { EchoMindChatClient, ProductClient } from '../productClient';
-import type { ConversationSnapshot, ConversationSummary, ProductEvent } from '../types';
+import type { ConversationSnapshot, ConversationSummary, ProductEvent, SubagentActivity } from '../types';
 import type { ProjectSummary } from '../echomindContract';
 import { conversationActivityAt, latestActivityAt, newestActivityFirst, projectsByConversationActivity, resolveEchoMindSelection } from '../echomindNavigation';
 import {
@@ -17,7 +17,7 @@ import { ChatEventList, ChatPanel } from './ChatPanel';
 import { EchoMindConversationTimeline } from './EchoMindConversationTimeline';
 import { ExecutionDetails } from './ExecutionDetails';
 import { MessageInput } from './MessageInput';
-import { ECHOMIND_MESSAGE_PLACEHOLDER, mainAgentMessages, mainAgentProjectEntries, mergeChatHistory, publicChatEvents, splitPreparationTools, visibleExecutionEvents } from '../echomindConversationPresentation';
+import { ECHOMIND_MESSAGE_PLACEHOLDER, mainAgentMessages, mainAgentProjectEntries, mergeChatHistory, projectChatEvents, publicChatEvents, splitPreparationTools, visibleExecutionEvents } from '../echomindConversationPresentation';
 import { summarizeToolActivity } from '../toolActivityPresentation';
 import { pausedProjectAction, snapshotToChatEvents } from '../productSnapshot';
 import { EchoMindAgentChat } from './EchoMindAgentChat';
@@ -27,6 +27,7 @@ import { StageWorkspace } from './StageWorkspace';
 import { ProjectRuntimeWorkbench } from './ProjectRuntimeWorkbench';
 import { ProjectOverview } from './observations/ProjectOverview';
 import { ProjectConfirmationPanel } from './ProjectConfirmationPanel';
+import { ReportDeliveryPreview } from './ReportDelivery';
 import { ProjectChatDrawer } from './ProjectChatDrawer';
 import { ProjectExecutionQueue } from './ProjectExecutionQueue';
 import { DeleteConversationDialog } from './DeleteConversationDialog';
@@ -118,6 +119,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const [notice, setNotice] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ConversationSummary | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [subagentUpdates, setSubagentUpdates] = useState<ProductEvent[]>([]);
   const [afterSeq, setAfterSeq] = useState(0);
   const [hasConnected, setHasConnected] = useState(false);
   const selectedKey = `${storageNamespace}.${userId}.selected`;
@@ -140,6 +142,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const apply = useCallback((snapshot: ConversationSnapshot, chatUpdatedAt?: string | null) => {
     if (activeId.current !== snapshot.conversation_id || deletedConversations.current.has(snapshot.conversation_id)) return;
     dispatch({ type: 'SET_PRODUCT_SNAPSHOT', snapshot });
+    setSubagentUpdates(events => events.filter(e => e.conversation_id === snapshot.conversation_id && e.seq > snapshot.through_seq));
     const summary: ConversationSummary = {
       conversation_id: snapshot.conversation_id,
       status: snapshot.status,
@@ -379,6 +382,9 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     if (isProject && event.type.startsWith('operation.') && typeof event.payload.operation_id === 'string') {
       dispatch({ type: 'APPLY_OPERATION_EVENT', event });
     }
+    if (event.type === 'subagent.activity') {
+      setSubagentUpdates(events => [...events.filter(e => e.payload.job_id !== event.payload.job_id), event]);
+    }
     if (event.type === 'project.changed') {
       void refreshProjects().catch(failure => console.warn('Project list refresh failed:', messageOf(failure)));
     }
@@ -390,7 +396,12 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     afterSeq, requestOptions: options, onEvent, onGap: refresh,
     eventsUrl: client.eventsUrl,
   });
-  useEffect(() => { if (connection === 'open') setHasConnected(true); }, [connection]);
+  useEffect(() => {
+    if (connection === 'open') {
+      setHasConnected(true);
+      scheduleRefresh();
+    }
+  }, [connection, scheduleRefresh]);
   useEffect(() => {
     window.addEventListener('focus', scheduleRefresh);
     return () => window.removeEventListener('focus', scheduleRefresh);
@@ -632,7 +643,17 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const queuedCount = state.snapshot?.experiment_queue?.length ?? 0;
   const platformTaskRunning = state.snapshot?.external_tasks?.some(task => task.status === 'running');
   const platformTaskPending = state.snapshot?.external_tasks?.some(task => task.status === 'pending' || task.status === 'waiting');
-  const restingStatus = platformTaskRunning ? '项目任务运行中' : platformTaskPending ? '等待任务结果' : queuedCount > 0 ? '等待执行' : null;
+  const activeSubagents = new Map((snapshot?.active_subagents ?? []).map(agent => [agent.job_id, agent]));
+  for (const event of subagentUpdates) {
+    if (!snapshot || event.conversation_id !== snapshot.conversation_id || event.seq <= snapshot.through_seq) continue;
+    const { job_id: id, activity } = event.payload;
+    if (typeof id !== 'string') continue;
+    if (activity === null) activeSubagents.delete(id);
+    else if (activity && typeof activity === 'object' && 'job_id' in activity && activity.job_id === id) {
+      activeSubagents.set(id, activity as SubagentActivity);
+    }
+  }
+  const restingStatus = platformTaskRunning ? '项目任务运行中' : platformTaskPending ? '等待任务结果' : activeSubagents.size > 0 ? '阶段分析中' : queuedCount > 0 ? '等待执行' : null;
   const executionSuspended = state.snapshot?.automatic_turns_suspended;
   const canInterruptExecution = state.status === 'running'
     || (isProject && state.status === 'waiting_for_external_task' && !executionSuspended);
@@ -687,7 +708,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     return () => controller.abort();
   }, [chatClient, historyId, options, preloadedChat]);
   const savedHistory = historyId ? selectedChat?.snapshot ?? null : null;
-  const savedChatEvents = useMemo(() => savedHistory ? snapshotToChatEvents(savedHistory) : [], [savedHistory]);
+  const savedChatEvents = useMemo(() => savedHistory ? projectChatEvents(snapshotToChatEvents(savedHistory)) : [], [savedHistory]);
   const history = useMemo(() => {
     const chat = publicChatEvents(savedChatEvents);
     return isProject ? chat : mergeChatHistory(preparationMessages, chat);
@@ -894,7 +915,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
             <section aria-label="Main Agent 消息" className="main-agent-messages mx-4 mb-4 flex max-h-80 shrink-0 flex-col overflow-hidden rounded-lg border bg-white sm:mx-5">
               <h2 className="shrink-0 border-b bg-slate-50 px-4 py-2">Main Agent</h2>
               <ChatPanel autoScroll="follow" logLabel="Main Agent 消息记录" events={mainAgentHistory}
-                timeline={preparationMessages.length === 0 && projectEntries.length === 0 ? <p className="text-sm text-slate-500">暂无消息</p> : <>
+                timeline={preparationMessages.length === 0 && projectEntries.length === 0 && activeSubagents.size === 0 ? <p className="text-sm text-slate-500">暂无消息</p> : <>
                   {preparationMessages.length > 0 && <EchoMindConversationTimeline
                     events={preparationMessages} executionEvents={projectTools.preparation} snapshot={state.snapshot}
                     options={options} onOpenConfirmation={() => openConfirmation()} activeRunId={activeRunId} />}
@@ -907,6 +928,16 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
                       : !activeRunId && activity?.status === 'running');
                     return <ExecutionDetails key={`tools:${entry.id}`} label="Main Agent 工具活动"
                       summary={activity?.text ?? '工具活动'} running={running} events={entry.events} options={options} />;
+                  })}
+                  {Array.from(activeSubagents.values()).map(agent => {
+                    const role = subagentRoles[agent.role] ?? agent.role;
+                    const tool = agent.tool ? subagentTools[agent.tool] ?? agent.tool : undefined;
+                    const status = tool ?? (agent.phase === 'analysis' ? '正在分析' : '正在整理报告');
+                    return <ExecutionDetails key={agent.job_id} label={`Subagent · ${role} 工具活动`}
+                      summary={`Subagent · ${role} · ${status}`} running events={[]} options={options}>
+                      <p className="text-xs leading-5 text-slate-600">{agent.task_name}</p>
+                      {tool && <p className="text-xs leading-5 text-slate-600">{tool}</p>}
+                    </ExecutionDetails>;
                   })}
                 </>}
                 requestOptions={options} status={state.status} conversationId={state.conversationId} />
@@ -968,6 +999,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     {currentProjectId && <ProjectOverview snapshot={state.snapshot} client={client} projectId={currentProjectId} options={runtimeOptions}
       inert={workspaceUnavailable} />}
     </div>
+    {isProject && state.conversationId && <ReportDeliveryPreview key={state.conversationId} managerId={state.conversationId} projectId={currentProjectId} projectClient={client} client={chatClient} options={runtimeOptions} />}
   </div>;
 }
 
@@ -988,3 +1020,11 @@ function ExecutionActions({ snapshot, onOpenPlan, onOpenConfirmation }: {
     </div>
   </aside>;
 }
+
+
+const subagentRoles: Record<string, string> = {
+  baseline_analysis: 'Baseline', dataset_analysis: 'Dataset', train_analysis: 'Train', evaluation_analysis: 'Eval',
+};
+const subagentTools: Record<string, string> = {
+  list_evidence: '查看产物目录', read_evidence: '读取证据', submit_report: '校验并提交报告',
+};

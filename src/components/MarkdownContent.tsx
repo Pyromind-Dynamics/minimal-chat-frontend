@@ -23,7 +23,7 @@ export function MarkdownContent({ children, imageClassName }: MarkdownContentPro
             <img {...props} className={imageClassName} loading="lazy" />
           ),
           a: ({ node: _node, ...props }) => (
-            <a {...props} target="_blank" rel="noreferrer noopener" />
+            <a {...props} target={props.href?.startsWith('#echomind-report=') ? undefined : '_blank'} rel="noreferrer noopener" />
           ),
           table: ({ node: _node, ...props }) => (
             <div className="markdown-table-wrap">

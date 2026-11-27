@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ObservationsConfig } from '../src/observationsContract.ts';
 import { observationSections } from '../src/observationForms.ts';
-import { formatMetric, formatTrainingMetric, matchesObservationReportVersions, mergePoints, pointAxis, trainingCurvePath, observationStatusTone, observationBusinessStatus, trainingPanelBindings, observationHeadlineMetric, observationMessage, observationStageMessage, observationReportMessage, observationNodeStatus } from '../src/observationsPresentation.ts';
+import { stageReportLinks, formatMetric, formatTrainingMetric, matchesObservationReportVersions, mergePoints, pointAxis, trainingCurvePath, observationStatusTone, observationBusinessStatus, trainingPanelBindings, observationHeadlineMetric, observationMessage, observationStageMessage, observationReportMessage, observationNodeStatus } from '../src/observationsPresentation.ts';
 
 test('detail forms use the published block order and tolerate an older or unsupported layout', () => {
   const config: ObservationsConfig = { schema_version: 1, panels: [], detail_forms: { schema_version: 1, forms: [
@@ -151,4 +151,26 @@ test('the sidebar shows delivery waiting only for the current attempts of all st
   const running = { ...runs[2], state: 'waiting_platform' };
   assert.equal(observationNodeStatus(overview, node, { ...snapshot, experiment_executions: [runs[0], runs[1], running] }), 'running');
   assert.equal(observationNodeStatus(overview, node, { ...snapshot, experiment_executions: [...runs, { ...running, run_id: 'p:b:2' }] }), 'running');
+});
+
+test('stage links expose each registered report once and separate older attempts and completed summaries', () => {
+  const node = { id: 'evaluation', title: 'Evaluation', type: 'eval', business_status: 'succeeded',
+    current_run_ids: ['active'], report_version_ids: ['v2', 'v3'], historical_report_version_ids: ['v1'] };
+  const run = { run_id: 'active', project_id: 'p', stage_id: 'evaluation', task_name: '候选评测',
+    role_id: 'main', report_state: 'ready', report_required: true, artifacts: [{ artifact_id: 'v2' }] };
+  const job = { stage_id: 'evaluation', status: 'ready', report_version_id: 'v4' };
+  const links = stageReportLinks('p', node, '评测', [
+    run, { ...run, run_id: 'old', artifacts: [{artifact_id: 'v1'}] },
+    { ...run, project_id: 'other', artifacts: [{artifact_id: 'foreign'}] },
+    { ...run, report_state: 'registering', artifacts: [{artifact_id: 'pending'}] },
+  ] as Parameters<typeof stageReportLinks>[3], [
+    job, {...job, report_version_id: 'v0'}, {...job, status: 'failed', report_version_id: 'failed'},
+  ] as Parameters<typeof stageReportLinks>[4], job as Parameters<typeof stageReportLinks>[5]);
+  assert.deepEqual(links.map(x => [x.id, x.historical]), [
+    ['v2', false], ['v3', false], ['v4', false], ['v1', true], ['v0', true],
+  ]);
+  assert.equal(links[0].title, '候选评测');
+  const baseline = stageReportLinks('p', { ...node, analysis_report_version_ids: ['v3'] }, '基线', [], []);
+  assert.equal(baseline.filter(x => x.id === 'v3').length, 1);
+  assert.equal(baseline.find(x => x.id === 'v3')?.attribution, true);
 });

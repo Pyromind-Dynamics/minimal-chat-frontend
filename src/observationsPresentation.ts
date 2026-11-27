@@ -1,4 +1,4 @@
-import type { MetricConfig, MetricPoint, ObservationOverview, StageAnalysis } from './observationsContract.ts';
+import type { MetricConfig, MetricPoint, ObservationNode, ObservationOverview, StageAnalysis } from './observationsContract.ts';
 import type { ExperimentExecution } from './experimentExecutions.ts';
 import type { ConversationSnapshot } from './types.ts';
 
@@ -8,6 +8,44 @@ export function observationMessage(value: string | null | undefined): string {
 
 export function matchesObservationReportVersions(expected: string[], received?: string[]): boolean {
   return !!received?.length && received.every(id => expected.includes(id));
+}
+
+export interface StageReportLink {
+  id: string;
+  title: string;
+  historical: boolean;
+  attribution: boolean;
+}
+
+export function stageReportLinks(projectId: string, node: ObservationNode, subject: string,
+  runs: ExperimentExecution[], analyses: StageAnalysis[], currentAnalysis?: StageAnalysis): StageReportLink[] {
+  const titles = new Map<string, string>();
+  const older = new Set(node.historical_report_version_ids ?? []);
+  for (const run of runs) {
+    if (run.project_id !== projectId || run.stage_id !== node.id || run.role_id !== 'main' ||
+        run.report_state !== 'ready' || (run.stage_snapshot?.kind && run.stage_snapshot.kind !== node.type)) continue;
+    for (const artifact of run.artifacts ?? []) {
+      if (!artifact.artifact_id) continue;
+      titles.set(artifact.artifact_id, run.task_name);
+      if (run.report_required && !node.current_run_ids.includes(run.run_id)) older.add(artifact.artifact_id);
+    }
+  }
+  const links = new Map<string, StageReportLink>();
+  function add(id: string, title: string, historical = false, attribution = false) {
+    if (!links.has(id)) links.set(id, { id, title, historical, attribution });
+  }
+  for (const id of node.analysis_report_version_ids ?? []) add(id, '查看归因报告', false, true);
+  for (const id of node.report_version_ids ?? []) add(id, titles.get(id) || subject + '报告');
+  if (currentAnalysis?.status === 'ready' && currentAnalysis.report_version_id) {
+    add(currentAnalysis.report_version_id, '阶段汇总报告');
+  }
+  for (const id of older) add(id, titles.get(id) || subject + '报告', true);
+  for (const job of analyses) {
+    if (job.stage_id === node.id && job.status === 'ready' && job.report_version_id) {
+      add(job.report_version_id, '阶段汇总报告', true);
+    }
+  }
+  return Array.from(links.values());
 }
 
 export function observationHeadlineMetric(stageType: string, metrics?: NonNullable<StageAnalysis['result']>['metrics']) {

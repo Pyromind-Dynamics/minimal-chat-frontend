@@ -110,24 +110,13 @@
 .dataset-distribution summary { padding: 7px 10px; border-top: 1px solid var(--rsi-line); color: var(--rsi-muted); cursor: pointer; }
 .dataset-frequency-more { max-height: 230px; overflow-y: auto; padding-top: 7px; }
 
-.training-conclusion {
-  display: grid;
-  gap: 6px;
-  margin: 12px 0;
-  padding: 9px 12px;
-  border: 1px solid var(--rsi-line);
-  border-radius: 6px;
-  background: #fff;
-  overflow-wrap: anywhere;
-}
-.training-conclusion h5 { font-weight: 600; }
-.training-conclusion p { white-space: pre-line; }
-.training-conclusion ul { display: grid; gap: 4px; padding-inline-start: 1.3em; list-style: disc; }
-.training-conclusion li { white-space: pre-line; }
-
-.baseline-report-links { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 10px 0 0; }
-.baseline-report-links > a { color: var(--rsi-accent); text-decoration: underline; text-underline-offset: 3px; }
-.baseline-report-links > a:focus-visible { outline: 2px solid var(--rsi-accent); outline-offset: 2px; }
+.stage-report-links { margin-top: 12px; }
+.stage-report-links h4 { font-weight: 600; }
+.stage-report-links li { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 4px; }
+.stage-report-links small { color: var(--rsi-muted); }
+.stage-report-links a { color: var(--rsi-accent); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.stage-report-links a:focus-visible { outline: 2px solid var(--rsi-accent); outline-offset: 2px; }
+.stage-report-links summary { cursor: pointer; margin-top: 6px; }
 .baseline-report-dialog {
   position: fixed;
   inset: 0;
