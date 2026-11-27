@@ -17,7 +17,7 @@ export function ProjectConfirmationPanel({ snapshot, onRespond, onPermission, re
   if (!count) return null;
   return <aside aria-label="待确认" className="project-confirmations flex min-h-0 min-w-0 flex-col border-l bg-slate-50">
     <header className="flex shrink-0 items-center justify-between border-b bg-white px-4 py-3"><h2 className="font-semibold">待确认</h2><span role="status" className="rounded-full bg-violet-100 px-2.5 py-1 text-xs text-violet-800">{count} 项</span></header>
-    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
+    <div className="p-3">
       {inputs.map(request => <UserInputCard
         key={`${snapshot.conversation_id}:${request.request_id}`}
         request={request} onRespond={onRespond} readHtml={readHtml} readMedia={readMedia} />)}

@@ -19,7 +19,7 @@ import { ExecutionDetails } from './ExecutionDetails';
 import { MessageInput } from './MessageInput';
 import { ECHOMIND_MESSAGE_PLACEHOLDER, mainAgentMessages, mainAgentProjectEntries, mergeChatHistory, publicChatEvents, splitPreparationTools, visibleExecutionEvents } from '../echomindConversationPresentation';
 import { summarizeToolActivity } from '../toolActivityPresentation';
-import { snapshotToChatEvents } from '../productSnapshot';
+import { pausedProjectAction, snapshotToChatEvents } from '../productSnapshot';
 import { EchoMindAgentChat } from './EchoMindAgentChat';
 import { deriveDisplayConnectionState } from '../productStreamState';
 import { PreparationPlanMessage } from './PreparationPlanMessage';
@@ -71,6 +71,18 @@ function updateWorkbenchUrl(projectId: string | null, conversationId: string | n
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function revealProjectConfirmation(panel: HTMLDetailsElement | null, id: string | undefined, focus = false) {
+  if (!panel || !id) return;
+  const card = panel.querySelector<HTMLElement>(`[data-confirmation-id="${CSS.escape(id)}"]`);
+  if (!card) return;
+  panel.open = true;
+  (card.querySelector('legend') ?? card).scrollIntoView({ block: 'start' });
+  if (focus) {
+    const control = card.querySelector<HTMLElement>('fieldset input, fieldset textarea') ?? card.querySelector('button');
+    control?.focus({ preventScroll: true });
+  }
 }
 
 export function ProductPlanningChat({ client, chatClient, title, storageNamespace }: {
@@ -522,18 +534,23 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     }
   };
 
-  const controlManager = async (type: 'cancel' | 'user_message') => {
+  const controlManager = async (action: 'cancel' | 'continue' | 'reask' | 'resumeQueue') => {
     const id = activeId.current;
     if (!id || busy) return;
     setBusy(true);
     setError(null);
     try {
       const commandId = crypto.randomUUID();
-      const receipt = await client.command(id, type === 'cancel'
-        ? { type, command_id: commandId }
-        : { type, command_id: commandId, content: [{ type: 'text', text: '用户要求继续已授权的任务。' }] }, options);
-      if (receipt.status === 'failed') throw new Error(JSON.stringify(receipt.response));
-      if (type === 'cancel' && receipt.response.cancelled === false) throw new Error('中断未生效，请重试。');
+      const resumeMessages = {
+        continue: '用户要求继续已授权的任务。',
+        reask: '请用 ask_user 重新发出上一次中断的问题和原选项，并等待我选择。在我回答前不要提交、重试或执行任何其他任务。',
+        resumeQueue: '请恢复项目待办队列。请直接结束本次唤醒回合，等待调度器交付已入队的需求后按其内容执行。',
+      };
+      const receipt = await client.command(id, action === 'cancel'
+        ? { type: 'cancel', command_id: commandId }
+        : { type: 'user_message', command_id: commandId, content: [{ type: 'text', text: resumeMessages[action] }] }, options);
+      if (receipt.status === 'failed' || receipt.response.accepted === false) throw new Error(JSON.stringify(receipt.response));
+      if (action === 'cancel' && receipt.response.cancelled === false) throw new Error('中断未生效，请重试。');
       await refresh();
     } catch (failure) {
       setError(String(failure));
@@ -678,22 +695,17 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
   const progressConnection = deriveDisplayConnectionState({
     conversationId: state.conversationId, isCreating: false, connectionState: connection, hasConnected,
   });
-  const [confirmationsOpen, setConfirmationsOpen] = useState(false);
   const confirmationsRef = useRef<HTMLDetailsElement>(null);
   const chatAreaRef = useRef<HTMLElement>(null);
+  const pendingProjectConfirmationId = pendingCount && isProject
+    ? state.snapshot?.pending_inputs?.at(-1)?.request_id ?? state.snapshot?.pending_permissions.at(-1)?.permission_id
+    : undefined;
   const openConfirmation = (targetId?: string) => {
-    const targetSelector = targetId ? `[data-confirmation-id="${CSS.escape(targetId)}"]` : null;
     if (isProject) {
-      const panel = confirmationsRef.current;
-      setConfirmationsOpen(true);
-      window.requestAnimationFrame(() => {
-        const target = targetSelector ? panel?.querySelector(targetSelector) : null;
-        (target ?? panel)?.scrollIntoView({ block: 'nearest' });
-        (target?.querySelector<HTMLElement>('input, button, textarea') ?? panel?.querySelector('summary'))
-          ?.focus({ preventScroll: true });
-      });
+      revealProjectConfirmation(confirmationsRef.current, targetId ?? pendingProjectConfirmationId, true);
       return;
     }
+    const targetSelector = targetId ? `[data-confirmation-id="${CSS.escape(targetId)}"]` : null;
     const input = chatAreaRef.current?.querySelector<HTMLElement>(targetSelector ?? 'form[aria-label="回答问题"], [role="dialog"][aria-modal="true"]')
       ?? chatAreaRef.current?.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]');
     if (input?.tagName === 'FORM') input.scrollIntoView({ block: 'nearest' });
@@ -704,8 +716,12 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
     plan?.scrollIntoView({ block: 'start' });
     plan?.focus({ preventScroll: true });
   };
-  useEffect(() => { setConfirmationsOpen(pendingCount > 0); }, [currentProjectId, pendingCount]);
+  useEffect(() => {
+    if (!runtimeWorkbench && !workspaceUnavailable) revealProjectConfirmation(confirmationsRef.current, pendingProjectConfirmationId);
+  }, [currentProjectId, pendingProjectConfirmationId, runtimeWorkbench, workspaceUnavailable]);
 
+  const recoveryAction = isProject && state.snapshot ? pausedProjectAction(state.snapshot) : undefined;
+  const controlAction = canInterruptExecution ? 'cancel' : recoveryAction ?? 'continue';
   const managerStatus = state.snapshot && <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-slate-50 px-4 py-2">
     <span className="flex flex-wrap items-center gap-2 text-sm text-slate-700" role="status">
       {(state.status === 'running' || (platformTaskRunning && !executionSuspended)) && <span aria-hidden="true" className="size-2 rounded-full bg-blue-500" />}
@@ -715,10 +731,10 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
       {!loading && progressConnection === 'connecting' && <span className="text-xs text-slate-500">正在同步进度</span>}
       {!loading && progressConnection === 'reconnecting' && <span className="text-xs text-amber-700">正在重新连接</span>}
     </span>
-    {!state.snapshot.capabilities.read_only && (canInterruptExecution || state.status === 'error' || state.status === 'stuck' || executionSuspended) && (
+    {!state.snapshot.capabilities.read_only && (canInterruptExecution || (!pendingCount && (state.status === 'error' || state.status === 'stuck' || executionSuspended || recoveryAction))) && (
       <button type="button" disabled={busy} className="rounded border bg-white px-3 py-1 text-xs disabled:opacity-50"
-        onClick={() => void controlManager(canInterruptExecution ? 'cancel' : 'user_message')}>
-        {canInterruptExecution ? '中断执行' : '继续执行'}
+        onClick={() => void controlManager(controlAction)}>
+        {{cancel: '中断执行', reask: '重新提问', resumeQueue: '执行待办', continue: '继续执行'}[controlAction]}
       </button>
     )}
   </div>;
@@ -875,7 +891,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
                 setRuntimeWorkbench(runtime);
                 updateWorkbenchUrl(currentProjectId, snapshot.conversation_id, runtime);
               }} />}</div>}
-            <section aria-label="Main Agent 消息" className="mx-4 mb-4 flex max-h-80 shrink-0 flex-col overflow-hidden rounded-lg border bg-white sm:mx-5">
+            <section aria-label="Main Agent 消息" className="main-agent-messages mx-4 mb-4 flex max-h-80 shrink-0 flex-col overflow-hidden rounded-lg border bg-white sm:mx-5">
               <h2 className="shrink-0 border-b bg-slate-50 px-4 py-2">Main Agent</h2>
               <ChatPanel autoScroll="follow" logLabel="Main Agent 消息记录" events={mainAgentHistory}
                 timeline={preparationMessages.length === 0 && projectEntries.length === 0 ? <p className="text-sm text-slate-500">暂无消息</p> : <>
@@ -897,8 +913,7 @@ export function ProductPlanningChat({ client, chatClient, title, storageNamespac
             </section>
             {archivedExecution.length > 0 && <ChatPanel events={archivedExecution} requestOptions={options}
               autoScroll="follow" logLabel="Main Agent 执行记录" status={state.status} conversationId={state.conversationId} />}
-            {pendingCount > 0 && <details ref={confirmationsRef} className="project-confirmation-slot mt-auto shrink-0"
-              open={confirmationsOpen} onToggle={event => setConfirmationsOpen(event.currentTarget.open)}>
+            {pendingCount > 0 && <details ref={confirmationsRef} className="project-confirmation-slot mt-auto shrink-0">
               <summary>待确认 <span>{pendingCount} 项</span></summary>
               <ProjectConfirmationPanel snapshot={state.snapshot} onRespond={respondToInput}
                 onPermission={async (permissionId, decision, commandId) => {

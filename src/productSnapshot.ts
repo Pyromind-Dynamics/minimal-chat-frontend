@@ -11,6 +11,15 @@ import type {
   TimelineOperation,
 } from './types';
 
+export function pausedProjectAction(snapshot: ConversationSnapshot): 'resumeQueue' | 'reask' | undefined {
+  if (snapshot.status !== 'paused' || snapshot.pending_inputs?.length || snapshot.pending_permissions.length) return;
+  if (snapshot.experiment_queue?.some(task => task.kind === 'requirement')) return 'resumeQueue';
+  const last = snapshot.timeline.findLast(item => item.kind === 'operation' || item.kind === 'message');
+  if (last?.kind !== 'operation' || last.name !== 'ask_user') return;
+  const input = isObject(last.details) ? last.details.user_input : null;
+  if (isObject(input) && input.status === 'interrupted') return 'reask';
+}
+
 export function snapshotToChatEvents(
   snapshot: ConversationSnapshot,
 ): ChatEvent[] {

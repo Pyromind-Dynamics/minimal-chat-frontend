@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { snapshotToChatEvents } from '../src/productSnapshot.ts';
+import { pausedProjectAction, snapshotToChatEvents } from '../src/productSnapshot.ts';
 import { getUserInputInterruption } from '../src/toolErrorPresentation.ts';
 import type { ConversationSnapshot, ObservationEvent } from '../src/types.ts';
 
@@ -82,6 +82,23 @@ test('resolved input is displayed even when the runner never reported tool compl
     assert.equal(getUserInputInterruption('ask_user', observation.observation)?.label,
       status === 'cancelled' ? '已取消' : '已中断');
   }
+});
+
+test('only a paused, unanswered interruption of the latest question offers to ask again', () => {
+  const question = {kind: 'operation', name: 'ask_user', status: 'failed',
+    details: {user_input: {status: 'interrupted'}}} as const;
+  const snapshot = {status: 'paused', pending_permissions: [], timeline: [question]} as ConversationSnapshot;
+  assert.equal(pausedProjectAction(snapshot), 'reask');
+  assert.equal(pausedProjectAction({...snapshot, status: 'running'}), undefined);
+  assert.equal(pausedProjectAction({...snapshot, pending_inputs: [{request_id: 'new', questions: []}]}), undefined);
+  assert.equal(pausedProjectAction({...snapshot, timeline: [...snapshot.timeline,
+    {kind: 'message', role: 'user', item_id: 'new-message', started_seq: 10, content: [], status: 'completed'}]}), undefined);
+  const queued = { ...snapshot, automatic_turns_suspended: true, experiment_queue: [{task_id: 'retry', kind: 'requirement'}] };
+  assert.equal(pausedProjectAction(queued), 'resumeQueue');
+  assert.equal(pausedProjectAction({...queued, timeline: []}), 'resumeQueue');
+  assert.equal(pausedProjectAction({...queued, pending_inputs: [{request_id: 'live', questions: []}]}), undefined);
+  const cancelled = { ...question, details: { user_input: { status: 'cancelled' } } };
+  assert.equal(pausedProjectAction({ ...snapshot, timeline: [cancelled] } as ConversationSnapshot), undefined);
 });
 
 test('archived sessions use the archive banner instead of a server error card', () => {
