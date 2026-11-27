@@ -25,7 +25,7 @@ test('recipe briefs retain only safe archive paths and roles', () => {
   ]);
 });
 
-test('only the current externally waiting stage can advance after a success callback', () => {
+test('the active waiting task can use an authenticated request for artifact verification', () => {
   const detail = {
     run: {status: 'waiting_external', current_stage_ids: ['dataset']},
     stage_runs: [{
@@ -52,6 +52,16 @@ test('only the current externally waiting stage can advance after a success call
   const task = detail.stage_runs[1].task_runs[0];
   assert.equal(pendingArtifactVerificationTask(detail), undefined);
 
+  const stage = detail.stage_runs[1];
+  stage.node_id = 'dataset';
+  stage.message = "dataset is waiting for request credentials to poll the platform task: Storage verification requires the project owner's browser session.";
+  assert.equal(pendingArtifactVerificationTask(detail), task);
+  task.requires_request_credentials = false;
+  assert.equal(pendingArtifactVerificationTask(detail), undefined);
+  task.requires_request_credentials = true;
+  stage.message = 'Waiting for owner credentials.';
+  assert.equal(pendingArtifactVerificationTask(detail), task);
+  task.requires_request_credentials = false;
   task.provider_reported_status = 'succeeded';
   assert.equal(pendingArtifactVerificationTask(detail), task);
 

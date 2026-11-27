@@ -346,6 +346,7 @@ export interface TaskRun {
   provider_run_id?: string | null;
   idempotency_key: string;
   status: 'submitting' | 'submitted' | 'running' | 'succeeded' | 'failed' | 'canceled' | 'unknown';
+  requires_request_credentials?: boolean;
   provider_reported_status?: 'pending' | 'running' | 'succeeded' | 'failed' | 'canceled' | null;
   request_digest: string;
   created_at: string;
@@ -435,12 +436,16 @@ export interface GraphRunDetail {
 
 export function pendingArtifactVerificationTask(detail: GraphRunDetail): TaskRun | undefined {
   if (detail.run.status !== 'waiting_external') return;
-  return detail.stage_runs
-    .filter(stage => stage.status === 'waiting_external' && detail.run.current_stage_ids.includes(stage.run_id))
-    .flatMap(stage => stage.task_runs)
-    .find(task => task.provider_reported_status === 'succeeded'
+  for (const stage of detail.stage_runs) {
+    if (stage.status !== 'waiting_external' || !detail.run.current_stage_ids.includes(stage.run_id)) continue;
+    const legacyStorageWait = stage.message ===
+      `${stage.node_id} is waiting for request credentials to poll the platform task: Storage verification requires the project owner's browser session.`;
+    const task = stage.task_runs.find(task => task.provider_run_id && !task.finished_at
       && (task.status === 'submitted' || task.status === 'running')
-      && task.provider_run_id && !task.finished_at);
+      && (task.provider_reported_status === 'succeeded' || task.requires_request_credentials
+        || (task.requires_request_credentials === undefined && legacyStorageWait)));
+    if (task) return task;
+  }
 }
 
 export interface GraphRepairProposal {
